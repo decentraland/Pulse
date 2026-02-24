@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UserSecretsId>dotnet-DCLPulse-afa00325-7b93-4586-87fa-af77c2a6a95e</UserSecretsId>
+        <RootNamespace>Pulse</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="runtimes\win-x64\native\enet.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>enet.dll</TargetPath>
+        </None>
+        <None Include="runtimes\linux-x64\native\libenet.so">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>libenet.so</TargetPath>
+        </None>
+    </ItemGroup>
+</Project>

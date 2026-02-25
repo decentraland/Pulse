@@ -17,6 +17,6 @@ public readonly struct ENetChannel(byte channelId, PacketFlags packetMode)
     public const int COUNT = 3;
 
     public static readonly ENetChannel RELIABLE = new (0, PacketFlags.Reliable);
-    public static readonly ENetChannel UNRELIABLE_SEQUENCED = new (1, PacketFlags.Reliable);
-    public static readonly ENetChannel UNRELIABLE_UNSEQUENCED = new (2, PacketFlags.Reliable);
+    public static readonly ENetChannel UNRELIABLE_SEQUENCED = new (1, PacketFlags.None);
+    public static readonly ENetChannel UNRELIABLE_UNSEQUENCED = new (2, PacketFlags.Unsequenced);
 }

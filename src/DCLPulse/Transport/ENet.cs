@@ -346,6 +346,11 @@ public struct Packet : IDisposable
         NativeData = Native.enet_packet_create(data, length, flags);
     }
 
+    public unsafe void Create(Span<byte> data, PacketFlags flags)
+    {
+        fixed (byte* ptr = data) { NativeData = Native.enet_packet_create((IntPtr)ptr, data.Length, flags); }
+    }
+
     public void Create(IntPtr data, int length, PacketFlags flags)
     {
         if (data == IntPtr.Zero)
@@ -360,13 +365,13 @@ public struct Packet : IDisposable
     public void Create(byte[] data, int offset, int length, PacketFlags flags)
     {
         if (data == null)
-            throw new ArgumentNullException("data");
+            throw new ArgumentNullException(nameof(data));
 
         if (offset < 0)
-            throw new ArgumentOutOfRangeException("offset");
+            throw new ArgumentOutOfRangeException(nameof(offset));
 
         if (length < 0 || length > data.Length)
-            throw new ArgumentOutOfRangeException("length");
+            throw new ArgumentOutOfRangeException(nameof(length));
 
         NativeData = Native.enet_packet_create_offset(data, length, offset, flags);
     }

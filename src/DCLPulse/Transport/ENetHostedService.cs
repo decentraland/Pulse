@@ -1,10 +1,17 @@
 using ENet;
 using Microsoft.Extensions.Options;
+using Pulse.Messaging;
+using Pulse.Peers;
+using System.Runtime.InteropServices;
 using Host = ENet.Host;
 
 namespace Pulse.Transport;
 
-public sealed class ENetHostedService(IOptions<ENetTransportOptions> options, ILogger<ENetHostedService> logger) : BackgroundService
+public sealed class ENetHostedService(
+    IOptions<ENetTransportOptions> options,
+    ILogger<ENetHostedService> logger,
+    MessagePipe messagePipe
+) : BackgroundService
 {
     private readonly ENetTransportOptions options = options.Value;
 
@@ -36,7 +43,7 @@ public sealed class ENetHostedService(IOptions<ENetTransportOptions> options, IL
         address.SetIP("0.0.0.0");
         address.Port = options.Port;
 
-        host.Create(address, options.MaxPeers, channelLimit: 2);
+        host.Create(address, options.MaxPeers, channelLimit: ENetChannel.COUNT);
 
         logger.LogInformation("ENet host listening on 0.0.0.0:{Port} (maxPeers={MaxPeers}).",
             options.Port, options.MaxPeers);
@@ -67,6 +74,7 @@ public sealed class ENetHostedService(IOptions<ENetTransportOptions> options, IL
         switch (netEvent.Type)
         {
             case EventType.Connect:
+
                 logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
 
@@ -83,8 +91,22 @@ public sealed class ENetHostedService(IOptions<ENetTransportOptions> options, IL
                 break;
 
             case EventType.Receive:
-                netEvent.Packet.Dispose();
-                break;
+            {
+                using Packet _ = netEvent.Packet;
+
+                unsafe
+                {
+                    // Parse packet
+                    // ENet is not thread-safe, so this callback is always invoked on the main thread
+
+                    messagePipe.OnDataReceived(new MessagePacket<Packet>(
+                        netEvent.Packet,
+                        new ReadOnlySpan<byte>((void*)netEvent.Packet.NativeData, netEvent.Packet.Length),
+                        new PeerId(netEvent.Peer.ID)));
+
+                    break;
+                }
+            }
         }
     }
 

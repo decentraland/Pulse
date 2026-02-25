@@ -1,0 +1,9 @@
+<Project>
+
+    <PropertyGroup>
+        <!-- Path to the @dcl/protocol repo. Override via /p:_ProtocolRepo=... or in a local
+             Directory.Build.props if your checkout layout differs from the default (sibling dirs). -->
+        <_ProtocolRepo Condition="'$(_ProtocolRepo)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', '..', 'protocol'))</_ProtocolRepo>
+    </PropertyGroup>
+
+</Project>

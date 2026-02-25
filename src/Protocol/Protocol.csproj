@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <!-- Prevent the SDK's default **/*.cs glob from picking up Generated/ —
+             _AddGeneratedProtoToCompile adds those files at target-execution time. -->
+        <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)\Generated\**\*</DefaultItemExcludes>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- protoc binary — platform-correct binary resolved via Protobuf_ResolvePlatform target -->
+        <PackageReference Include="Grpc.Tools" Version="2.53.0" PrivateAssets="All" />
+        <!-- Google.Protobuf runtime required by csharp_out generated classes -->
+        <PackageReference Include="Google.Protobuf" Version="3.22.3" />
+    </ItemGroup>
+
+    <!-- ── Proto code generation ──────────────────────────────────────────────
+         Paths are relative to this .csproj so the project is portable across
+         machines, provided the protocol repo is a sibling of the Pulse repo:
+             D:\<root>\protocol\   ← @dcl/protocol
+             D:\<root>\Pulse\      ← this repo
+         ──────────────────────────────────────────────────────────────────── -->
+    <PropertyGroup Label="ProtoGen">
+        <!-- protoc-gen-bitwise plugin wrapper — .cmd on Windows, .sh on macOS/Linux -->
+        <_Plugin Condition="'$(OS)' == 'Windows_NT'">$(MSBuildProjectDirectory)\..\..\tools\protoc-gen-bitwise\protoc-gen-bitwise.cmd</_Plugin>
+        <_Plugin Condition="'$(OS)' != 'Windows_NT'">$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/protoc-gen-bitwise.sh</_Plugin>
+
+        <!-- Proto import root; protoc resolves all imports from here.
+             No trailing backslash — "path\" breaks C-runtime argument parsing on Windows. -->
+        <_ProtoRoot>$(_ProtocolRepo)proto</_ProtoRoot>
+
+        <!-- Output directory for all generated C# files -->
+        <_GeneratedDir>$(MSBuildProjectDirectory)\Generated</_GeneratedDir>
+    </PropertyGroup>
+
+    <ItemGroup Label="BitwiseRuntime">
+        <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\BitWriter.cs" />
+        <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\BitReader.cs" />
+    </ItemGroup>
+
+    <ItemGroup Label="ProtoSources">
+        <_ProtoSources Include="$(_ProtoRoot)\decentraland\common\**\*.proto" />
+        <_ProtoSources Include="$(_ProtoRoot)\decentraland\pulse\**\*.proto" />
+    </ItemGroup>
+
+    <!--
+        _GenerateProto: runs protoc only when a .proto source changes (stamp-based).
+        Runs before _AddGeneratedProtoToCompile which runs before CoreCompile.
+
+        Two passes in one protoc invocation:
+          - csharp_out   : standard protobuf C# classes (properties, serialization)
+          - bitwise_out  : partial class extension adding Encode(BitWriter)/Decode(BitReader)
+        The partial class mechanism lets both outputs coexist without conflicts.
+    -->
+    <Target Name="_GenerateProto"
+            BeforeTargets="_AddGeneratedProtoToCompile"
+            DependsOnTargets="Protobuf_ResolvePlatform"
+            Inputs="@(_ProtoSources)"
+            Outputs="$(_GeneratedDir)\.proto.stamp">
+
+        <MakeDir Directories="$(_GeneratedDir)" />
+
+        <!-- Standard C# classes + bitwise Encode/Decode extensions in one pass -->
+        <Exec Command="&quot;$(Protobuf_ProtocFullPath)&quot; --proto_path=&quot;$(_ProtoRoot)&quot; --proto_path=&quot;$(Protobuf_StandardImportsPath)&quot; --csharp_out=&quot;$(_GeneratedDir)&quot; --plugin=protoc-gen-bitwise=&quot;$(_Plugin)&quot; --bitwise_out=&quot;$(_GeneratedDir)&quot; @(_ProtoSources->'&quot;%(Identity)&quot;', ' ')"
+              WorkingDirectory="$(MSBuildProjectDirectory)" />
+
+        <Touch Files="$(_GeneratedDir)\.proto.stamp" AlwaysCreate="true" />
+    </Target>
+
+    <!--
+        _AddGeneratedProtoToCompile: always runs before CoreCompile.
+        Adding <Compile> items inside a target (not a static ItemGroup) means
+        the glob is evaluated at target runtime — after generation — so it
+        picks up freshly created files on the very first build.
+    -->
+    <Target Name="_AddGeneratedProtoToCompile" BeforeTargets="CoreCompile">
+        <ItemGroup>
+            <Compile Include="$(_GeneratedDir)\**\*.cs" />
+        </ItemGroup>
+    </Target>
+
+</Project>

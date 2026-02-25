@@ -27,6 +27,10 @@
         <_Plugin Condition="'$(OS)' == 'Windows_NT'">$(MSBuildProjectDirectory)\..\..\tools\protoc-gen-bitwise\protoc-gen-bitwise.cmd</_Plugin>
         <_Plugin Condition="'$(OS)' != 'Windows_NT'">$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/protoc-gen-bitwise.sh</_Plugin>
 
+        <!-- Python pip requirements and stamp for protoc-gen-bitwise dependencies -->
+        <_PipRequirements>$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/requirements.txt</_PipRequirements>
+        <_PipStamp>$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/.pip.stamp</_PipStamp>
+
         <!-- Proto import root; protoc resolves all imports from here.
              No trailing backslash — "path\" breaks C-runtime argument parsing on Windows. -->
         <_ProtoRoot>$(_ProtocolRepo)proto</_ProtoRoot>
@@ -43,6 +47,24 @@
         <_ProtoSources Include="$(_ProtoRoot)\decentraland\common\**\*.proto" />
         <_ProtoSources Include="$(_ProtoRoot)\decentraland\pulse\**\*.proto" />
     </ItemGroup>
+
+    <!--
+        _EnsurePythonDeps: installs protoc-gen-bitwise Python dependencies via pip.
+        Runs only when requirements.txt changes (stamp-based), so the build is
+        fast on subsequent runs when dependencies are already satisfied.
+    -->
+    <Target Name="_EnsurePythonDeps"
+            BeforeTargets="_GenerateProto"
+            Inputs="$(_PipRequirements)"
+            Outputs="$(_PipStamp)">
+
+        <Exec Command="py -m pip install --quiet -r &quot;$(_PipRequirements)&quot;"
+              Condition="'$(OS)' == 'Windows_NT'" />
+        <Exec Command="python3 -m pip install --quiet -r &quot;$(_PipRequirements)&quot;"
+              Condition="'$(OS)' != 'Windows_NT'" />
+
+        <Touch Files="$(_PipStamp)" AlwaysCreate="true" />
+    </Target>
 
     <!--
         _GenerateProto: runs protoc only when a .proto source changes (stamp-based).

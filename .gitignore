@@ -1,9 +1,8 @@
 ## Proto generated output
 src/Protocol/Generated/
 
-## Proto code-generation tooling
-## (not in node_modules — plugin lives in tools/, but we track it;
-##  only the stamp file produced during build is ignored)
+## Proto code-generation tooling stamp files (produced during build)
+tools/protoc-gen-bitwise/.pip.stamp
 
 ## A streamlined .gitignore for modern .NET projects
 ## including temporary files, build results, and

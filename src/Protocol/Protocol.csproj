@@ -36,8 +36,7 @@
     </PropertyGroup>
 
     <ItemGroup Label="BitwiseRuntime">
-        <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\BitWriter.cs" />
-        <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\BitReader.cs" />
+        <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\Quantize.cs" />
     </ItemGroup>
 
     <ItemGroup Label="ProtoSources">
@@ -50,8 +49,8 @@
         Runs before _AddGeneratedProtoToCompile which runs before CoreCompile.
 
         Two passes in one protoc invocation:
-          - csharp_out   : standard protobuf C# classes (properties, serialization)
-          - bitwise_out  : partial class extension adding Encode(BitWriter)/Decode(BitReader)
+          - csharp_out   : standard protobuf C# classes (uint32 properties, serialization)
+          - bitwise_out  : partial class extension adding float {Name}Quantized accessors
         The partial class mechanism lets both outputs coexist without conflicts.
     -->
     <Target Name="_GenerateProto"

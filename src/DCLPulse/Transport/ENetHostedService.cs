@@ -1,8 +1,8 @@
 using ENet;
+using Google.Protobuf;
 using Microsoft.Extensions.Options;
 using Pulse.Messaging;
 using Pulse.Peers;
-using System.Runtime.InteropServices;
 using Host = ENet.Host;
 
 namespace Pulse.Transport;
@@ -14,6 +14,9 @@ public sealed class ENetHostedService(
 ) : BackgroundService
 {
     private readonly ENetTransportOptions options = options.Value;
+
+    // Keyed by ENet peer ID. Maintained exclusively on the ENet thread — no locking needed.
+    private readonly Dictionary<PeerId, Peer> connectedPeers = new ();
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -64,16 +67,54 @@ public sealed class ENetHostedService(
 
                 HandleEvent(ref netEvent);
             }
+
+            FlushOutgoing();
         }
 
         host.Flush();
     }
 
+    /// <summary>
+    ///     ENet is not thread-safe so we are obliged to write from the same thread we read
+    /// </summary>
+    private void FlushOutgoing()
+    {
+        while (messagePipe.TryReadOutgoingMessage(out MessagePipe.OutgoingMessage msg))
+        {
+            if (!connectedPeers.TryGetValue(msg.To, out Peer peer))
+                continue;
+
+            ENetChannel channel = msg.PacketMode switch
+                                  {
+                                      ITransport.PacketMode.RELIABLE => ENetChannel.RELIABLE,
+                                      ITransport.PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
+                                      _ => ENetChannel.UNRELIABLE_UNSEQUENCED,
+                                  };
+
+            SendToPeer(peer, channel, msg.Message);
+        }
+    }
+
+    private static void SendToPeer(Peer peer, ENetChannel channel, IMessage message)
+    {
+        // all messages are presumably very compact so allocate on stack
+        Span<byte> data = stackalloc byte[message.CalculateSize()];
+
+        message.WriteTo(data);
+
+        var packet = default(Packet);
+        packet.Create(data, channel.PacketMode);
+        peer.Send(channel.ChannelId, ref packet);
+    }
+
     private void HandleEvent(ref Event netEvent)
     {
+        var peerId = new PeerId(netEvent.Peer.ID);
+
         switch (netEvent.Type)
         {
             case EventType.Connect:
+                connectedPeers[peerId] = netEvent.Peer;
 
                 logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
@@ -81,12 +122,15 @@ public sealed class ENetHostedService(
                 break;
 
             case EventType.Disconnect:
+                connectedPeers.Remove(peerId);
+
                 logger.LogDebug("Peer disconnected: id={ID} data={Data}.",
                     netEvent.Peer.ID, netEvent.Data);
 
                 break;
 
             case EventType.Timeout:
+                connectedPeers.Remove(peerId);
                 logger.LogDebug("Peer timed out: id={ID}.", netEvent.Peer.ID);
                 break;
 
@@ -102,7 +146,7 @@ public sealed class ENetHostedService(
                     messagePipe.OnDataReceived(new MessagePacket<Packet>(
                         netEvent.Packet,
                         new ReadOnlySpan<byte>((void*)netEvent.Packet.NativeData, netEvent.Packet.Length),
-                        new PeerId(netEvent.Peer.ID)));
+                        peerId));
 
                     break;
                 }

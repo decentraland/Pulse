@@ -1,6 +1,8 @@
 using System.Threading.Channels;
 using Decentraland.Pulse;
+using Google.Protobuf;
 using Pulse.Peers;
+using Pulse.Transport;
 
 namespace Pulse.Messaging;
 
@@ -17,17 +19,33 @@ namespace Pulse.Messaging;
 /// </summary>
 public sealed class MessagePipe(ILogger<MessagePipe> logger)
 {
-    public readonly record struct IncomingMessage(PeerId From, ClientMessage Message);
-
     // SingleWriter=true: only the ENet thread enqueues.
     // SingleReader=true: only our ExecuteAsync loop dequeues.
     // Unbounded: never blocks the ENet thread. Back-pressure shows up as memory growth,
     // which is an observable signal if processing falls behind.
-    private readonly Channel<IncomingMessage> channel = Channel.CreateUnbounded<IncomingMessage>(
+    private readonly Channel<IncomingMessage> incomingChannel = Channel.CreateUnbounded<IncomingMessage>(
         new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
 
-    public IAsyncEnumerable<IncomingMessage> ReadMessagesAsync(CancellationToken ct) =>
-        channel.Reader.ReadAllAsync(ct);
+    // SingleWriter=false: worker threads enqueue.
+    // SingleReader=true: only the ENet thread dequeues.
+    // Unbounded: never blocks the ENet thread. Back-pressure shows up as memory growth,
+    // which is an observable signal if processing falls behind.
+    private readonly Channel<OutgoingMessage> outgoingChannel = Channel.CreateUnbounded<OutgoingMessage>(
+        new UnboundedChannelOptions { SingleWriter = false, SingleReader = true });
+
+    public IAsyncEnumerable<IncomingMessage> ReadIncomingMessagesAsync(CancellationToken ct) =>
+        incomingChannel.Reader.ReadAllAsync(ct);
+
+    public IAsyncEnumerable<OutgoingMessage> ReadOutgoingMessagesAsync(CancellationToken ct) =>
+        outgoingChannel.Reader.ReadAllAsync(ct);
+
+    public bool TryReadOutgoingMessage(out OutgoingMessage message) =>
+        outgoingChannel.Reader.TryRead(out message);
+
+    public void Send(OutgoingMessage message)
+    {
+        outgoingChannel.Writer.TryWrite(message);
+    }
 
     /// <summary>
     ///     Called on the Transport thread for every received packet.
@@ -50,6 +68,10 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
             return;
 
         // TryWrite on an unbounded channel always succeeds.
-        channel.Writer.TryWrite(new IncomingMessage(packet.FromPeer, message));
+        incomingChannel.Writer.TryWrite(new IncomingMessage(packet.FromPeer, message));
     }
+
+    public readonly record struct IncomingMessage(PeerId From, ClientMessage Message);
+
+    public readonly record struct OutgoingMessage(PeerId To, IMessage Message, ITransport.PacketMode PacketMode); // TODO Introduce ServerMessage type
 }

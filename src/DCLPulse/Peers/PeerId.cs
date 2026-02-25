@@ -1,5 +1,8 @@
 ﻿namespace Pulse.Peers;
 
+/// <summary>
+///     Keeps the app domain separated from the transport assumption
+/// </summary>
 public readonly struct PeerId : IEquatable<PeerId>
 {
     public readonly uint Value;

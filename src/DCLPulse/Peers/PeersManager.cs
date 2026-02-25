@@ -9,7 +9,7 @@ namespace Pulse.Peers;
 ///     Owns all peer state and processes inbound <see cref="ClientMessage" /> envelopes.
 ///     Threading model
 ///     ───────────────
-///     Router task  — reads the flat stream from <see cref="MessagePipe.ReadMessagesAsync" />
+///     Router task  — reads the flat stream from <see cref="MessagePipe.ReadIncomingMessagesAsync" />
 ///     and fans out to channel[PeerId % WorkerCount].
 ///     Worker[i]    — owns a fixed stripe of peers (those where PeerId % WorkerCount == i).
 ///     Has exclusive access to its peer states — no locking needed.
@@ -70,7 +70,7 @@ public sealed class PeersManager : BackgroundService
     {
         try
         {
-            await foreach (IncomingMessage msg in messagePipe.ReadMessagesAsync(ct))
+            await foreach (IncomingMessage msg in messagePipe.ReadIncomingMessagesAsync(ct))
             {
                 var index = (int)(msg.From.Value % (uint)workerCount);
                 workerChannels[index].Writer.TryWrite(msg);
@@ -117,5 +117,7 @@ public sealed class PeersManager : BackgroundService
             case ClientMessage.MessageOneofCase.Handshake:
                 break;
         }
+
+        // Produce outgoing messages for the peer and push them to the MessagePipe
     }
 }

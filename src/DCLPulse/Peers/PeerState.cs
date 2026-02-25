@@ -5,5 +5,7 @@
 /// </summary>
 public class PeerState
 {
+    public string? WalletId { get; private set; }
+
     public PeerConnectionState ConnectionState { get; private set; }
 }

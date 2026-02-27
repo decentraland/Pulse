@@ -33,5 +33,9 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <TargetPath>libenet.so</TargetPath>
         </None>
+        <None Include="runtimes\macos-arm64\native\libenet.dylib">
+          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>libenet.dylib</TargetPath>
+        </None>
     </ItemGroup>
 </Project>

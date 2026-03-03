@@ -17,6 +17,8 @@ public sealed class ENetHostedService(
 
     // Keyed by ENet peer ID. Maintained exclusively on the ENet thread — no locking needed.
     private readonly Dictionary<PeerId, Peer> connectedPeers = new ();
+    private readonly byte[] receiveBuffer = new byte[options.Value.BufferSize];
+    private readonly byte[] sendBuffer = new byte[options.Value.BufferSize];
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -43,7 +45,7 @@ public sealed class ENetHostedService(
         using var host = new Host();
 
         var address = new Address();
-        address.SetIP("0.0.0.0");
+        address.SetIP("::");
         address.Port = options.Port;
 
         host.Create(address, options.MaxPeers, channelLimit: ENetChannel.COUNT);
@@ -95,15 +97,12 @@ public sealed class ENetHostedService(
         }
     }
 
-    private static void SendToPeer(Peer peer, ENetChannel channel, IMessage message)
+    private void SendToPeer(Peer peer, ENetChannel channel, IMessage message)
     {
-        // all messages are presumably very compact so allocate on stack
-        Span<byte> data = stackalloc byte[message.CalculateSize()];
-
-        message.WriteTo(data);
-
+        int size = message.CalculateSize();
+        message.WriteTo(new Span<byte>(sendBuffer, 0, size));
         var packet = default(Packet);
-        packet.Create(data, channel.PacketMode);
+        packet.Create(sendBuffer, 0, size, channel.PacketMode);
         peer.Send(channel.ChannelId, ref packet);
     }
 
@@ -137,19 +136,14 @@ public sealed class ENetHostedService(
             case EventType.Receive:
             {
                 using Packet _ = netEvent.Packet;
+                netEvent.Packet.CopyTo(receiveBuffer);
 
-                unsafe
-                {
-                    // Parse packet
-                    // ENet is not thread-safe, so this callback is always invoked on the main thread
+                messagePipe.OnDataReceived(new MessagePacket<Packet>(
+                    netEvent.Packet,
+                    new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length),
+                    peerId));
 
-                    messagePipe.OnDataReceived(new MessagePacket<Packet>(
-                        netEvent.Packet,
-                        new ReadOnlySpan<byte>((void*)netEvent.Packet.NativeData, netEvent.Packet.Length),
-                        peerId));
-
-                    break;
-                }
+                break;
             }
         }
     }

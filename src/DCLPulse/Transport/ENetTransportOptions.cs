@@ -6,5 +6,6 @@ public sealed class ENetTransportOptions
 
     public ushort Port { get; set; } = 7777;
     public int MaxPeers { get; set; } = 4095;
-    public int ServiceTimeoutMs { get; set; } = 1;
+    public int ServiceTimeoutMs { get; set; } = 1000;
+    public int BufferSize { get; set; } = 4096;
 }

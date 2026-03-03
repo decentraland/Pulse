@@ -58,11 +58,6 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
 
         try { message = ClientMessage.Parser.ParseFrom(packet.Data); }
         catch (Exception ex) { logger.LogWarning(ex, "Failed to parse packet from peer {PeerId}", packet.FromPeer.Value); }
-        finally
-        {
-            // Release native ENet memory regardless of parse outcome.
-            packet.Dispose();
-        }
 
         if (message is null)
             return;
@@ -73,5 +68,5 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
 
     public readonly record struct IncomingMessage(PeerId From, ClientMessage Message);
 
-    public readonly record struct OutgoingMessage(PeerId To, IMessage Message, ITransport.PacketMode PacketMode); // TODO Introduce ServerMessage type
+    public readonly record struct OutgoingMessage(PeerId To, ServerMessage Message, ITransport.PacketMode PacketMode);
 }

@@ -147,17 +147,26 @@ public sealed class PeersManager : BackgroundService
                 {
                     try
                     {
-                        var chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
+                        IReadOnlyList<AuthLink> chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
 
-                        string timestamp = headers["x-identity-timestamp"];
-                        string metadata = headers["x-identity-metadata"];
+                        string timestamp = string.Empty;
+                        string metadata =  string.Empty;
+
+                        foreach (string key in headers.Keys)
+                        {
+                            if (key.Equals("x-identity-timestamp", StringComparison.OrdinalIgnoreCase))
+                                timestamp = headers[key];
+
+                            if (key.Equals("x-identity-metadata", StringComparison.OrdinalIgnoreCase))
+                                metadata = headers[key];
+                        }
 
                         // Build the payload you expect the final link to sign
                         string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
-
-                        var validator = new AuthChainValidator(new PersonalSignVerifier());
+                        var validator = new AuthChainValidator(new NethereumPersonalSignVerifier());
                         var result = validator.Validate(chain, expectedPayload);
 
+                        // Register peer as authenticated
                         peers[from] = new PeerState(result.UserAddress, PeerConnectionState.AUTHENTICATED);
 
                         messagePipe.Send(new OutgoingMessage(from, new ServerMessage

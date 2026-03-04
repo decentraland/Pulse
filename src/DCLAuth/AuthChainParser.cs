@@ -31,7 +31,7 @@ public static class AuthChainParser
             if (!kv.Key.StartsWith("x-identity-auth-chain-", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var suffix = kv.Key["x-identity-auth-chain-".Length..];
+            string suffix = kv.Key["x-identity-auth-chain-".Length..];
             if (!int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var idx))
                 continue;
 

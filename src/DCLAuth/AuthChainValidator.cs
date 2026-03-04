@@ -92,25 +92,26 @@ public sealed class AuthChainValidator
     /// </summary>
     private static (string Purpose, string EphemeralAddress, DateTimeOffset Expiration) ParseEphemeralPayload(string payload)
     {
+        const string ADDR_PREFIX = "Ephemeral address:";
+        const string EXP_PREFIX = "Expiration:";
+
         // Normalize line endings, keep empty lines if any.
-        var lines = payload.Replace("\r\n", "\n").Split('\n');
+        string[] lines = payload.Replace("\r\n", "\n").Split('\n');
+
         if (lines.Length != 3)
             throw new InvalidOperationException("ECDSA_EPHEMERAL payload must have exactly 3 lines.  [oai_citation:12‡docs.decentraland.org](https://docs.decentraland.org/contributor/authentication/authchain)");
 
-        var purpose = lines[0].Trim();
-        var line2 = lines[1].Trim();
-        var line3 = lines[2].Trim();
+        string purpose = lines[0].Trim();
+        string line2 = lines[1].Trim();
+        string line3 = lines[2].Trim();
 
-        const string addrPrefix = "Ephemeral address:";
-        const string expPrefix = "Expiration:";
-
-        if (!line2.StartsWith(addrPrefix, StringComparison.Ordinal))
+        if (!line2.StartsWith(ADDR_PREFIX, StringComparison.Ordinal))
             throw new InvalidOperationException("ECDSA_EPHEMERAL line 2 must start with 'Ephemeral address:'.");
-        if (!line3.StartsWith(expPrefix, StringComparison.Ordinal))
+        if (!line3.StartsWith(EXP_PREFIX, StringComparison.Ordinal))
             throw new InvalidOperationException("ECDSA_EPHEMERAL line 3 must start with 'Expiration:'.");
 
-        var addr = line2.Substring(addrPrefix.Length).Trim();
-        var exp = line3.Substring(expPrefix.Length).Trim();
+        string addr = line2.Substring(ADDR_PREFIX.Length).Trim();
+        string exp = line3.Substring(EXP_PREFIX.Length).Trim();
 
         if (!addr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Ephemeral address must be 0x...");

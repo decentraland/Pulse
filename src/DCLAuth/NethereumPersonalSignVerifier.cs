@@ -5,7 +5,7 @@ namespace DCL.Auth;
 /// <summary>
 /// EIP-191 personal_sign style verifier (most common).
 /// </summary>
-public sealed class PersonalSignVerifier : ISignatureVerifier
+public sealed class NethereumPersonalSignVerifier : ISignatureVerifier
 {
     private readonly EthereumMessageSigner signer = new();
 

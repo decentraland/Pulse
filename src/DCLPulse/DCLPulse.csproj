@@ -21,6 +21,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\DCLAuth\DCLAuth.csproj" />
         <ProjectReference Include="..\Protocol\Protocol.csproj" />
     </ItemGroup>
 

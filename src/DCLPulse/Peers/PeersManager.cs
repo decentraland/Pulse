@@ -1,6 +1,9 @@
+using DCL.Auth;
 using System.Threading.Channels;
 using Decentraland.Pulse;
 using Pulse.Messaging;
+using Pulse.Transport;
+using System.Text.Json;
 using static Pulse.Messaging.MessagePipe;
 
 namespace Pulse.Peers;
@@ -111,10 +114,73 @@ public sealed class PeersManager : BackgroundService
     {
         // TODO Handle the state machine based on the peer state
         // At this point peers may not contain a peer state at all - it should be divised from the package
+        if (message.MessageCase != ClientMessage.MessageOneofCase.Handshake)
+        {
+            var isAuthenticated = false;
+
+            if (peers.TryGetValue(from, out PeerState? state))
+                isAuthenticated = state.ConnectionState == PeerConnectionState.AUTHENTICATED;
+
+            if (!isAuthenticated)
+                // Skip messages from unauthenticated peer
+                return;
+        }
 
         switch (message.MessageCase)
         {
             case ClientMessage.MessageOneofCase.Handshake:
+                string authChainJson = message.Handshake.AuthChain.ToStringUtf8();
+                Dictionary<string, string>? headers = JsonSerializer.Deserialize<Dictionary<string, string>>(authChainJson);
+
+                if (headers == null)
+                {
+                    messagePipe.Send(new OutgoingMessage(from, new ServerMessage
+                    {
+                        Handshake = new HandshakeResponse
+                        {
+                            Success = false,
+                            Error = "Invalid auth chain JSON",
+                        },
+                    }, ITransport.PacketMode.RELIABLE));
+                }
+                else
+                {
+                    try
+                    {
+                        var chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
+
+                        string timestamp = headers["x-identity-timestamp"];
+                        string metadata = headers["x-identity-metadata"];
+
+                        // Build the payload you expect the final link to sign
+                        string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
+
+                        var validator = new AuthChainValidator(new PersonalSignVerifier());
+                        var result = validator.Validate(chain, expectedPayload);
+
+                        peers[from] = new PeerState(result.UserAddress, PeerConnectionState.AUTHENTICATED);
+
+                        messagePipe.Send(new OutgoingMessage(from, new ServerMessage
+                        {
+                            Handshake = new HandshakeResponse
+                            {
+                                Success = true,
+                            },
+                        }, ITransport.PacketMode.RELIABLE));
+                    }
+                    catch (Exception e)
+                    {
+                        messagePipe.Send(new OutgoingMessage(from, new ServerMessage
+                        {
+                            Handshake = new HandshakeResponse
+                            {
+                                Success = false,
+                                Error = e.Message,
+                            },
+                        }, ITransport.PacketMode.RELIABLE));
+                    }
+                }
+
                 break;
         }
 

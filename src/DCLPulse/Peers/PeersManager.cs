@@ -34,12 +34,14 @@ public sealed class PeersManager : BackgroundService
     // Per-worker peer state — indexed by [workerIndex][peerId].
     // Accessed only by the owning worker, so no concurrent access.
     private readonly Dictionary<PeerId, PeerState>[] peerStates;
+    private readonly AuthChainValidator authChainValidator;
 
     public PeersManager(MessagePipe messagePipe, ILogger<PeersManager> logger)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
         workerCount = Environment.ProcessorCount;
+        authChainValidator = new AuthChainValidator(new NethereumPersonalSignVerifier());
 
         workerChannels = new Channel<IncomingMessage>[workerCount];
         peerStates = new Dictionary<PeerId, PeerState>[workerCount];
@@ -129,70 +131,71 @@ public sealed class PeersManager : BackgroundService
         switch (message.MessageCase)
         {
             case ClientMessage.MessageOneofCase.Handshake:
-                string authChainJson = message.Handshake.AuthChain.ToStringUtf8();
-                Dictionary<string, string>? headers = JsonSerializer.Deserialize<Dictionary<string, string>>(authChainJson);
-
-                if (headers == null)
-                {
-                    messagePipe.Send(new OutgoingMessage(from, new ServerMessage
-                    {
-                        Handshake = new HandshakeResponse
-                        {
-                            Success = false,
-                            Error = "Invalid auth chain JSON",
-                        },
-                    }, ITransport.PacketMode.RELIABLE));
-                }
-                else
-                {
-                    try
-                    {
-                        IReadOnlyList<AuthLink> chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
-
-                        string timestamp = string.Empty;
-                        string metadata =  string.Empty;
-
-                        foreach (string key in headers.Keys)
-                        {
-                            if (key.Equals("x-identity-timestamp", StringComparison.OrdinalIgnoreCase))
-                                timestamp = headers[key];
-
-                            if (key.Equals("x-identity-metadata", StringComparison.OrdinalIgnoreCase))
-                                metadata = headers[key];
-                        }
-
-                        // Build the payload you expect the final link to sign
-                        string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
-                        var validator = new AuthChainValidator(new NethereumPersonalSignVerifier());
-                        var result = validator.Validate(chain, expectedPayload);
-
-                        // Register peer as authenticated
-                        peers[from] = new PeerState(result.UserAddress, PeerConnectionState.AUTHENTICATED);
-
-                        messagePipe.Send(new OutgoingMessage(from, new ServerMessage
-                        {
-                            Handshake = new HandshakeResponse
-                            {
-                                Success = true,
-                            },
-                        }, ITransport.PacketMode.RELIABLE));
-                    }
-                    catch (Exception e)
-                    {
-                        messagePipe.Send(new OutgoingMessage(from, new ServerMessage
-                        {
-                            Handshake = new HandshakeResponse
-                            {
-                                Success = false,
-                                Error = e.Message,
-                            },
-                        }, ITransport.PacketMode.RELIABLE));
-                    }
-                }
-
+                HandleHandshake(peers, from, message);
                 break;
         }
 
         // Produce outgoing messages for the peer and push them to the MessagePipe
+    }
+
+    private void HandleHandshake(Dictionary<PeerId, PeerState> peers, PeerId from, ClientMessage message)
+    {
+        string authChainJson = message.Handshake.AuthChain.ToStringUtf8();
+        Dictionary<string, string>? headers = JsonSerializer.Deserialize<Dictionary<string, string>>(authChainJson);
+
+        if (headers == null)
+        {
+            messagePipe.Send(new OutgoingMessage(from, new ServerMessage
+            {
+                Handshake = new HandshakeResponse
+                {
+                    Success = false,
+                    Error = "Invalid auth chain JSON",
+                },
+            }, ITransport.PacketMode.RELIABLE));
+
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<AuthLink> chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
+
+            string timestamp = string.Empty;
+            string metadata =  string.Empty;
+
+            foreach (var kv in headers)
+            {
+                if (kv.Key.Equals("x-identity-timestamp", StringComparison.OrdinalIgnoreCase))
+                    timestamp = kv.Value;
+
+                if (kv.Key.Equals("x-identity-metadata", StringComparison.OrdinalIgnoreCase))
+                    metadata = kv.Value;
+            }
+
+            string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
+            var result = authChainValidator.Validate(chain, expectedPayload);
+
+            peers[from] = new PeerState(result.UserAddress, PeerConnectionState.AUTHENTICATED);
+
+            messagePipe.Send(new OutgoingMessage(from, new ServerMessage
+            {
+                Handshake = new HandshakeResponse
+                {
+                    Success = true,
+                },
+            }, ITransport.PacketMode.RELIABLE));
+        }
+        catch (Exception e)
+        {
+            messagePipe.Send(new OutgoingMessage(from, new ServerMessage
+            {
+                Handshake = new HandshakeResponse
+                {
+                    Success = false,
+                    Error = e.Message,
+                },
+            }, ITransport.PacketMode.RELIABLE));
+        }
     }
 }

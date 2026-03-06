@@ -11,9 +11,9 @@
 
     <ItemGroup>
         <!-- protoc binary — platform-correct binary resolved via Protobuf_ResolvePlatform target -->
-        <PackageReference Include="Grpc.Tools" Version="2.53.0" PrivateAssets="All" />
+        <PackageReference Include="Grpc.Tools" Version="2.78.0" PrivateAssets="All" />
         <!-- Google.Protobuf runtime required by csharp_out generated classes -->
-        <PackageReference Include="Google.Protobuf" Version="3.22.3" />
+        <PackageReference Include="Google.Protobuf" Version="3.25.3" />
     </ItemGroup>
 
     <!-- ── Proto code generation ──────────────────────────────────────────────
@@ -84,7 +84,7 @@
         <MakeDir Directories="$(_GeneratedDir)" />
 
         <!-- Standard C# classes + bitwise Encode/Decode extensions in one pass -->
-        <Exec Command="&quot;$(Protobuf_ProtocFullPath)&quot; --proto_path=&quot;$(_ProtoRoot)&quot; --proto_path=&quot;$(Protobuf_StandardImportsPath)&quot; --csharp_out=&quot;$(_GeneratedDir)&quot; --plugin=protoc-gen-bitwise=&quot;$(_Plugin)&quot; --bitwise_out=&quot;$(_GeneratedDir)&quot; @(_ProtoSources->'&quot;%(Identity)&quot;', ' ')"
+        <Exec Command="&quot;$(Protobuf_ProtocFullPath)&quot; --proto_path=&quot;$(Protobuf_StandardImportsPath)&quot; --proto_path=&quot;$(_ProtoRoot)&quot; --csharp_out=&quot;$(_GeneratedDir)&quot; --plugin=protoc-gen-bitwise=&quot;$(_Plugin)&quot; --bitwise_out=&quot;$(_GeneratedDir)&quot; @(_ProtoSources->'&quot;%(Identity)&quot;', ' ') 2&gt;&amp;1"
               WorkingDirectory="$(MSBuildProjectDirectory)" />
 
         <Touch Files="$(_GeneratedDir)\.proto.stamp" AlwaysCreate="true" />

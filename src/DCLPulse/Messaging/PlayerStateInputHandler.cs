@@ -1,14 +1,15 @@
-﻿using Decentraland.Pulse;
+using Decentraland.Pulse;
 using Pulse.Peers;
+using Pulse.Peers.Simulation;
 
 namespace Pulse.Messaging;
 
-public class PlayerStateInputHandler(ITimeProvider timeProvider)
+public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard)
 {
-    public void Handle(PeerState peerState, PlayerStateInput input)
+    public void Handle(PeerIndex peerIndex, PeerState peerState, PlayerStateInput input)
     {
         var snapshot = new PeerSnapshot(
-            peerState.SnapshotHistory.LastSeq + 1,
+            snapshotBoard.LastSeq(peerIndex) + 1,
             timeProvider.MonotonicTime,
             input.State.Position,
             input.State.Velocity,
@@ -20,6 +21,6 @@ public class PlayerStateInputHandler(ITimeProvider timeProvider)
             (PlayerAnimationFlags)input.State.StateFlags,
             input.State.GlideState);
 
-        peerState.SnapshotHistory.Store(snapshot);
+        snapshotBoard.Publish(peerIndex, in snapshot);
     }
 }

@@ -7,8 +7,8 @@ namespace Pulse.Messaging;
 /// </summary>
 public readonly ref struct MessagePacket(
     ReadOnlySpan<byte> data,
-    PeerId fromPeer)
+    PeerIndex fromPeer)
 {
     public readonly ReadOnlySpan<byte> Data = data;
-    public readonly PeerId FromPeer = fromPeer;
+    public readonly PeerIndex FromPeer = fromPeer;
 }

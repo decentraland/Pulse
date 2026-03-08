@@ -1,12 +1,10 @@
-﻿namespace Pulse.Peers;
+namespace Pulse.Peers;
 
-public class PeerStateFactory(PeerOptions options)
+public class PeerStateFactory
 {
-    private readonly int historyCapacity = options.SnapshotHistoryCapacity;
-
     /// <summary>
     ///     TODO add pooling
     /// </summary>
     public PeerState Create() =>
-        new (PeerConnectionState.PENDING_AUTH, new PeerSnapshotHistory(historyCapacity));
+        new (PeerConnectionState.PENDING_AUTH);
 }

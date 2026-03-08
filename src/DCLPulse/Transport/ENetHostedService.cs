@@ -16,7 +16,7 @@ public sealed class ENetHostedService(
     private readonly ENetTransportOptions options = options.Value;
 
     // Keyed by ENet peer ID. Maintained exclusively on the ENet thread — no locking needed.
-    private readonly Dictionary<PeerId, Peer> connectedPeers = new ();
+    private readonly Dictionary<PeerIndex, Peer> connectedPeers = new ();
     private readonly byte[] receiveBuffer = new byte[options.Value.BufferSize];
     private readonly byte[] sendBuffer = new byte[options.Value.BufferSize];
 
@@ -108,12 +108,12 @@ public sealed class ENetHostedService(
 
     private void HandleEvent(ref Event netEvent)
     {
-        var peerId = new PeerId(netEvent.Peer.ID);
+        var peerIndex = new PeerIndex(netEvent.Peer.ID);
 
         switch (netEvent.Type)
         {
             case EventType.Connect:
-                connectedPeers[peerId] = netEvent.Peer;
+                connectedPeers[peerIndex] = netEvent.Peer;
 
                 logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
@@ -121,7 +121,7 @@ public sealed class ENetHostedService(
                 break;
 
             case EventType.Disconnect:
-                connectedPeers.Remove(peerId);
+                connectedPeers.Remove(peerIndex);
 
                 logger.LogDebug("Peer disconnected: id={ID} data={Data}.",
                     netEvent.Peer.ID, netEvent.Data);
@@ -129,7 +129,7 @@ public sealed class ENetHostedService(
                 break;
 
             case EventType.Timeout:
-                connectedPeers.Remove(peerId);
+                connectedPeers.Remove(peerIndex);
                 logger.LogDebug("Peer timed out: id={ID}.", netEvent.Peer.ID);
                 break;
 
@@ -138,7 +138,7 @@ public sealed class ENetHostedService(
                 using Packet _ = netEvent.Packet;
                 netEvent.Packet.CopyTo(receiveBuffer);
 
-                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length), peerId));
+                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length), peerIndex));
 
                 break;
             }

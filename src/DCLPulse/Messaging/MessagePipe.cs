@@ -56,7 +56,7 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
         ClientMessage? message = null;
 
         try { message = ClientMessage.Parser.ParseFrom(packet.Data); }
-        catch (Exception ex) { logger.LogWarning(ex, "Failed to parse packet from peer {PeerId}", packet.FromPeer.Value); }
+        catch (Exception ex) { logger.LogWarning(ex, "Failed to parse packet from peer {PeerIndex}", packet.FromPeer.Value); }
 
         if (message is null)
             return;
@@ -65,7 +65,7 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
         incomingChannel.Writer.TryWrite(new IncomingMessage(packet.FromPeer, message));
     }
 
-    public readonly record struct IncomingMessage(PeerId From, ClientMessage Message);
+    public readonly record struct IncomingMessage(PeerIndex From, ClientMessage Message);
 
-    public readonly record struct OutgoingMessage(PeerId To, ServerMessage Message, ITransport.PacketMode PacketMode);
+    public readonly record struct OutgoingMessage(PeerIndex To, ServerMessage Message, ITransport.PacketMode PacketMode);
 }

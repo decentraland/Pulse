@@ -95,6 +95,8 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **No proactive STATE_FULL mid-session.** The client drives resync, the server never anticipates it.
 
+**Snapshot History.** The server keeps a small rolling history of snapshots per subject. When a `RESYNC_REQUEST` arrives with the client's last known seq, and the seq is still in the ring, the server sends a targeted delta instead of a full snapshot.
+
 **Interest management** on the server limits which players receive updates about which other players. Per-observer fan-out is the primary bandwidth concern.
 
 ---
@@ -106,7 +108,6 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 **MovementInput** (ch1, unreliable sequenced, variable while moving, 0hz while emoting)
 - Full continuous state every packet: position, velocity, rotation, blend values, head IK
 - Boolean state flags packed as u16 bitmask (grounded, jumping, falling, stunned, etc.)
-- 3-tick redundancy: last 3 ticks bundled in each packet to recover from loss without retransmission
 - No piggybacked ACKs (sliding window means no ACK tracking needed)
 - Quantized floats throughout
 - Tiered quantization based on interest management

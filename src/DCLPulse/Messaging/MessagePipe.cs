@@ -10,7 +10,7 @@ namespace Pulse.Messaging;
 ///     Receives raw transport packets from the ENet thread, parses them off that thread,
 ///     and dispatches the resulting <see cref="ClientMessage" /> to <see cref="PeersManager" />.
 ///     Threading model:
-///     Writer (ENet thread) — calls <see cref="OnDataReceived{TTransportPacket}" />:
+///     Writer (ENet thread) — calls <see cref="OnDataReceived" />:
 ///     1. Parses protobuf synchronously from native memory (microseconds, no alloc for the span).
 ///     2. Disposes the native ENet packet immediately so ENet can reclaim its memory.
 ///     3. Writes the parsed envelope to an unbounded channel (lock-free, never blocks).
@@ -51,8 +51,7 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
     ///     Called on the Transport thread for every received packet.
     ///     Must be fast and must not throw — any exception here stalls the Transport loop.
     /// </summary>
-    public void OnDataReceived<TTransportPacket>(MessagePacket<TTransportPacket> packet)
-        where TTransportPacket: IDisposable
+    public void OnDataReceived(MessagePacket packet)
     {
         ClientMessage? message = null;
 

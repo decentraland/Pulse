@@ -26,6 +26,9 @@ public sealed class PeersManager : BackgroundService
 {
     private readonly MessagePipe messagePipe;
     private readonly ILogger<PeersManager> logger;
+    private readonly PeerStateFactory peerStateFactory;
+    private readonly PlayerStateInputHandler inputHandler;
+
     private readonly int workerCount;
 
     // One channel per worker. Router is the sole writer (SingleWriter=true).
@@ -36,10 +39,12 @@ public sealed class PeersManager : BackgroundService
     private readonly Dictionary<PeerId, PeerState>[] peerStates;
     private readonly AuthChainValidator authChainValidator;
 
-    public PeersManager(MessagePipe messagePipe, ILogger<PeersManager> logger)
+    public PeersManager(MessagePipe messagePipe, PeerStateFactory peerStateFactory, PlayerStateInputHandler inputHandler, ILogger<PeersManager> logger)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
+        this.inputHandler = inputHandler;
+        this.peerStateFactory = peerStateFactory;
         workerCount = Environment.ProcessorCount;
         authChainValidator = new AuthChainValidator(new NethereumPersonalSignVerifier());
 
@@ -115,32 +120,34 @@ public sealed class PeersManager : BackgroundService
     private void HandleMessage(Dictionary<PeerId, PeerState> peers, PeerId from, ClientMessage message)
     {
         // TODO Handle the state machine based on the peer state
-        // At this point peers may not contain a peer state at all - it should be divised from the package
-        if (message.MessageCase != ClientMessage.MessageOneofCase.Handshake)
-        {
-            var isAuthenticated = false;
-
-            if (peers.TryGetValue(from, out PeerState? state))
-                isAuthenticated = state.ConnectionState == PeerConnectionState.AUTHENTICATED;
-
-            if (!isAuthenticated)
-                // Skip messages from unauthenticated peer
-                return;
-        }
 
         switch (message.MessageCase)
         {
+            // TODO separate every handler to the respective class
             case ClientMessage.MessageOneofCase.Handshake:
-                HandleHandshake(peers, from, message);
+                HandleHandshake(peers, from, message.Handshake);
+                break;
+            case ClientMessage.MessageOneofCase.Input:
+                // At this point peers may not contain a peer state at all - it should be divised from the package
+
+                if (!peers.TryGetValue(from, out PeerState? state) || state.ConnectionState != PeerConnectionState.AUTHENTICATED)
+
+                    // Skip messages from unauthenticated peer
+                    // TODO add analytics to understand if there is a problem
+                    return;
+
+                // Input Handler doesn't produce output messages as the simulation is running completely independently in its own loop for each peer
+                // and produces diffs based on the interest management
+                inputHandler.Handle(state, message.Input);
                 break;
         }
 
         // Produce outgoing messages for the peer and push them to the MessagePipe
     }
 
-    private void HandleHandshake(Dictionary<PeerId, PeerState> peers, PeerId from, ClientMessage message)
+    private void HandleHandshake(Dictionary<PeerId, PeerState> peers, PeerId from, HandshakeRequest handshakeRequest)
     {
-        string authChainJson = message.Handshake.AuthChain.ToStringUtf8();
+        string authChainJson = handshakeRequest.AuthChain.ToStringUtf8();
         Dictionary<string, string>? headers = JsonSerializer.Deserialize<Dictionary<string, string>>(authChainJson);
 
         if (headers == null)
@@ -176,7 +183,11 @@ public sealed class PeersManager : BackgroundService
             string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
             var result = authChainValidator.Validate(chain, expectedPayload);
 
-            peers[from] = new PeerState(result.UserAddress, PeerConnectionState.AUTHENTICATED);
+            PeerState peer = peerStateFactory.Create();
+            peer.WalletId = result.UserAddress;
+            peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
+
+            peers[from] = peer;
 
             messagePipe.Send(new OutgoingMessage(from, new ServerMessage
             {

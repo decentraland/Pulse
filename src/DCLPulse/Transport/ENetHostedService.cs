@@ -138,10 +138,7 @@ public sealed class ENetHostedService(
                 using Packet _ = netEvent.Packet;
                 netEvent.Packet.CopyTo(receiveBuffer);
 
-                messagePipe.OnDataReceived(new MessagePacket<Packet>(
-                    netEvent.Packet,
-                    new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length),
-                    peerId));
+                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length), peerId));
 
                 break;
             }

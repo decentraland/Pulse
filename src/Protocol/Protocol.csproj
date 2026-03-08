@@ -48,6 +48,14 @@
         <_ProtoSources Include="$(_ProtoRoot)\decentraland\pulse\**\*.proto" />
     </ItemGroup>
 
+    <!-- Tell Rider / VS project system about external proto inputs so the IDE's
+         fast up-to-date check doesn't short-circuit MSBuild when a .proto in the
+         sibling protocol repo changes. -->
+    <ItemGroup Label="IDEUpToDateCheck">
+        <UpToDateCheckInput Include="@(_ProtoSources)" />
+        <UpToDateCheckBuilt Include="$(_GeneratedDir)\.proto.stamp" />
+    </ItemGroup>
+
     <!--
         _EnsurePythonDeps: installs protoc-gen-bitwise Python dependencies via pip.
         Runs only when requirements.txt changes (stamp-based), so the build is
@@ -81,6 +89,8 @@
             Inputs="@(_ProtoSources)"
             Outputs="$(_GeneratedDir)\.proto.stamp">
 
+        <Message Text="Regenerating protocol: running protoc with csharp_out + bitwise_out..." Importance="high" />
+
         <MakeDir Directories="$(_GeneratedDir)" />
 
         <!-- Standard C# classes + bitwise Encode/Decode extensions in one pass -->
@@ -88,6 +98,8 @@
               WorkingDirectory="$(MSBuildProjectDirectory)" />
 
         <Touch Files="$(_GeneratedDir)\.proto.stamp" AlwaysCreate="true" />
+
+        <Message Text="Regenerating protocol: done." Importance="high" />
     </Target>
 
     <!--

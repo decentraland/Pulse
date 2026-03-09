@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers;
@@ -19,6 +20,7 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<PeerOptions>>
 builder.Services.AddHostedService<ENetHostedService>();
 builder.Services.AddHostedService<PeersManager>();
 
+builder.Services.AddSingleton<ITimeProvider>(new SystemTimeProvider());
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();

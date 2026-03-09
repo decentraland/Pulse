@@ -29,6 +29,7 @@ public sealed class PeersManager : BackgroundService
 {
     private readonly MessagePipe messagePipe;
     private readonly ILogger<PeersManager> logger;
+    private readonly ITimeProvider timeProvider;
     private readonly PeerStateFactory peerStateFactory;
     private readonly PlayerStateInputHandler inputHandler;
     private readonly IAreaOfInterest areaOfInterest;
@@ -38,7 +39,8 @@ public sealed class PeersManager : BackgroundService
     private readonly int workerCount;
 
     // One channel per worker. Router is the sole writer (SingleWriter=true).
-    private readonly Channel<IncomingMessage>[] workerChannels;
+    private readonly Channel<IncomingMessage>[] messageChannels;
+    private readonly Channel<PeerLifeCycleEvent>[] peerLifeCycleChannels;
 
     // Per-worker peer state — indexed by [workerIndex][peerIndex].
     // Accessed only by the owning worker, so no concurrent access.
@@ -52,10 +54,12 @@ public sealed class PeersManager : BackgroundService
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
         PeerOptions peerOptions,
-        ILogger<PeersManager> logger)
+        ILogger<PeersManager> logger,
+        ITimeProvider timeProvider)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
+        this.timeProvider = timeProvider;
         this.inputHandler = inputHandler;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
@@ -64,12 +68,16 @@ public sealed class PeersManager : BackgroundService
         workerCount = Environment.ProcessorCount;
         authChainValidator = new AuthChainValidator(new NethereumPersonalSignVerifier());
 
-        workerChannels = new Channel<IncomingMessage>[workerCount];
+        messageChannels = new Channel<IncomingMessage>[workerCount];
+        peerLifeCycleChannels = new Channel<PeerLifeCycleEvent>[workerCount];
         peerStates = new Dictionary<PeerIndex, PeerState>[workerCount];
 
         for (var i = 0; i < workerCount; i++)
         {
-            workerChannels[i] = Channel.CreateUnbounded<IncomingMessage>(
+            messageChannels[i] = Channel.CreateUnbounded<IncomingMessage>(
+                new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
+
+            peerLifeCycleChannels[i] = Channel.CreateUnbounded<PeerLifeCycleEvent>(
                 new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
 
             peerStates[i] = new Dictionary<PeerIndex, PeerState>();
@@ -80,10 +88,10 @@ public sealed class PeersManager : BackgroundService
     {
         var tasks = new Task[workerCount + 1];
 
-        tasks[0] = RouteAsync(stoppingToken);
+        tasks[0] = Task.WhenAll(RouteAsync(stoppingToken), RoutePeerLifeCycleEventsAsync(stoppingToken));
 
         for (var i = 0; i < workerCount; i++)
-            tasks[i + 1] = WorkerAsync(i, workerChannels[i].Reader, stoppingToken);
+            tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader, peerLifeCycleChannels[i].Reader, stoppingToken);
 
         return Task.WhenAll(tasks);
     }
@@ -99,13 +107,31 @@ public sealed class PeersManager : BackgroundService
             await foreach (IncomingMessage msg in messagePipe.ReadIncomingMessagesAsync(ct))
             {
                 var index = (int)(msg.From.Value % (uint)workerCount);
-                workerChannels[index].Writer.TryWrite(msg);
+                messageChannels[index].Writer.TryWrite(msg);
             }
         }
         finally
         {
             // Signal every worker to drain and exit — runs even on cancellation.
-            foreach (Channel<IncomingMessage> ch in workerChannels)
+            foreach (Channel<IncomingMessage> ch in messageChannels)
+                ch.Writer.TryComplete();
+        }
+    }
+
+    private async Task RoutePeerLifeCycleEventsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (PeerLifeCycleEvent evt in messagePipe.ReadPeerLifeCycleAsync(ct))
+            {
+                var workerIndex = (int)(evt.From.Value % (uint)workerCount);
+                peerLifeCycleChannels[workerIndex].Writer.TryWrite(evt);
+            }
+        }
+        finally
+        {
+            // Signal every worker to drain and exit — runs even on cancellation.
+            foreach (Channel<IncomingMessage> ch in messageChannels)
                 ch.Writer.TryComplete();
         }
     }
@@ -116,7 +142,10 @@ public sealed class PeersManager : BackgroundService
     ///     2. If next tick isn't due, wait for messages with timeout.
     ///     3. When tick fires, run simulation for all owned observers.
     /// </summary>
-    private async Task WorkerAsync(int workerIndex, ChannelReader<IncomingMessage> reader, CancellationToken ct)
+    private async Task WorkerAsync(int workerIndex,
+        ChannelReader<IncomingMessage> messageReader,
+        ChannelReader<PeerLifeCycleEvent> peerLifeCycleReader,
+        CancellationToken ct)
     {
         Dictionary<PeerIndex, PeerState> peers = peerStates[workerIndex];
 
@@ -124,29 +153,65 @@ public sealed class PeersManager : BackgroundService
             areaOfInterest,
             snapshotBoard,
             messagePipe,
-            peerOptions.SimulationSteps);
+            peerOptions.SimulationSteps,
+            timeProvider);
 
         uint tickCounter = 0;
         long nextTickTime = Stopwatch.GetTimestamp() + TickMsToStopwatchTicks(simulation.BaseTickMs);
 
-        // Reusable CTS for tick-deadline waits — avoids allocating a new linked CTS every 50ms.
-        // TryReset (available since .NET 6) restores the CTS to a non-cancelled state.
-        using var tickCts = new CancellationTokenSource();
-        using CancellationTokenRegistration reg = ct.Register(static s => ((CancellationTokenSource)s!).Cancel(), tickCts);
-
         while (!ct.IsCancellationRequested)
         {
-            DrainMessages(reader, peers, workerIndex);
+            DrainPeerLifeCycleEvents(peerLifeCycleReader, peers, workerIndex);
+            DrainMessages(messageReader, peers, workerIndex);
 
             long now = Stopwatch.GetTimestamp();
 
-            if (now >= nextTickTime) { nextTickTime = RunSimulationTick(simulation, peers, ref tickCounter, now, workerIndex); }
+            if (now >= nextTickTime)
+                nextTickTime = RunSimulationTick(simulation, peers, ref tickCounter, now, workerIndex);
 
-            if (!await WaitForMessagesOrTick(reader, tickCts, nextTickTime, ct))
-                break;
+            await WaitForMessagesOrTick(messageReader, nextTickTime, ct);
         }
 
-        DrainMessages(reader, peers, workerIndex);
+        DrainPeerLifeCycleEvents(peerLifeCycleReader, peers, workerIndex);
+        DrainMessages(messageReader, peers, workerIndex);
+    }
+
+    private void DrainPeerLifeCycleEvents(ChannelReader<PeerLifeCycleEvent> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
+    {
+        while (reader.TryRead(out PeerLifeCycleEvent evt))
+        {
+            PeerIndex from = evt.From;
+
+            try
+            {
+                if (evt.Type == PeerEventType.Connected)
+                {
+                    PeerState peerState = peerStateFactory.Create();
+                    peerState.ConnectionState = PeerConnectionState.PENDING_AUTH;
+                    peerState.TransportState = new PeerTransportState(timeProvider.MonotonicTime);
+                    peers[from] = peerState;
+                }
+                else if (evt.Type == PeerEventType.Disconnected)
+                {
+                    if (!peers.TryGetValue(from, out PeerState? peerState))
+                        peerState = peerStateFactory.Create();
+
+                    peerState.ConnectionState = PeerConnectionState.DISCONNECTING;
+
+                    peerState.TransportState = peerState.TransportState with
+                    {
+                        DisconnectionTime = timeProvider.MonotonicTime,
+                    };
+
+                    peers[from] = peerState;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling {LifeCycleType} from peer {PeerIndex} on worker {Worker}.",
+                    evt.Type, from.Value, workerIndex);
+            }
+        }
     }
 
     private void DrainMessages(ChannelReader<IncomingMessage> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
@@ -183,33 +248,26 @@ public sealed class PeersManager : BackgroundService
 
     /// <summary>
     ///     Suspends the worker until a message arrives or the next tick deadline,
-    ///     whichever comes first. Returns false if the parent cancellation token fired.
+    ///     whichever comes first
     /// </summary>
-    private static async Task<bool> WaitForMessagesOrTick(
+    private static async Task WaitForMessagesOrTick(
         ChannelReader<IncomingMessage> reader,
-        CancellationTokenSource tickCts,
         long nextTickTime,
         CancellationToken ct)
     {
         long remaining = nextTickTime - Stopwatch.GetTimestamp();
 
         if (remaining <= 0)
-            return true;
+            return;
 
-        var waitMs = (int)(remaining * 1000 / Stopwatch.Frequency);
+        int waitMs = (int)(remaining * 1000 / Stopwatch.Frequency);
 
         if (waitMs <= 0)
-            return true;
+            return;
 
-        tickCts.CancelAfter(waitMs);
-
-        try { await reader.WaitToReadAsync(tickCts.Token); }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            // Timer expired — loop back to drain + simulate
-        }
-
-        return tickCts.TryReset();
+        Task<bool> waitToReadTask = reader.WaitToReadAsync(ct).AsTask();
+        Task delayTask = Task.Delay(waitMs, ct);
+        await Task.WhenAny(waitToReadTask, delayTask);
     }
 
     private static long TickMsToStopwatchTicks(uint ms) =>

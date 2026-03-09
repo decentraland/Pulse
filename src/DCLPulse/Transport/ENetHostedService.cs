@@ -100,9 +100,10 @@ public sealed class ENetHostedService(
     private void SendToPeer(Peer peer, ENetChannel channel, IMessage message)
     {
         int size = message.CalculateSize();
-        message.WriteTo(new Span<byte>(sendBuffer, 0, size));
+        var span = new Span<byte>(sendBuffer, 0, size);
+        message.WriteTo(span);
         var packet = default(Packet);
-        packet.Create(sendBuffer, 0, size, channel.PacketMode);
+        packet.Create(span, channel.PacketMode);
         peer.Send(channel.ChannelId, ref packet);
     }
 
@@ -115,6 +116,8 @@ public sealed class ENetHostedService(
             case EventType.Connect:
                 connectedPeers[peerIndex] = netEvent.Peer;
 
+                messagePipe.OnPeerConnected(peerIndex);
+
                 logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
 
@@ -122,7 +125,7 @@ public sealed class ENetHostedService(
 
             case EventType.Disconnect:
                 connectedPeers.Remove(peerIndex);
-
+                messagePipe.OnPeerDisconnected(peerIndex);
                 logger.LogDebug("Peer disconnected: id={ID} data={Data}.",
                     netEvent.Peer.ID, netEvent.Data);
 
@@ -130,6 +133,7 @@ public sealed class ENetHostedService(
 
             case EventType.Timeout:
                 connectedPeers.Remove(peerIndex);
+                messagePipe.OnPeerDisconnected(peerIndex);
                 logger.LogDebug("Peer timed out: id={ID}.", netEvent.Peer.ID);
                 break;
 

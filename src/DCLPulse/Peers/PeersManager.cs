@@ -239,7 +239,7 @@ public sealed class PeersManager : BackgroundService
 
                 // Input Handler doesn't produce output messages as the simulation is running completely independently in its own loop for each peer
                 // and produces diffs based on the interest management
-                inputHandler.Handle(from, state, message.Input);
+                inputHandler.Handle(from, message.Input);
                 break;
         }
     }

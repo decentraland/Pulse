@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers;
@@ -15,6 +16,8 @@ builder.Services.Configure<PeerOptions>(
 
 // Resolve PeerOptions directly for services that don't use IOptions<T>
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<PeerOptions>>().Value);
+
+builder.Services.AddSingleton<ITimeProvider, StopwatchTimeProvider>();
 
 builder.Services.AddHostedService<ENetHostedService>();
 builder.Services.AddHostedService<PeersManager>();

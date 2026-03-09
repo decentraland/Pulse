@@ -6,7 +6,7 @@ namespace Pulse.Messaging;
 
 public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard)
 {
-    public void Handle(PeerIndex peerIndex, PeerState peerState, PlayerStateInput input)
+    public void Handle(PeerIndex peerIndex, PlayerStateInput input)
     {
         var snapshot = new PeerSnapshot(
             snapshotBoard.LastSeq(peerIndex) + 1,

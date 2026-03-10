@@ -37,6 +37,8 @@ public sealed class SnapshotBoard
         lastSeqs = new uint[maxPeers];
         active = new bool[maxPeers];
 
+        Array.Fill(lastSeqs, uint.MaxValue);
+
         for (var i = 0; i < maxPeers; i++)
             rings[i] = new PeerSnapshot[ringCapacity];
     }
@@ -139,9 +141,14 @@ public sealed class SnapshotBoard
         Volatile.Write(ref active[(int)id.Value], true);
     }
 
+    /// <summary>
+    ///     It should be called when the Peer disconnects/about to disconnect
+    /// </summary>
     public void ClearActive(PeerIndex id)
     {
-        Volatile.Write(ref active[(int)id.Value], false);
+        var index = (int)id.Value;
+        Volatile.Write(ref active[index], false);
+        lastSeqs[index] = uint.MaxValue;
     }
 
     /// <summary>

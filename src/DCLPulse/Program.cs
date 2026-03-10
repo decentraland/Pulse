@@ -46,8 +46,11 @@ builder.Services.AddSingleton(sp =>
     return new SnapshotBoard(transportOptions.MaxPeers, peerOptions.SnapshotHistoryCapacity);
 });
 
-// TODO: Replace with a real IAreaOfInterest implementation
-builder.Services.AddSingleton<IAreaOfInterest, NullAreaOfInterest>();
+builder.Services.Configure<SpatialAreaOfInterestOptions>(
+    builder.Configuration.GetSection(SpatialAreaOfInterestOptions.SECTION_NAME));
+
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SpatialAreaOfInterestOptions>>().Value);
+builder.Services.AddSingleton<IAreaOfInterest, SpatialAreaOfInterest>();
 
 IHost host = builder.Build();
 host.Run();

@@ -84,7 +84,8 @@ public sealed class PeerSimulation : IPeerSimulation
                 // Remove the peer from the registry after time has passed from disconnection event
                 if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
                 {
-                    // TODO: clean snapshots
+                    // TODO: clear snapshot memory
+                    snapshotBoard.ClearActive(observerId);
                     peersToBeRemoved.Add(observerId);
                     continue;
                 }
@@ -165,20 +166,26 @@ public sealed class PeerSimulation : IPeerSimulation
             if (isNew)
             {
                 view = new PeerToPeerView { Onto = entry.Subject };
-                SendStateFull(observerId, entry.Subject, subjectSnapshot);
+                PlayerStateFull state = SendStateFull(entry.Subject, subjectSnapshot);
+
+                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                {
+                    PlayerStateFull = state,
+                }, ITransport.PacketMode.RELIABLE));
             }
             else if (view.LastSentSeq != subjectSnapshot.Seq)
             {
-                ServerMessage delta =
-                    PeerViewDiff.CreateMessage(view.LastSentSnapshot, subjectSnapshot, entry.Tier);
+                PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(entry.Subject, view.LastSentSnapshot, subjectSnapshot, entry.Tier);
 
-                messagePipe.Send(new OutgoingMessage(observerId, delta, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                {
+                    PlayerStateDelta = delta,
+                }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
             }
             else
-            {
+
                 // No new data — already stamped above, nothing else to do
                 continue;
-            }
 
             view.LastSentSeq = subjectSnapshot.Seq;
             view.LastSentSnapshot = subjectSnapshot;
@@ -208,8 +215,31 @@ public sealed class PeerSimulation : IPeerSimulation
             views.Remove(id);
     }
 
-    private void SendStateFull(PeerIndex observerId, PeerIndex subjectId, PeerSnapshot snapshot)
+    private PlayerStateFull SendStateFull(PeerIndex subjectId, PeerSnapshot snapshot)
     {
-        // TODO: Construct PlayerStateFull from snapshot and send reliably
+        var state = new PlayerState
+        {
+            Position = new Decentraland.Common.Vector3 { X = snapshot.Position.X, Y = snapshot.Position.Y, Z = snapshot.Position.Z },
+            Velocity = new Decentraland.Common.Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
+            RotationY = snapshot.RotationY,
+            MovementBlend = snapshot.MovementBlend,
+            SlideBlend = snapshot.SlideBlend,
+            StateFlags = (uint)snapshot.AnimationFlags,
+            GlideState = snapshot.GlideState,
+        };
+
+        if (snapshot.HeadYaw.HasValue)
+            state.HeadYaw = snapshot.HeadYaw.Value;
+
+        if (snapshot.HeadPitch.HasValue)
+            state.HeadPitch = snapshot.HeadPitch.Value;
+
+        return new PlayerStateFull
+        {
+            SubjectId = subjectId.Value,
+            Sequence = snapshot.Seq,
+            ServerTick = snapshot.ServerTick,
+            State = state,
+        };
     }
 }

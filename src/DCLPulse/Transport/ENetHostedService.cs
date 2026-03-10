@@ -11,7 +11,9 @@ public sealed class ENetHostedService(
     IOptions<ENetTransportOptions> options,
     ILogger<ENetHostedService> logger,
     MessagePipe messagePipe
-) : BackgroundService
+) : BackgroundService,
+    // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
+    ITransport
 {
     private readonly ENetTransportOptions options = options.Value;
 
@@ -154,5 +156,12 @@ public sealed class ENetHostedService(
         await base.StopAsync(cancellationToken);
         Library.Deinitialize();
         logger.LogInformation("ENet deinitialized.");
+    }
+
+    public void Disconnect(PeerIndex pi, ITransport.DisconnectReason reason)
+    {
+        if (!connectedPeers.TryGetValue(pi, out Peer peer)) return;
+
+        peer.Disconnect((uint) reason);
     }
 }

@@ -4,12 +4,20 @@ using Pulse.Peers.Simulation;
 
 namespace Pulse.Messaging;
 
-public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard)
+public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard) : IMessageHandler
 {
-    public void Handle(PeerIndex peerIndex, PlayerStateInput input)
+    public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
+        if (!peers.TryGetValue(from, out PeerState? state) || state.ConnectionState != PeerConnectionState.AUTHENTICATED)
+
+            // Skip messages from unauthenticated peer
+            // TODO add analytics to understand if there is a problem
+            return;
+
+        PlayerStateInput input = message.Input;
+
         var snapshot = new PeerSnapshot(
-            snapshotBoard.LastSeq(peerIndex) + 1,
+            snapshotBoard.LastSeq(from) + 1,
             timeProvider.MonotonicTime,
             input.State.Position,
             input.State.Velocity,
@@ -21,6 +29,6 @@ public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard s
             (PlayerAnimationFlags)input.State.StateFlags,
             input.State.GlideState);
 
-        snapshotBoard.Publish(peerIndex, in snapshot);
+        snapshotBoard.Publish(from, in snapshot);
     }
 }

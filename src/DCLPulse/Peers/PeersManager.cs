@@ -45,6 +45,7 @@ public sealed class PeersManager : BackgroundService
     // Accessed only by the owning worker, so no concurrent access.
     internal readonly Dictionary<PeerIndex, PeerState>[] peerStates;
     private readonly AuthChainValidator authChainValidator;
+    private readonly Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -54,18 +55,19 @@ public sealed class PeersManager : BackgroundService
         SnapshotBoard snapshotBoard,
         PeerOptions peerOptions,
         ILogger<PeersManager> logger,
-        ITimeProvider timeProvider)
+        ITimeProvider timeProvider,
+        Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
         this.timeProvider = timeProvider;
+        this.messageHandlers = messageHandlers;
         this.inputHandler = inputHandler;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
         this.peerOptions = peerOptions;
         workerCount = Environment.ProcessorCount;
-        authChainValidator = new AuthChainValidator(new NethereumPersonalSignVerifier());
 
         messageChannels = new Channel<IncomingMessage>[workerCount];
         peerLifeCycleChannels = new Channel<PeerLifeCycleEvent>[workerCount];
@@ -218,7 +220,13 @@ public sealed class PeersManager : BackgroundService
     {
         while (reader.TryRead(out IncomingMessage item))
         {
-            try { HandleMessage(peers, item.From, item.Message); }
+            try
+            {
+                if (messageHandlers.TryGetValue(item.Message.MessageCase, out var handler))
+                    handler.Handle(peers, item.From, item.Message);
+                else
+                    logger.LogWarning("No handler found for message {MessageCase}, skipped processing", item.Message.MessageCase);
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error handling message from peer {PeerIndex} on worker {Worker}.",
@@ -266,100 +274,5 @@ public sealed class PeersManager : BackgroundService
         Task<bool> waitToReadTask = reader.WaitToReadAsync(ct).AsTask();
         Task delayTask = Task.Delay(waitMs, ct);
         await Task.WhenAny(waitToReadTask, delayTask);
-    }
-
-    /// <summary>
-    ///     Executed on the thread pool
-    /// </summary>
-    private void HandleMessage(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
-    {
-        // TODO Handle the state machine based on the peer state
-
-        switch (message.MessageCase)
-        {
-            // TODO separate every handler to the respective class
-            case ClientMessage.MessageOneofCase.Handshake:
-                HandleHandshake(peers, from, message.Handshake);
-                break;
-            case ClientMessage.MessageOneofCase.Input:
-                // At this point peers may not contain a peer state at all - it should be divised from the package
-
-                if (!peers.TryGetValue(from, out PeerState? state) || state.ConnectionState != PeerConnectionState.AUTHENTICATED)
-
-                    // Skip messages from unauthenticated peer
-                    // TODO add analytics to understand if there is a problem
-                    return;
-
-                // Input Handler doesn't produce output messages as the simulation is running completely independently in its own loop for each peer
-                // and produces diffs based on the interest management
-                inputHandler.Handle(from, message.Input);
-                break;
-        }
-    }
-
-    private void HandleHandshake(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, HandshakeRequest handshakeRequest)
-    {
-        string authChainJson = handshakeRequest.AuthChain.ToStringUtf8();
-        Dictionary<string, string>? headers = JsonSerializer.Deserialize<Dictionary<string, string>>(authChainJson);
-
-        if (headers == null)
-        {
-            messagePipe.Send(new OutgoingMessage(from, new ServerMessage
-            {
-                Handshake = new HandshakeResponse
-                {
-                    Success = false,
-                    Error = "Invalid auth chain JSON",
-                },
-            }, ITransport.PacketMode.RELIABLE));
-
-            return;
-        }
-
-        try
-        {
-            IReadOnlyList<AuthLink> chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
-
-            string timestamp = string.Empty;
-            string metadata = string.Empty;
-
-            foreach (KeyValuePair<string, string> kv in headers)
-            {
-                if (kv.Key.Equals("x-identity-timestamp", StringComparison.OrdinalIgnoreCase))
-                    timestamp = kv.Value;
-
-                if (kv.Key.Equals("x-identity-metadata", StringComparison.OrdinalIgnoreCase))
-                    metadata = kv.Value;
-            }
-
-            string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
-            AuthChainValidationResult result = authChainValidator.Validate(chain, expectedPayload);
-
-            PeerState peer = peerStateFactory.Create();
-            peer.WalletId = result.UserAddress;
-            peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
-
-            peers[from] = peer;
-            snapshotBoard.SetActive(from);
-
-            messagePipe.Send(new OutgoingMessage(from, new ServerMessage
-            {
-                Handshake = new HandshakeResponse
-                {
-                    Success = true,
-                },
-            }, ITransport.PacketMode.RELIABLE));
-        }
-        catch (Exception e)
-        {
-            messagePipe.Send(new OutgoingMessage(from, new ServerMessage
-            {
-                Handshake = new HandshakeResponse
-                {
-                    Success = false,
-                    Error = e.Message,
-                },
-            }, ITransport.PacketMode.RELIABLE));
-        }
     }
 }

@@ -1,3 +1,5 @@
+using DCL.Auth;
+using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using Pulse;
 using Pulse.InterestManagement;
@@ -19,12 +21,22 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<PeerOptions>>
 
 builder.Services.AddSingleton<ITimeProvider, StopwatchTimeProvider>();
 
-builder.Services.AddHostedService<ENetHostedService>();
+builder.Services.AddSingleton<ENetHostedService>();
+builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService<ENetHostedService>());
+builder.Services.AddSingleton<ITransport>(sp => sp.GetRequiredService<ENetHostedService>());
 builder.Services.AddHostedService<PeersManager>();
 
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();
+builder.Services.AddSingleton<HandshakeHandler>();
+builder.Services.AddSingleton(new AuthChainValidator(new NethereumPersonalSignVerifier()));
+
+builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
+{
+    { ClientMessage.MessageOneofCase.Handshake, sp.GetRequiredService<HandshakeHandler>() },
+    { ClientMessage.MessageOneofCase.Input, sp.GetRequiredService<PlayerStateInputHandler>() },
+});
 
 // Simulation
 builder.Services.AddSingleton(sp =>

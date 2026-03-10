@@ -1,11 +1,8 @@
-using DCL.Auth;
-using System.Threading.Channels;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers.Simulation;
-using Pulse.Transport;
-using System.Text.Json;
+using System.Threading.Channels;
 using static Pulse.Messaging.MessagePipe;
 
 namespace Pulse.Peers;
@@ -30,11 +27,9 @@ public sealed class PeersManager : BackgroundService
     private readonly ILogger<PeersManager> logger;
     private readonly ITimeProvider timeProvider;
     private readonly PeerStateFactory peerStateFactory;
-    private readonly PlayerStateInputHandler inputHandler;
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
     private readonly PeerOptions peerOptions;
-
     private readonly int workerCount;
 
     // One channel per worker. Router is the sole writer (SingleWriter=true).
@@ -44,13 +39,11 @@ public sealed class PeersManager : BackgroundService
     // Per-worker peer state — indexed by [workerIndex][peerIndex].
     // Accessed only by the owning worker, so no concurrent access.
     internal readonly Dictionary<PeerIndex, PeerState>[] peerStates;
-    private readonly AuthChainValidator authChainValidator;
     private readonly Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers;
 
     public PeersManager(
         MessagePipe messagePipe,
         PeerStateFactory peerStateFactory,
-        PlayerStateInputHandler inputHandler,
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
         PeerOptions peerOptions,
@@ -62,7 +55,6 @@ public sealed class PeersManager : BackgroundService
         this.logger = logger;
         this.timeProvider = timeProvider;
         this.messageHandlers = messageHandlers;
-        this.inputHandler = inputHandler;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;

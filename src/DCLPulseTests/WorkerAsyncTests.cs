@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse;
 using Pulse.InterestManagement;
@@ -28,12 +29,12 @@ public class WorkerAsyncTests
         manager = new PeersManager(
             new MessagePipe(Substitute.For<ILogger<MessagePipe>>()),
             new PeerStateFactory(),
-            new PlayerStateInputHandler(timeProvider, snapshotBoard),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),
-            timeProvider);
+            timeProvider,
+            new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>());
 
         messageChannel = Channel.CreateUnbounded<MessagePipe.IncomingMessage>();
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();

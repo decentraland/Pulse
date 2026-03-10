@@ -1,5 +1,4 @@
 using DCL.Auth;
-using System.Diagnostics;
 using System.Threading.Channels;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
@@ -44,7 +43,7 @@ public sealed class PeersManager : BackgroundService
 
     // Per-worker peer state — indexed by [workerIndex][peerIndex].
     // Accessed only by the owning worker, so no concurrent access.
-    private readonly Dictionary<PeerIndex, PeerState>[] peerStates;
+    internal readonly Dictionary<PeerIndex, PeerState>[] peerStates;
     private readonly AuthChainValidator authChainValidator;
 
     public PeersManager(
@@ -91,7 +90,14 @@ public sealed class PeersManager : BackgroundService
         tasks[0] = Task.WhenAll(RouteAsync(stoppingToken), RoutePeerLifeCycleEventsAsync(stoppingToken));
 
         for (var i = 0; i < workerCount; i++)
-            tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader, peerLifeCycleChannels[i].Reader, stoppingToken);
+        {
+            var simulation = new PeerSimulation(
+                areaOfInterest, snapshotBoard, messagePipe,
+                peerOptions.SimulationSteps, timeProvider);
+
+            tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader,
+                peerLifeCycleChannels[i].Reader, simulation, stoppingToken);
+        }
 
         return Task.WhenAll(tasks);
     }
@@ -142,41 +148,35 @@ public sealed class PeersManager : BackgroundService
     ///     2. If next tick isn't due, wait for messages with timeout.
     ///     3. When tick fires, run simulation for all owned observers.
     /// </summary>
-    private async Task WorkerAsync(int workerIndex,
+    internal async Task WorkerAsync(int workerIndex,
         ChannelReader<IncomingMessage> messageReader,
         ChannelReader<PeerLifeCycleEvent> peerLifeCycleReader,
+        IPeerSimulation simulation,
         CancellationToken ct)
     {
         Dictionary<PeerIndex, PeerState> peers = peerStates[workerIndex];
 
-        var simulation = new PeerSimulation(
-            areaOfInterest,
-            snapshotBoard,
-            messagePipe,
-            peerOptions.SimulationSteps,
-            timeProvider);
-
         uint tickCounter = 0;
-        long nextTickTime = Stopwatch.GetTimestamp() + TickMsToStopwatchTicks(simulation.BaseTickMs);
+        long nextTickTime = timeProvider.MonotonicTime + simulation.BaseTickMs;
 
         while (!ct.IsCancellationRequested)
         {
             DrainPeerLifeCycleEvents(peerLifeCycleReader, peers, workerIndex);
             DrainMessages(messageReader, peers, workerIndex);
 
-            long now = Stopwatch.GetTimestamp();
+            long now = timeProvider.MonotonicTime;
 
             if (now >= nextTickTime)
                 nextTickTime = RunSimulationTick(simulation, peers, ref tickCounter, now, workerIndex);
 
-            await WaitForMessagesOrTick(messageReader, nextTickTime, ct);
+            await WaitForMessagesOrTick(messageReader, nextTickTime, timeProvider, ct);
         }
 
         DrainPeerLifeCycleEvents(peerLifeCycleReader, peers, workerIndex);
         DrainMessages(messageReader, peers, workerIndex);
     }
 
-    private void DrainPeerLifeCycleEvents(ChannelReader<PeerLifeCycleEvent> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
+    internal void DrainPeerLifeCycleEvents(ChannelReader<PeerLifeCycleEvent> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
     {
         while (reader.TryRead(out PeerLifeCycleEvent evt))
         {
@@ -228,7 +228,7 @@ public sealed class PeersManager : BackgroundService
     }
 
     private long RunSimulationTick(
-        PeerSimulation simulation,
+        IPeerSimulation simulation,
         Dictionary<PeerIndex, PeerState> peers,
         ref uint tickCounter,
         long now,
@@ -242,7 +242,7 @@ public sealed class PeersManager : BackgroundService
         }
 
         tickCounter++;
-        long nextTickTime = now + TickMsToStopwatchTicks(simulation.BaseTickMs);
+        long nextTickTime = now + simulation.BaseTickMs;
         return nextTickTime;
     }
 
@@ -250,28 +250,23 @@ public sealed class PeersManager : BackgroundService
     ///     Suspends the worker until a message arrives or the next tick deadline,
     ///     whichever comes first
     /// </summary>
-    private static async Task WaitForMessagesOrTick(
+    internal static async Task WaitForMessagesOrTick(
         ChannelReader<IncomingMessage> reader,
         long nextTickTime,
+        ITimeProvider timeProvider,
         CancellationToken ct)
     {
-        long remaining = nextTickTime - Stopwatch.GetTimestamp();
+        long remaining = nextTickTime - timeProvider.MonotonicTime;
 
         if (remaining <= 0)
             return;
 
-        int waitMs = (int)(remaining * 1000 / Stopwatch.Frequency);
-
-        if (waitMs <= 0)
-            return;
+        var waitMs = (int)remaining;
 
         Task<bool> waitToReadTask = reader.WaitToReadAsync(ct).AsTask();
         Task delayTask = Task.Delay(waitMs, ct);
         await Task.WhenAny(waitToReadTask, delayTask);
     }
-
-    private static long TickMsToStopwatchTicks(uint ms) =>
-        ms * Stopwatch.Frequency / 1000;
 
     /// <summary>
     ///     Executed on the thread pool

@@ -12,7 +12,7 @@ namespace Pulse.Peers.Simulation;
 ///     and sends STATE_DELTA / STATE_FULL via <see cref="MessagePipe" />.
 ///     Instantiated once per worker - not shared across workers: thus thread-safety is ensured without concurrency.
 /// </summary>
-public sealed class PeerSimulation
+public sealed class PeerSimulation : IPeerSimulation
 {
     /// <summary>
     ///     Sweep stale views every N ticks to reclaim memory from subjects that left the interest set.

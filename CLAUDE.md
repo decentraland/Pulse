@@ -168,7 +168,8 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **Teleport as a separate message, not an is_instant flag.** Teleports are discrete events, not a property of continuous movement. Keeping them as a dedicated reliable message guarantees the interpolation-skip instruction arrives before subsequent position updates.
 
-**server_tick is a single unified clock** across all messages (STATE_DELTA, EMOTE_STARTED, EMOTE_STOPPED, TELEPORT). Client uses it for animation scrubbing and dead reckoning. `peer->roundTripTime` (available on both client and server via ENet) provides latency without requiring client_tick fields in packets.
+**server_tick is a single unified clock** across all messages (STATE_DELTA, EMOTE_STARTED, EMOTE_STOPPED, TELEPORT). Client uses it for animation scrubbing and dead reckoning. `peer->roundTrip
+` (available on both client and server via ENet) provides latency without requiring client_tick fields in packets.
 
 **Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
 
@@ -179,6 +180,11 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 ENet maintains `peer->roundTripTime` automatically on both client and server sides via the reliable channel ACK flow. No manual measurement needed. Client uses `peer->roundTripTime / 2` as one-way latency estimate for animation scrubbing on emote start.
 
 ---
+
+## Tests Approach
+
+- Use NSubstitute instead of Fake/Null implementations
+- Don't mention line numbers in comments as they can change any time
 
 ## Docker — Deployment & Debugging
 

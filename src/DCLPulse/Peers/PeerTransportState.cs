@@ -3,4 +3,4 @@
 /// <summary>
 ///     Transport-related values detached from the transport implementation itself
 /// </summary>
-public readonly struct PeerTransportState(uint roundTripTime) { }
+public readonly record struct PeerTransportState(uint? DisconnectionTime) { }

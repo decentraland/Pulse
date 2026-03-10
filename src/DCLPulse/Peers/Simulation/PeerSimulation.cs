@@ -18,10 +18,13 @@ public sealed class PeerSimulation
     ///     Sweep stale views every N ticks to reclaim memory from subjects that left the interest set.
     /// </summary>
     private const uint SWEEP_INTERVAL = 100;
+    private const uint PEER_DISCONNECTION_CLEAN_TIMEOUT = 5000;
+
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
     private readonly MessagePipe messagePipe;
     private readonly uint[] simulationSteps;
+    private readonly ITimeProvider timeProvider;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -45,18 +48,22 @@ public sealed class PeerSimulation
     /// </summary>
     private readonly List<PeerIndex> sweepBuffer = new ();
 
+    private readonly HashSet<PeerIndex> peersToBeRemoved = new ();
+
     public uint BaseTickMs { get; }
 
     public PeerSimulation(
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
         MessagePipe messagePipe,
-        uint[] simulationSteps)
+        uint[] simulationSteps,
+        ITimeProvider timeProvider)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
         this.messagePipe = messagePipe;
         this.simulationSteps = simulationSteps;
+        this.timeProvider = timeProvider;
 
         BaseTickMs = simulationSteps[0];
         tierDivisors = new uint[simulationSteps.Length];
@@ -72,6 +79,17 @@ public sealed class PeerSimulation
     {
         foreach ((PeerIndex observerId, PeerState observerState) in peers)
         {
+            if (observerState.ConnectionState == PeerConnectionState.DISCONNECTING)
+            {
+                // Remove the peer from the registry after time has passed from disconnection event
+                if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
+                {
+                    // TODO: clean snapshots
+                    peersToBeRemoved.Add(observerId);
+                    continue;
+                }
+            }
+
             if (observerState.ConnectionState != PeerConnectionState.AUTHENTICATED)
                 continue;
 
@@ -92,6 +110,11 @@ public sealed class PeerSimulation
             if (tickCounter % SWEEP_INTERVAL == 0)
                 SweepStaleViews(views, tickCounter);
         }
+
+        foreach (PeerIndex pi in peersToBeRemoved)
+            peers.Remove(pi);
+
+        peersToBeRemoved.Clear();
     }
 
     /// <summary>

@@ -33,11 +33,17 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
     private readonly Channel<OutgoingMessage> outgoingChannel = Channel.CreateUnbounded<OutgoingMessage>(
         new UnboundedChannelOptions { SingleWriter = false, SingleReader = true });
 
+    private readonly Channel<PeerLifeCycleEvent> peerLifeCycleChannel = Channel.CreateUnbounded<PeerLifeCycleEvent>(
+        new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
+
     public IAsyncEnumerable<IncomingMessage> ReadIncomingMessagesAsync(CancellationToken ct) =>
         incomingChannel.Reader.ReadAllAsync(ct);
 
     public IAsyncEnumerable<OutgoingMessage> ReadOutgoingMessagesAsync(CancellationToken ct) =>
         outgoingChannel.Reader.ReadAllAsync(ct);
+
+    public IAsyncEnumerable<PeerLifeCycleEvent> ReadPeerLifeCycleAsync(CancellationToken ct) =>
+        peerLifeCycleChannel.Reader.ReadAllAsync(ct);
 
     public bool TryReadOutgoingMessage(out OutgoingMessage message) =>
         outgoingChannel.Reader.TryRead(out message);
@@ -65,7 +71,17 @@ public sealed class MessagePipe(ILogger<MessagePipe> logger)
         incomingChannel.Writer.TryWrite(new IncomingMessage(packet.FromPeer, message));
     }
 
+    public void OnPeerConnected(PeerIndex peerIndex) =>
+        peerLifeCycleChannel.Writer.TryWrite(new PeerLifeCycleEvent(peerIndex, PeerEventType.Connected));
+
+    public void OnPeerDisconnected(PeerIndex peerIndex) =>
+        peerLifeCycleChannel.Writer.TryWrite(new PeerLifeCycleEvent(peerIndex, PeerEventType.Disconnected));
+
     public readonly record struct IncomingMessage(PeerIndex From, ClientMessage Message);
 
     public readonly record struct OutgoingMessage(PeerIndex To, ServerMessage Message, ITransport.PacketMode PacketMode);
+
+    public readonly record struct PeerLifeCycleEvent(PeerIndex From, PeerEventType Type);
+
+    public enum PeerEventType { Connected, Disconnected }
 }

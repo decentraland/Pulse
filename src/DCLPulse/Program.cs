@@ -22,6 +22,7 @@ builder.Services.AddSingleton<ITimeProvider, StopwatchTimeProvider>();
 builder.Services.AddHostedService<ENetHostedService>();
 builder.Services.AddHostedService<PeersManager>();
 
+builder.Services.AddSingleton<ITimeProvider>(new SystemTimeProvider());
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();

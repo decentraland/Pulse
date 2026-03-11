@@ -295,4 +295,6 @@ Selected approach: **Rider → Docker Attach to .NET process** (not SSH remote).
 
 ## Build instructions
 
-- If the specified .NET SDK is not available, use one from Rider, it may exists under a different directory
+- The project targets .NET 10. If `dotnet --version` shows a lower version, the required SDK may be installed in a non-default location.
+- Search for it: look for directories named `10.*` under common SDK paths (`~/.dotnet/sdk/`, `/usr/share/dotnet/sdk/`, `C:\Program Files\dotnet\sdk\`, or Rider's bundled SDK).
+- Once found, prefix commands with the SDK root, e.g.: `DOTNET_ROOT="<path>" PATH="<path>:$PATH" dotnet ...`

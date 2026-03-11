@@ -32,7 +32,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
     ///     Stored here, exclusive to this worker — no locks.
     /// </summary>
-    private readonly Dictionary<PeerIndex, Dictionary<PeerIndex, PeerToPeerView>> observerViews = new ();
+    internal readonly Dictionary<PeerIndex, Dictionary<PeerIndex, PeerToPeerView>> observerViews = new ();
 
     /// <summary>
     ///     Reusable collector to avoid allocation per tick.
@@ -90,6 +90,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 {
                     snapshotBoard.ClearActive(observerId);
                     identityBoard.Clear(observerId);
+                    observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);
                     continue;
                 }
@@ -110,7 +111,8 @@ public sealed class PeerSimulation : IPeerSimulation
             collector.Clear();
             areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
 
-            ProcessVisibleSubjects(observerId, views, tickCounter);
+            ProcessVisibleSubjects(observerId, views, observerState.ResyncRequests, tickCounter);
+            observerState.ResyncRequests?.Clear();
 
             if (tickCounter % SWEEP_INTERVAL == 0)
                 SweepStaleViews(observerId, views, tickCounter);
@@ -133,6 +135,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private void ProcessVisibleSubjects(
         PeerIndex observerId,
         Dictionary<PeerIndex, PeerToPeerView> views,
+        Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter)
     {
         for (var i = 0; i < collector.Count; i++)
@@ -142,19 +145,22 @@ public sealed class PeerSimulation : IPeerSimulation
             if (entry.Subject == observerId)
                 continue;
 
-            int tierIndex = entry.Tier.Value;
+            bool isNew = !views.TryGetValue(entry.Subject, out PeerToPeerView view);
 
             // Stamp before tier gate — a TIER_2 subject fires every 4th tick,
             // but it's still visible on the intervening ticks. Without this,
             // 3 unstamped ticks would trigger false re-entry detection.
-            if (views.TryGetValue(entry.Subject, out PeerToPeerView view))
+            if (!isNew)
             {
                 view.LastSeenTick = tickCounter;
                 views[entry.Subject] = view;
             }
 
-            // Skip if this tier is not due on this tick
-            if (tierIndex < tierDivisors.Length && tickCounter % tierDivisors[tierIndex] != 0)
+            // Skip if this tier is not due on this tick — but never gate a pending resync
+            bool hasResync = !isNew && resyncRequests != null && resyncRequests.ContainsKey(entry.Subject);
+            int tierIndex = entry.Tier.Value;
+
+            if (!hasResync && tierIndex < tierDivisors.Length && tickCounter % tierDivisors[tierIndex] != 0)
                 continue;
 
             if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot subjectSnapshot))
@@ -165,10 +171,9 @@ public sealed class PeerSimulation : IPeerSimulation
             // the last-sent baseline — correct per sliding window, but the client has been
             // extrapolating during the gap. Consider sending STATE_FULL on re-entry if
             // the gap matters for client-side prediction quality.
-            bool isNew = !views.ContainsKey(entry.Subject);
-
             if (isNew)
             {
+                resyncRequests?.Remove(entry.Subject);
                 view = new PeerToPeerView { Onto = entry.Subject };
 
                 messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
@@ -180,27 +185,43 @@ public sealed class PeerSimulation : IPeerSimulation
                     },
                 }, ITransport.PacketMode.RELIABLE));
             }
-            else if (view.LastSentSeq != subjectSnapshot.Seq)
+            else if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
             {
-                PlayerStateDeltaTier0? delta = PeerViewDiff.CreateMessage(entry.Subject, view.LastSentSnapshot, subjectSnapshot, entry.Tier);
-
-                if (delta != null)
+                // Try a targeted delta from the client's baseline; fall back to full state
+                // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
+                if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
+                    || !SendDelta(knownSnapshot, ITransport.PacketMode.RELIABLE))
                 {
                     messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                     {
-                        PlayerStateDelta = delta,
-                    }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+                        PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
+                    }, ITransport.PacketMode.RELIABLE));
                 }
             }
-            else
-
-                // No new data — already stamped above, nothing else to do
-                continue;
+            else { SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED); }
 
             view.LastSentSeq = subjectSnapshot.Seq;
             view.LastSentSnapshot = subjectSnapshot;
             view.LastSeenTick = tickCounter;
             views[entry.Subject] = view;
+
+            bool SendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
+            {
+                if (baseline.Seq == subjectSnapshot.Seq)
+                    return false;
+
+                PlayerStateDeltaTier0? delta = PeerViewDiff.CreateMessage(entry.Subject, baseline, subjectSnapshot, entry.Tier);
+
+                if (delta == null)
+                    return false;
+
+                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                {
+                    PlayerStateDelta = delta,
+                }, packetMode));
+
+                return true;
+            }
         }
     }
 

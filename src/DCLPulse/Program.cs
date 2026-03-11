@@ -29,6 +29,7 @@ builder.Services.AddHostedService<PeersManager>();
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();
+builder.Services.AddSingleton<ResyncRequestHandler>();
 builder.Services.AddSingleton<HandshakeHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new NethereumPersonalSignVerifier()));
 
@@ -36,6 +37,7 @@ builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCas
 {
     { ClientMessage.MessageOneofCase.Handshake, sp.GetRequiredService<HandshakeHandler>() },
     { ClientMessage.MessageOneofCase.Input, sp.GetRequiredService<PlayerStateInputHandler>() },
+    { ClientMessage.MessageOneofCase.Resync, sp.GetRequiredService<ResyncRequestHandler>() },
 });
 
 // Simulation

@@ -4,14 +4,12 @@ using Pulse.Peers.Simulation;
 
 namespace Pulse.Messaging;
 
-public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard) : IMessageHandler
+public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard, ILogger<PlayerStateInputHandler> logger)
+    : RuntimePacketHandlerBase<PlayerStateInputHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
-        if (!peers.TryGetValue(from, out PeerState? state) || state.ConnectionState != PeerConnectionState.AUTHENTICATED)
-
-            // Skip messages from unauthenticated peer
-            // TODO add analytics to understand if there is a problem
+        if (SkipFromUnauthorizedPeer(peers, from, message, out _))
             return;
 
         PlayerStateInput input = message.Input;

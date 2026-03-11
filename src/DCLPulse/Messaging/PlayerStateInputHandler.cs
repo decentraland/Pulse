@@ -19,6 +19,7 @@ public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard s
         var snapshot = new PeerSnapshot(
             snapshotBoard.LastSeq(from) + 1,
             timeProvider.MonotonicTime,
+            input.State.ParcelIndex,
             input.State.Position,
             input.State.Velocity,
             input.State.RotationY,

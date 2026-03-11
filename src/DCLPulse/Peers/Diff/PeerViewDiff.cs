@@ -24,7 +24,7 @@ public static class PeerViewDiff
         if (tier.Equals(PeerViewSimulationTier.TIER_0))
         {
             if (!Equals(from.SlideBlend, to.SlideBlend))
-                delta.SlideBlend = FloatToUint(to.SlideBlend);
+                delta.SlideBlendQuantized = to.SlideBlend;
 
             if (!Equals(from.HeadYaw, to.HeadYaw) && to.HeadYaw.HasValue)
                 delta.HeadYawQuantized = to.HeadYaw.Value;
@@ -33,14 +33,18 @@ public static class PeerViewDiff
                 delta.HeadPitchQuantized = to.HeadPitch.Value;
         }
 
+        // Glide State is important for every tier as it can be seen from afar
+        if (from.GlideState != to.GlideState)
+            delta.GlideState = to.GlideState;
+
         if (!Equals(from.Position.X, to.Position.X))
-            delta.PositionX = FloatToUint(to.Position.X);
+            delta.PositionXQuantized = to.Position.X;
 
         if (!Equals(from.Position.Y, to.Position.Y))
-            delta.PositionY = FloatToUint(to.Position.Y);
+            delta.PositionYQuantized = to.Position.Y;
 
         if (!Equals(from.Position.Z, to.Position.Z))
-            delta.PositionZ = FloatToUint(to.Position.Z);
+            delta.PositionZQuantized = to.Position.Z;
 
         if (!Equals(from.RotationY, to.RotationY))
             delta.RotationYQuantized = to.RotationY;
@@ -49,16 +53,16 @@ public static class PeerViewDiff
         if (tier.Equals(PeerViewSimulationTier.TIER_0) || tier.Equals(PeerViewSimulationTier.TIER_1))
         {
             if (!Equals(from.Velocity.X, to.Velocity.X))
-                delta.VelocityX = FloatToUint(to.Velocity.X);
+                delta.VelocityXQuantized = to.Velocity.X;
 
             if (!Equals(from.Velocity.Y, to.Velocity.Y))
-                delta.VelocityY = FloatToUint(to.Velocity.Y);
+                delta.VelocityYQuantized = to.Velocity.Y;
 
             if (!Equals(from.Velocity.Z, to.Velocity.Z))
-                delta.VelocityZ = FloatToUint(to.Velocity.Z);
+                delta.VelocityZQuantized = to.Velocity.Z;
 
             if (!Equals(from.MovementBlend, to.MovementBlend))
-                delta.MovementBlend = FloatToUint(to.MovementBlend);
+                delta.MovementBlendQuantized = to.MovementBlend;
         }
 
         return delta;
@@ -75,8 +79,4 @@ public static class PeerViewDiff
         if (!a.HasValue) return true;
         return Equals(a.Value, b!.Value);
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static uint FloatToUint(float value) =>
-        BitConverter.SingleToUInt32Bits(value);
 }

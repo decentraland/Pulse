@@ -32,6 +32,7 @@ public class DrainPeerLifeCycleEventsTests
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
+            new IdentityBoard(100),
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),
             timeProvider,

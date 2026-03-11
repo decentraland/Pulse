@@ -46,6 +46,12 @@ builder.Services.AddSingleton(sp =>
     return new SnapshotBoard(transportOptions.MaxPeers, peerOptions.SnapshotHistoryCapacity);
 });
 
+builder.Services.AddSingleton(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+    return new IdentityBoard(transportOptions.MaxPeers);
+});
+
 builder.Services.Configure<SpatialAreaOfInterestOptions>(
     builder.Configuration.GetSection(SpatialAreaOfInterestOptions.SECTION_NAME));
 

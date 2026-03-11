@@ -11,6 +11,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
     AuthChainValidator authChainValidator,
     PeerStateFactory peerStateFactory,
     SnapshotBoard snapshotBoard,
+    IdentityBoard identityBoard,
     ITransport transport) : IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -57,6 +58,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
             peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
 
             peers[from] = peer;
+            identityBoard.Set(from, result.UserAddress);
             snapshotBoard.SetActive(from);
 
             messagePipe.Send(new MessagePipe.OutgoingMessage(from, new ServerMessage

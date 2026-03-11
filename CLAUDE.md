@@ -292,3 +292,7 @@ Selected approach: **Rider → Docker Attach to .NET process** (not SSH remote).
 - `movement.proto`, `emote.proto` — packet schemas using custom quantized options
 - `protoc-gen-bitwise` — Python plugin, reads `CodeGeneratorRequest`, emits C# serializers
 - `BitWriter` / `BitReader` (C#) — bit packing + quantization (`WriteQuantizedFloat` / `ReadQuantizedFloat`), used by generated C# serializers
+
+## Build instructions
+
+- If the specified .NET SDK is not available, use one from Rider, it may exists under a different directory

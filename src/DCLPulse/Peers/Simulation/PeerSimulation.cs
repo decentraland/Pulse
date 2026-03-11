@@ -1,3 +1,4 @@
+using Decentraland.Common;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
@@ -22,6 +23,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly IdentityBoard identityBoard;
     private readonly MessagePipe messagePipe;
     private readonly uint[] simulationSteps;
     private readonly ITimeProvider timeProvider;
@@ -55,12 +57,14 @@ public sealed class PeerSimulation : IPeerSimulation
     public PeerSimulation(
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
+        IdentityBoard identityBoard,
         MessagePipe messagePipe,
         uint[] simulationSteps,
         ITimeProvider timeProvider)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
+        this.identityBoard = identityBoard;
         this.messagePipe = messagePipe;
         this.simulationSteps = simulationSteps;
         this.timeProvider = timeProvider;
@@ -85,6 +89,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
                 {
                     snapshotBoard.ClearActive(observerId);
+                    identityBoard.Clear(observerId);
                     peersToBeRemoved.Add(observerId);
                     continue;
                 }
@@ -108,7 +113,7 @@ public sealed class PeerSimulation : IPeerSimulation
             ProcessVisibleSubjects(observerId, views, tickCounter);
 
             if (tickCounter % SWEEP_INTERVAL == 0)
-                SweepStaleViews(views, tickCounter);
+                SweepStaleViews(observerId, views, tickCounter);
         }
 
         foreach (PeerIndex pi in peersToBeRemoved)
@@ -165,21 +170,27 @@ public sealed class PeerSimulation : IPeerSimulation
             if (isNew)
             {
                 view = new PeerToPeerView { Onto = entry.Subject };
-                PlayerStateFull state = SendStateFull(entry.Subject, subjectSnapshot);
 
                 messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                 {
-                    PlayerStateFull = state,
+                    PlayerJoined = new PlayerJoined
+                    {
+                        UserId = identityBoard.Get(entry.Subject),
+                        State = CreateFullState(entry.Subject, subjectSnapshot),
+                    },
                 }, ITransport.PacketMode.RELIABLE));
             }
             else if (view.LastSentSeq != subjectSnapshot.Seq)
             {
-                PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(entry.Subject, view.LastSentSnapshot, subjectSnapshot, entry.Tier);
+                PlayerStateDeltaTier0? delta = PeerViewDiff.CreateMessage(entry.Subject, view.LastSentSnapshot, subjectSnapshot, entry.Tier);
 
-                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                if (delta != null)
                 {
-                    PlayerStateDelta = delta,
-                }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    {
+                        PlayerStateDelta = delta,
+                    }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+                }
             }
             else
 
@@ -197,7 +208,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     Periodic sweep — removes views not touched in recent ticks. Runs every <see cref="SWEEP_INTERVAL" /> ticks
     ///     to reclaim memory from subjects that left the interest set. Not on the hot path.
     /// </summary>
-    private void SweepStaleViews(Dictionary<PeerIndex, PeerToPeerView> views, uint tickCounter)
+    private void SweepStaleViews(PeerIndex observerId, Dictionary<PeerIndex, PeerToPeerView> views, uint tickCounter)
     {
         if (views.Count == 0)
             return;
@@ -211,15 +222,22 @@ public sealed class PeerSimulation : IPeerSimulation
         }
 
         foreach (PeerIndex id in sweepBuffer)
+        {
+            messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+            {
+                PlayerLeft = new PlayerLeft { SubjectId = id },
+            }, ITransport.PacketMode.RELIABLE));
+
             views.Remove(id);
+        }
     }
 
-    private PlayerStateFull SendStateFull(PeerIndex subjectId, PeerSnapshot snapshot)
+    private PlayerStateFull CreateFullState(PeerIndex subjectId, PeerSnapshot snapshot)
     {
         var state = new PlayerState
         {
-            Position = new Decentraland.Common.Vector3 { X = snapshot.Position.X, Y = snapshot.Position.Y, Z = snapshot.Position.Z },
-            Velocity = new Decentraland.Common.Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
+            Position = new Vector3 { X = snapshot.Position.X, Y = snapshot.Position.Y, Z = snapshot.Position.Z },
+            Velocity = new Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
             RotationY = snapshot.RotationY,
             MovementBlend = snapshot.MovementBlend,
             SlideBlend = snapshot.SlideBlend,

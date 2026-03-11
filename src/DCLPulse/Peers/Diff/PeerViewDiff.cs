@@ -10,8 +10,10 @@ public static class PeerViewDiff
     /// <summary>
     ///     Creates a diff message between two snapshots based on the given tier.
     /// </summary>
-    public static PlayerStateDeltaTier0 CreateMessage(PeerIndex subjectId, PeerSnapshot from, PeerSnapshot to, PeerViewSimulationTier tier)
+    public static PlayerStateDeltaTier0? CreateMessage(PeerIndex subjectId, PeerSnapshot from, PeerSnapshot to, PeerViewSimulationTier tier)
     {
+        bool hasChanges = from.AnimationFlags != to.AnimationFlags;
+
         var delta = new PlayerStateDeltaTier0
         {
             SubjectId = subjectId,
@@ -24,48 +26,84 @@ public static class PeerViewDiff
         if (tier.Equals(PeerViewSimulationTier.TIER_0))
         {
             if (!Equals(from.SlideBlend, to.SlideBlend))
+            {
                 delta.SlideBlendQuantized = to.SlideBlend;
+                hasChanges = true;
+            }
 
             if (!Equals(from.HeadYaw, to.HeadYaw) && to.HeadYaw.HasValue)
+            {
                 delta.HeadYawQuantized = to.HeadYaw.Value;
+                hasChanges = true;
+            }
 
             if (!Equals(from.HeadPitch, to.HeadPitch) && to.HeadPitch.HasValue)
+            {
                 delta.HeadPitchQuantized = to.HeadPitch.Value;
+                hasChanges = true;
+            }
         }
 
         // Glide State is important for every tier as it can be seen from afar
         if (from.GlideState != to.GlideState)
+        {
             delta.GlideState = to.GlideState;
+            hasChanges = true;
+        }
 
         if (!Equals(from.Position.X, to.Position.X))
+        {
             delta.PositionXQuantized = to.Position.X;
+            hasChanges = true;
+        }
 
         if (!Equals(from.Position.Y, to.Position.Y))
+        {
             delta.PositionYQuantized = to.Position.Y;
+            hasChanges = true;
+        }
 
         if (!Equals(from.Position.Z, to.Position.Z))
+        {
             delta.PositionZQuantized = to.Position.Z;
+            hasChanges = true;
+        }
 
         if (!Equals(from.RotationY, to.RotationY))
+        {
             delta.RotationYQuantized = to.RotationY;
+            hasChanges = true;
+        }
 
         // TIER_2: spatial state flags only
         if (tier.Equals(PeerViewSimulationTier.TIER_0) || tier.Equals(PeerViewSimulationTier.TIER_1))
         {
             if (!Equals(from.Velocity.X, to.Velocity.X))
+            {
                 delta.VelocityXQuantized = to.Velocity.X;
+                hasChanges = true;
+            }
 
             if (!Equals(from.Velocity.Y, to.Velocity.Y))
+            {
                 delta.VelocityYQuantized = to.Velocity.Y;
+                hasChanges = true;
+            }
 
             if (!Equals(from.Velocity.Z, to.Velocity.Z))
+            {
                 delta.VelocityZQuantized = to.Velocity.Z;
+                hasChanges = true;
+            }
 
             if (!Equals(from.MovementBlend, to.MovementBlend))
+            {
                 delta.MovementBlendQuantized = to.MovementBlend;
+                hasChanges = true;
+            }
         }
 
-        return delta;
+        return hasChanges ? delta : null;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

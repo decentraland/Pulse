@@ -84,7 +84,6 @@ public sealed class PeerSimulation : IPeerSimulation
                 // Remove the peer from the registry after time has passed from disconnection event
                 if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
                 {
-                    // TODO: clear snapshot memory
                     snapshotBoard.ClearActive(observerId);
                     peersToBeRemoved.Add(observerId);
                     continue;

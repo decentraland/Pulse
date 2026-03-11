@@ -149,6 +149,7 @@ public sealed class SnapshotBoard
         var index = (int)id.Value;
         Volatile.Write(ref active[index], false);
         lastSeqs[index] = uint.MaxValue;
+        Array.Clear(rings[index]);
     }
 
     /// <summary>

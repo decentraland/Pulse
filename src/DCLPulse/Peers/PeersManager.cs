@@ -29,6 +29,7 @@ public sealed class PeersManager : BackgroundService
     private readonly PeerStateFactory peerStateFactory;
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly SpatialGrid spatialGrid;
     private readonly IdentityBoard identityBoard;
     private readonly PeerOptions peerOptions;
     private readonly int workerCount;
@@ -47,6 +48,7 @@ public sealed class PeersManager : BackgroundService
         PeerStateFactory peerStateFactory,
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
+        SpatialGrid spatialGrid,
         IdentityBoard identityBoard,
         PeerOptions peerOptions,
         ILogger<PeersManager> logger,
@@ -60,6 +62,7 @@ public sealed class PeersManager : BackgroundService
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
+        this.spatialGrid = spatialGrid;
         this.identityBoard = identityBoard;
         this.peerOptions = peerOptions;
         workerCount = Environment.ProcessorCount;
@@ -89,8 +92,8 @@ public sealed class PeersManager : BackgroundService
         for (var i = 0; i < workerCount; i++)
         {
             var simulation = new PeerSimulation(
-                areaOfInterest, snapshotBoard, identityBoard, messagePipe,
-                peerOptions.SimulationSteps, timeProvider);
+                areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
+                messagePipe, peerOptions.SimulationSteps, timeProvider);
 
             tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader,
                 peerLifeCycleChannels[i].Reader, simulation, stoppingToken);

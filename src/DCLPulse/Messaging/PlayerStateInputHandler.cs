@@ -1,10 +1,15 @@
 using Decentraland.Pulse;
+using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 
 namespace Pulse.Messaging;
 
-public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard snapshotBoard, ILogger<PlayerStateInputHandler> logger)
+public class PlayerStateInputHandler(
+    ITimeProvider timeProvider,
+    SnapshotBoard snapshotBoard,
+    SpatialGrid spatialGrid,
+    ILogger<PlayerStateInputHandler> logger)
     : RuntimePacketHandlerBase<PlayerStateInputHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -29,5 +34,6 @@ public class PlayerStateInputHandler(ITimeProvider timeProvider, SnapshotBoard s
             input.State.GlideState);
 
         snapshotBoard.Publish(from, in snapshot);
+        spatialGrid.Set(from, snapshot.Position);
     }
 }

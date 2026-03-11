@@ -6,7 +6,6 @@ using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Transport;
 using System.Numerics;
 using static Pulse.Messaging.MessagePipe;
 
@@ -42,6 +41,7 @@ public partial class PeerSimulationTests
     ///     Mutated by <see cref="SetVisibleSubjects" /> to control what the mock returns.
     /// </summary>
     private List<(PeerIndex Subject, PeerViewSimulationTier Tier)> visibleSubjects;
+    private SpatialGrid spatialGrid;
 
     [SetUp]
     public void SetUp()
@@ -51,6 +51,7 @@ public partial class PeerSimulationTests
 
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
+        spatialGrid = new SpatialGrid(50);
         messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>());
         areaOfInterest = Substitute.For<IAreaOfInterest>();
         visibleSubjects = new List<(PeerIndex, PeerViewSimulationTier)>();
@@ -69,7 +70,7 @@ public partial class PeerSimulationTests
         timeProvider.MonotonicTime.Returns(0u);
 
         simulation = new PeerSimulation(
-            areaOfInterest, snapshotBoard, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider);
 
         peers = new Dictionary<PeerIndex, PeerState>

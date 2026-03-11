@@ -54,11 +54,18 @@ builder.Services.AddSingleton(sp =>
     return new IdentityBoard(transportOptions.MaxPeers);
 });
 
-builder.Services.Configure<SpatialAreaOfInterestOptions>(
-    builder.Configuration.GetSection(SpatialAreaOfInterestOptions.SECTION_NAME));
+builder.Services.Configure<SpatialHashAreaOfInterestOptions>(
+    builder.Configuration.GetSection(SpatialHashAreaOfInterestOptions.SECTION_NAME));
 
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SpatialAreaOfInterestOptions>>().Value);
-builder.Services.AddSingleton<IAreaOfInterest, SpatialAreaOfInterest>();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SpatialHashAreaOfInterestOptions>>().Value);
+
+builder.Services.AddSingleton(sp =>
+{
+    SpatialHashAreaOfInterestOptions aoiOptions = sp.GetRequiredService<SpatialHashAreaOfInterestOptions>();
+    return new SpatialGrid(aoiOptions.CellSize);
+});
+
+builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
 
 IHost host = builder.Build();
 host.Run();

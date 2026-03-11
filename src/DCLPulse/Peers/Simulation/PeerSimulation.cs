@@ -23,6 +23,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly SpatialGrid spatialGrid;
     private readonly IdentityBoard identityBoard;
     private readonly MessagePipe messagePipe;
     private readonly uint[] simulationSteps;
@@ -57,6 +58,7 @@ public sealed class PeerSimulation : IPeerSimulation
     public PeerSimulation(
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
+        SpatialGrid spatialGrid,
         IdentityBoard identityBoard,
         MessagePipe messagePipe,
         uint[] simulationSteps,
@@ -64,6 +66,7 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
+        this.spatialGrid = spatialGrid;
         this.identityBoard = identityBoard;
         this.messagePipe = messagePipe;
         this.simulationSteps = simulationSteps;
@@ -89,6 +92,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
                 {
                     snapshotBoard.ClearActive(observerId);
+                    spatialGrid.Remove(observerId);
                     identityBoard.Clear(observerId);
                     observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);

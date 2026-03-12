@@ -4,7 +4,6 @@ using Microsoft.Extensions.Options;
 using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 
@@ -12,8 +11,8 @@ namespace DCLPulseBenchmarks;
 
 /// <summary>
 ///     Compares two implementations of spatial interest management:
-///     - LinearScan: single Volatile.Read pass over peerCellKeys[maxPeers]
-///     - ConcurrentDict: ConcurrentDictionary&lt;long, ConcurrentDictionary&lt;PeerIndex, byte&gt;&gt;
+///     - LinearScan: flat array of cell keys, scans all peer slots per query (PR #2 approach)
+///     - CopyOnWrite: current SpatialGrid with lock + copy-on-write HashSet per cell
 ///     Peers are distributed pseudo-randomly in a ±500 world (cellSize=50).
 ///     Observer sits at origin. ~4% of peers fall in the 3×3 neighbourhood.
 ///     "1W" methods are single-threaded baselines.
@@ -24,17 +23,19 @@ namespace DCLPulseBenchmarks;
 public class SpatialInterestBenchmarks
 {
     private const float CELL_SIZE = 50f;
-    private const float TIER_0_SQ = 20f * 20f;
-    private const float TIER_1_SQ = 50f * 50f;
-    private const float MAX_DIST_SQ = 100f * 100f;
     private const int WORKER_COUNT = 4;
 
     [Params(128, 512, 4095)]
     public int PeerCount { get; set; }
 
-    private SpatialGrid _linearGrid = null!;
-    private SpatialHashAreaOfInterest _linearAoi = null!;
-    private ConcurrentDictSpatialGrid _cdGrid = null!;
+    // Current implementation (copy-on-write)
+    private SpatialGrid _cowGrid = null!;
+    private SpatialHashAreaOfInterest _cowAoi = null!;
+
+    // Linear scan reference (PR #2)
+    private LinearScanGrid _linearGrid = null!;
+    private LinearScanAoi _linearAoi = null!;
+
     private SnapshotBoard _snapshotBoard = null!;
     private Vector3[] _peerPositions = null!;
 
@@ -56,15 +57,16 @@ public class SpatialInterestBenchmarks
         _snapshotBoard = new SnapshotBoard(PeerCount, ringCapacity: 4);
         _collector = new InterestCollector();
 
-        _linearGrid = new SpatialGrid(CELL_SIZE, PeerCount);
-        _cdGrid = new ConcurrentDictSpatialGrid(CELL_SIZE);
+        _cowGrid = new SpatialGrid(CELL_SIZE, PeerCount);
+        _linearGrid = new LinearScanGrid(CELL_SIZE, PeerCount);
 
         IOptions<SpatialHashAreaOfInterestOptions> aoiOptions = Options.Create(new SpatialHashAreaOfInterestOptions
         {
             Tier0Radius = 20f, Tier1Radius = 50f, MaxRadius = 100f, CellSize = CELL_SIZE,
         });
 
-        _linearAoi = new SpatialHashAreaOfInterest(_linearGrid, _snapshotBoard, aoiOptions);
+        _cowAoi = new SpatialHashAreaOfInterest(_cowGrid, _snapshotBoard, aoiOptions);
+        _linearAoi = new LinearScanAoi(_linearGrid, _snapshotBoard, aoiOptions);
 
         for (uint i = 0; i < (uint)PeerCount; i++)
         {
@@ -74,8 +76,8 @@ public class SpatialInterestBenchmarks
             var pos = new Vector3(x, 0, z);
             _peerPositions[i] = pos;
 
+            _cowGrid.Set(peer, pos);
             _linearGrid.Set(peer, pos);
-            _cdGrid.Set(peer, pos);
 
             _snapshotBoard.SetActive(peer);
 
@@ -121,37 +123,10 @@ public class SpatialInterestBenchmarks
 
     [BenchmarkCategory("Read")]
     [Benchmark]
-    public void ConcurrentDict_GetVisibleSubjects_1W()
+    public void CopyOnWrite_GetVisibleSubjects_1W()
     {
         _collector.Clear();
-        Vector3 observerPos = _observerSnapshot.Position;
-
-        for (int dx = -1; dx <= 1; dx++)
-        for (int dz = -1; dz <= 1; dz++)
-        {
-            ConcurrentDictionary<PeerIndex, byte>? peers = _cdGrid.GetPeers(
-                new Vector3(observerPos.X + (dx * CELL_SIZE), 0, observerPos.Z + (dz * CELL_SIZE)));
-
-            if (peers == null) continue;
-
-            foreach (KeyValuePair<PeerIndex, byte> kvp in peers)
-            {
-                PeerIndex subject = kvp.Key;
-                if (subject == _observer) continue;
-                if (!_snapshotBoard.TryRead(subject, out PeerSnapshot snap)) continue;
-
-                float distX = snap.Position.X - observerPos.X;
-                float distZ = snap.Position.Z - observerPos.Z;
-                float distSq = (distX * distX) + (distZ * distZ);
-
-                if (distSq > MAX_DIST_SQ) continue;
-
-                PeerViewSimulationTier tier = distSq <= TIER_0_SQ ? PeerViewSimulationTier.TIER_0 :
-                    distSq <= TIER_1_SQ ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
-
-                _collector.Add(subject, tier);
-            }
-        }
+        _cowAoi.GetVisibleSubjects(_observer, in _observerSnapshot, _collector);
     }
 
     // ── 4-worker parallel variants ────────────────────────────────────────────
@@ -171,40 +146,14 @@ public class SpatialInterestBenchmarks
 
     [BenchmarkCategory("Read")]
     [Benchmark]
-    public void ConcurrentDict_GetVisibleSubjects_4W()
+    public void CopyOnWrite_GetVisibleSubjects_4W()
     {
         Parallel.For(0, WORKER_COUNT, w =>
         {
             _workerCollectors[w].Clear();
-            Vector3 observerPos = _workerObserverSnapshots[w].Position;
-            PeerIndex observer = _workerObservers[w];
 
-            for (int dx = -1; dx <= 1; dx++)
-            for (int dz = -1; dz <= 1; dz++)
-            {
-                ConcurrentDictionary<PeerIndex, byte>? peers = _cdGrid.GetPeers(
-                    new Vector3(observerPos.X + (dx * CELL_SIZE), 0, observerPos.Z + (dz * CELL_SIZE)));
-
-                if (peers == null) continue;
-
-                foreach (KeyValuePair<PeerIndex, byte> kvp in peers)
-                {
-                    PeerIndex subject = kvp.Key;
-                    if (subject == observer) continue;
-                    if (!_snapshotBoard.TryRead(subject, out PeerSnapshot snap)) continue;
-
-                    float distX = snap.Position.X - observerPos.X;
-                    float distZ = snap.Position.Z - observerPos.Z;
-                    float distSq = (distX * distX) + (distZ * distZ);
-
-                    if (distSq > MAX_DIST_SQ) continue;
-
-                    PeerViewSimulationTier tier = distSq <= TIER_0_SQ ? PeerViewSimulationTier.TIER_0 :
-                        distSq <= TIER_1_SQ ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
-
-                    _workerCollectors[w].Add(subject, tier);
-                }
-            }
+            _cowAoi.GetVisibleSubjects(
+                _workerObservers[w], in _workerObserverSnapshots[w], _workerCollectors[w]);
         });
     }
 
@@ -220,10 +169,10 @@ public class SpatialInterestBenchmarks
 
     [BenchmarkCategory("Write")]
     [Benchmark]
-    public void ConcurrentDict_Set_1W()
+    public void CopyOnWrite_Set_1W()
     {
         for (uint i = 0; i < (uint)PeerCount; i++)
-            _cdGrid.Set(new PeerIndex(i), _peerPositions[i]);
+            _cowGrid.Set(new PeerIndex(i), _peerPositions[i]);
     }
 
     [BenchmarkCategory("Write")]
@@ -239,54 +188,54 @@ public class SpatialInterestBenchmarks
 
     [BenchmarkCategory("Write")]
     [Benchmark]
-    public void ConcurrentDict_Set_4W()
+    public void CopyOnWrite_Set_4W()
     {
         Parallel.For(0, WORKER_COUNT, w =>
         {
             for (var i = (uint)w; i < (uint)PeerCount; i += WORKER_COUNT)
-                _cdGrid.Set(new PeerIndex(i), _peerPositions[i]);
+                _cowGrid.Set(new PeerIndex(i), _peerPositions[i]);
         });
     }
 }
 
 /// <summary>
-///     Reference implementation using ConcurrentDictionary&lt;long, ConcurrentDictionary&lt;PeerIndex, byte&gt;&gt;.
-///     Mirrors the shape of the old SpatialGrid + GetPeers design with proper thread safety on
-///     the cell containers (replaces HashSet with a concurrent equivalent).
+///     Linear scan grid from PR #2: flat array of per-peer cell keys,
+///     accessed via Volatile.Read. No dictionary lookups on write.
 /// </summary>
-internal sealed class ConcurrentDictSpatialGrid(float cellSize)
+internal sealed class LinearScanGrid(float cellSize, int maxPeers)
 {
+    private const long NO_CELL = long.MinValue;
+
     private readonly float inverseCellSize = 1f / cellSize;
-    private readonly ConcurrentDictionary<long, ConcurrentDictionary<PeerIndex, byte>> cells = new ();
-    private readonly ConcurrentDictionary<PeerIndex, long> peerCellKeys = new ();
+    private readonly long[] peerCellKeys = InitKeys(maxPeers);
+
+    public int MaxPeers => maxPeers;
+
+    private static long[] InitKeys(int count)
+    {
+        var keys = new long[count];
+        Array.Fill(keys, NO_CELL);
+        return keys;
+    }
 
     public void Set(PeerIndex peer, Vector3 position)
     {
-        long key = ComputeKey(position);
-        ConcurrentDictionary<PeerIndex, byte> cell = cells.GetOrAdd(key, _ => new ConcurrentDictionary<PeerIndex, byte>());
-
-        if (!cell.TryAdd(peer, 0)) return; // already in this cell
-
-        if (peerCellKeys.TryGetValue(peer, out long prevKey) && prevKey != key)
-            if (cells.TryGetValue(prevKey, out ConcurrentDictionary<PeerIndex, byte>? prevCell))
-                prevCell.TryRemove(peer, out _);
-
-        peerCellKeys[peer] = key;
+        Volatile.Write(ref peerCellKeys[peer.Value], ComputeKey(position));
     }
 
     public void Remove(PeerIndex peer)
     {
-        if (!peerCellKeys.TryRemove(peer, out long key)) return;
-
-        if (cells.TryGetValue(key, out ConcurrentDictionary<PeerIndex, byte>? cell))
-            cell.TryRemove(peer, out _);
+        Volatile.Write(ref peerCellKeys[peer.Value], NO_CELL);
     }
 
-    public ConcurrentDictionary<PeerIndex, byte>? GetPeers(Vector3 position)
-    {
-        cells.TryGetValue(ComputeKey(position), out ConcurrentDictionary<PeerIndex, byte>? result);
-        return result;
-    }
+    public long ReadCellKey(uint index) =>
+        Volatile.Read(ref peerCellKeys[index]);
+
+    public long ComputeCellKey(Vector3 position) =>
+        ComputeKey(position);
+
+    public bool IsActive(uint index) =>
+        Volatile.Read(ref peerCellKeys[index]) != NO_CELL;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long ComputeKey(Vector3 position) =>
@@ -296,4 +245,78 @@ internal sealed class ConcurrentDictSpatialGrid(float cellSize)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static long PackKey(int x, int z) =>
         ((long)x << (sizeof(int) * 8)) | (uint)z;
+}
+
+/// <summary>
+///     Linear scan AOI from PR #2: iterates all peer slots, filters by
+///     the observer's 3×3 cell neighbourhood, then checks distance.
+/// </summary>
+internal sealed class LinearScanAoi : IAreaOfInterest
+{
+    private readonly LinearScanGrid grid;
+    private readonly SnapshotBoard snapshotBoard;
+    private readonly float tier0Sq;
+    private readonly float tier1Sq;
+    private readonly float maxDistanceSq;
+    private readonly float cellSize;
+
+    public LinearScanAoi(LinearScanGrid grid, SnapshotBoard snapshotBoard,
+        IOptions<SpatialHashAreaOfInterestOptions> optionsContainer)
+    {
+        this.grid = grid;
+        this.snapshotBoard = snapshotBoard;
+
+        SpatialHashAreaOfInterestOptions options = optionsContainer.Value;
+        tier0Sq = options.Tier0Radius * options.Tier0Radius;
+        tier1Sq = options.Tier1Radius * options.Tier1Radius;
+        maxDistanceSq = options.MaxRadius * options.MaxRadius;
+        cellSize = options.CellSize;
+    }
+
+    public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
+    {
+        Vector3 observerPos = observerSnapshot.Position;
+
+        // Build the 3×3 neighbourhood keys
+        Span<long> neighborKeys = stackalloc long[9];
+        int idx = 0;
+
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++)
+                neighborKeys[idx++] = grid.ComputeCellKey(
+                    new Vector3(observerPos.X + (dx * cellSize), 0, observerPos.Z + (dz * cellSize)));
+
+        for (uint i = 0; i < (uint)grid.MaxPeers; i++)
+        {
+            if (!grid.IsActive(i)) continue;
+
+            var subject = new PeerIndex(i);
+            if (subject == observer) continue;
+
+            long subjectKey = grid.ReadCellKey(i);
+            bool inNeighborhood = false;
+
+            for (int n = 0; n < 9; n++)
+            {
+                if (subjectKey != neighborKeys[n]) continue;
+                inNeighborhood = true;
+                break;
+            }
+
+            if (!inNeighborhood) continue;
+
+            if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
+
+            float distX = subjectSnapshot.Position.X - observerPos.X;
+            float distZ = subjectSnapshot.Position.Z - observerPos.Z;
+            float distSq = (distX * distX) + (distZ * distZ);
+
+            if (distSq > maxDistanceSq) continue;
+
+            PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
+                distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
+
+            collector.Add(subject, tier);
+        }
+    }
 }

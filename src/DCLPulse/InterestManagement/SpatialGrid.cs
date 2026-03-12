@@ -14,6 +14,7 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
 
     private readonly ConcurrentDictionary<long, HashSet<PeerIndex>> cells = new ();
     private readonly long[] peerCellKeys = InitKeys(maxPeers);
+    private readonly Lock writeLock = new ();
 
     private static long[] InitKeys(int count)
     {
@@ -25,20 +26,30 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
     public void Set(PeerIndex peer, Vector3 position)
     {
         long key = ComputeKey(position);
-
-        if (!cells.ContainsKey(key))
-            cells.TryAdd(key, new HashSet<PeerIndex>());
-
-        // No need to move the peer if already exists in the same cell
-        if (!cells[key].Add(peer)) return;
-
-        // Move the peer into the new cell
         long prevKey = Volatile.Read(ref peerCellKeys[peer.Value]);
 
-        if (prevKey != NO_CELL && prevKey != key)
-            cells[prevKey].Remove(peer);
+        if (prevKey == key) return;
 
-        Volatile.Write(ref peerCellKeys[peer.Value], key);
+        lock (writeLock)
+        {
+            if (prevKey != NO_CELL && cells.TryGetValue(prevKey, out HashSet<PeerIndex>? oldSet))
+            {
+                HashSet<PeerIndex> without = new(oldSet);
+                without.Remove(peer);
+
+                if (without.Count == 0)
+                    cells.Remove(prevKey, out _);
+                else
+                    cells[prevKey] = without;
+            }
+
+            HashSet<PeerIndex> newSet = cells.TryGetValue(key, out HashSet<PeerIndex>? existing)
+                ? new HashSet<PeerIndex>(existing) { peer }
+                : [peer];
+
+            cells[key] = newSet;
+            Volatile.Write(ref peerCellKeys[peer.Value], key);
+        }
     }
 
     public void Remove(PeerIndex peer)
@@ -46,13 +57,20 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
         long key = Volatile.Read(ref peerCellKeys[peer.Value]);
         if (key == NO_CELL) return;
 
-        Volatile.Write(ref peerCellKeys[peer.Value], NO_CELL);
+        lock (writeLock)
+        {
+            Volatile.Write(ref peerCellKeys[peer.Value], NO_CELL);
 
-        if (!cells.TryGetValue(key, out HashSet<PeerIndex>? peers)) return;
-        if (!peers.Remove(peer)) return;
+            if (!cells.TryGetValue(key, out HashSet<PeerIndex>? existing)) return;
 
-        if (peers.Count == 0)
-            cells.Remove(key, out _);
+            HashSet<PeerIndex> without = new(existing);
+            if (!without.Remove(peer)) return;
+
+            if (without.Count == 0)
+                cells.Remove(key, out _);
+            else
+                cells[key] = without;
+        }
     }
 
     public HashSet<PeerIndex>? GetPeers(Vector3 position) =>

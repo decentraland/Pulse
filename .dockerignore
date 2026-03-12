@@ -18,6 +18,10 @@
 **/docker-compose*
 **/compose*
 **/BenchmarkDotNet.Artifacts
+.claude/
+.github/
+src/DCLPulseTests/
+src/DCLPulseBenchmarks/
 LICENSE
 README.md
 CLAUDE.md

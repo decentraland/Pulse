@@ -6,8 +6,9 @@ using Pulse.Peers.Simulation;
 namespace Pulse.InterestManagement;
 
 /// <summary>
-///     Spatial-hash-based interest management. Queries the <see cref="SpatialGrid" /> with a
-///     single linear scan over all peer slots, filtering by the observer's 3×3 cell neighbourhood.
+///     Spatial-hash-based interest management. Reads from <see cref="SpatialGrid" /> which is
+///     maintained incrementally on the write path. Queries only check the observer's cell
+///     and its neighbors — no full scan of all active peers.
 ///     <para />
 ///     Thread-safe: all reads are lock-free. The grid is updated by workers on the write path.
 /// </summary>
@@ -38,33 +39,24 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
     {
         Vector3 observerPos = observerSnapshot.Position;
 
-        Span<long> adjacent = stackalloc long[9];
-        var n = 0;
         for (int dx = -1; dx <= 1; dx++)
-        for (int dz = -1; dz <= 1; dz++)
-            adjacent[n++] = grid.ComputeCellKey(
-                new Vector3(observerPos.X + (dx * cellSize), 0, observerPos.Z + (dz * cellSize)));
-
-        int maxPeers = grid.MaxPeers;
-
-        for (uint i = 0; i < (uint)maxPeers; i++)
+            for (int dz = -1; dz <= 1; dz++)
         {
-            long key = grid.ReadCellKey(new PeerIndex(i));
-            if (key == SpatialGrid.NO_CELL) continue;
+            var cell = new Vector3(observerPos.X + (dx * cellSize), 0, observerPos.Z + (dz * cellSize));
 
-            var inRange = false;
+            Collect(observer, observerPos, collector, grid.GetPeers(cell));
+        }
+    }
 
-            for (var j = 0; j < 9; j++)
-                if (adjacent[j] == key)
-                {
-                    inRange = true;
-                    break;
-                }
+    private void Collect(PeerIndex observer, Vector3 observerPos, IInterestCollector collector, HashSet<PeerIndex>? peers)
+    {
+        if (peers == null)
+            return;
 
-            if (!inRange) continue;
-
-            var subject = new PeerIndex(i);
-            if (subject == observer) continue;
+        foreach (PeerIndex subject in peers)
+        {
+            if (subject == observer)
+                continue;
 
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
                 continue;
@@ -73,7 +65,8 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
             float distZ = subjectSnapshot.Position.Z - observerPos.Z;
             float distSq = (distX * distX) + (distZ * distZ);
 
-            if (distSq > maxDistanceSq) continue;
+            if (distSq > maxDistanceSq)
+                continue;
 
             PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
                 distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;

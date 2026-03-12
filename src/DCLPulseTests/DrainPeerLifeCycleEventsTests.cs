@@ -32,7 +32,7 @@ public class DrainPeerLifeCycleEventsTests
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
-            new SpatialGrid(100),
+            new SpatialGrid(100, 100),
             new IdentityBoard(100),
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),

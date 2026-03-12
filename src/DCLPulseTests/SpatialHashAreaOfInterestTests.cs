@@ -26,7 +26,7 @@ public class SpatialHashAreaOfInterestTests
     [SetUp]
     public void SetUp()
     {
-        grid = new SpatialGrid(CELL_SIZE);
+        grid = new SpatialGrid(CELL_SIZE, MAX_PEERS);
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         collector = new InterestCollector();
 

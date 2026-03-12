@@ -31,7 +31,7 @@ public class WorkerAsyncTests
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
-            new SpatialGrid(50),
+            new SpatialGrid(50, 100),
             new IdentityBoard(100),
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),

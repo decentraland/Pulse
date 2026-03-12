@@ -62,7 +62,8 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SpatialHashAr
 builder.Services.AddSingleton(sp =>
 {
     SpatialHashAreaOfInterestOptions aoiOptions = sp.GetRequiredService<SpatialHashAreaOfInterestOptions>();
-    return new SpatialGrid(aoiOptions.CellSize);
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+    return new SpatialGrid(aoiOptions.CellSize, transportOptions.MaxPeers);
 });
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();

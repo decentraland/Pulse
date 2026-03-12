@@ -51,7 +51,7 @@ public partial class PeerSimulationTests
 
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
-        spatialGrid = new SpatialGrid(50);
+        spatialGrid = new SpatialGrid(50, MAX_PEERS);
         messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>());
         areaOfInterest = Substitute.For<IAreaOfInterest>();
         visibleSubjects = new List<(PeerIndex, PeerViewSimulationTier)>();

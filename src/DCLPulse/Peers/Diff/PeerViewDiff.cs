@@ -51,6 +51,12 @@ public static class PeerViewDiff
             hasChanges = true;
         }
 
+        if (!Equals(from.Parcel, to.Parcel))
+        {
+            delta.ParcelIndex = to.Parcel;
+            hasChanges = true;
+        }
+
         if (!Equals(from.Position.X, to.Position.X))
         {
             delta.PositionXQuantized = to.Position.X;

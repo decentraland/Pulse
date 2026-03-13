@@ -261,6 +261,7 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         var state = new PlayerState
         {
+            ParcelIndex = snapshot.Parcel,
             Position = new Vector3 { X = snapshot.Position.X, Y = snapshot.Position.Y, Z = snapshot.Position.Z },
             Velocity = new Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
             RotationY = snapshot.RotationY,

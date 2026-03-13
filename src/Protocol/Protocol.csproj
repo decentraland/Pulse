@@ -7,22 +7,29 @@
         <!-- Prevent the SDK's default **/*.cs glob from picking up Generated/ —
              _AddGeneratedProtoToCompile adds those files at target-execution time. -->
         <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)\Generated\**\*</DefaultItemExcludes>
+
+        <!-- GenerateProto (default true): run protoc + bitwise plugin from the sibling
+             protocol repo. Set to false for Docker / CI builds that use committed
+             Generated/ files and don't have the protocol repo available. -->
+        <GenerateProto Condition="'$(GenerateProto)' == ''">true</GenerateProto>
     </PropertyGroup>
 
     <ItemGroup>
-        <!-- protoc binary — platform-correct binary resolved via Protobuf_ResolvePlatform target -->
-        <PackageReference Include="Grpc.Tools" Version="2.78.0" PrivateAssets="All" />
         <!-- Google.Protobuf runtime required by csharp_out generated classes -->
         <PackageReference Include="Google.Protobuf" Version="3.25.3" />
+        <!-- protoc binary — only needed when generating (restore is harmless either way) -->
+        <PackageReference Include="Grpc.Tools" Version="2.78.0" PrivateAssets="All" />
     </ItemGroup>
 
-    <!-- ── Proto code generation ──────────────────────────────────────────────
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Proto code generation (active only when GenerateProto=true)
+
          Paths are relative to this .csproj so the project is portable across
          machines, provided the protocol repo is a sibling of the Pulse repo:
              D:\<root>\protocol\   ← @dcl/protocol
              D:\<root>\Pulse\      ← this repo
-         ──────────────────────────────────────────────────────────────────── -->
-    <PropertyGroup Label="ProtoGen">
+         ══════════════════════════════════════════════════════════════════════ -->
+    <PropertyGroup Label="ProtoGen" Condition="'$(GenerateProto)' == 'true'">
         <!-- protoc-gen-bitwise plugin wrapper — .cmd on Windows, .sh on macOS/Linux -->
         <_Plugin Condition="'$(OS)' == 'Windows_NT'">$(MSBuildProjectDirectory)\..\..\tools\protoc-gen-bitwise\protoc-gen-bitwise.cmd</_Plugin>
         <_Plugin Condition="'$(OS)' != 'Windows_NT'">$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/protoc-gen-bitwise.sh</_Plugin>
@@ -39,11 +46,12 @@
         <_GeneratedDir>$(MSBuildProjectDirectory)\Generated</_GeneratedDir>
     </PropertyGroup>
 
-    <ItemGroup Label="BitwiseRuntime">
+    <!-- When generating: compile Quantize.cs from the external protocol repo -->
+    <ItemGroup Label="BitwiseRuntime" Condition="'$(GenerateProto)' == 'true'">
         <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\Quantize.cs" />
     </ItemGroup>
 
-    <ItemGroup Label="ProtoSources">
+    <ItemGroup Label="ProtoSources" Condition="'$(GenerateProto)' == 'true'">
         <_ProtoSources Include="$(_ProtoRoot)\decentraland\common\**\*.proto" />
         <_ProtoSources Include="$(_ProtoRoot)\decentraland\pulse\**\*.proto" />
     </ItemGroup>
@@ -51,7 +59,7 @@
     <!-- Tell Rider / VS project system about external proto inputs so the IDE's
          fast up-to-date check doesn't short-circuit MSBuild when a .proto in the
          sibling protocol repo changes. -->
-    <ItemGroup Label="IDEUpToDateCheck">
+    <ItemGroup Label="IDEUpToDateCheck" Condition="'$(GenerateProto)' == 'true'">
         <UpToDateCheckInput Include="@(_ProtoSources)" />
         <UpToDateCheckBuilt Include="$(_GeneratedDir)\.proto.stamp" />
     </ItemGroup>
@@ -62,6 +70,7 @@
         fast on subsequent runs when dependencies are already satisfied.
     -->
     <Target Name="_EnsurePythonDeps"
+            Condition="'$(GenerateProto)' == 'true'"
             BeforeTargets="_GenerateProto"
             Inputs="$(_PipRequirements)"
             Outputs="$(_PipStamp)">
@@ -84,20 +93,25 @@
         The partial class mechanism lets both outputs coexist without conflicts.
     -->
     <Target Name="_GenerateProto"
+            Condition="'$(GenerateProto)' == 'true'"
             BeforeTargets="_AddGeneratedProtoToCompile"
             DependsOnTargets="Protobuf_ResolvePlatform"
             Inputs="@(_ProtoSources)"
-            Outputs="$(_GeneratedDir)\.proto.stamp">
+            Outputs="$(MSBuildProjectDirectory)\Generated\.proto.stamp">
 
         <Message Text="Regenerating protocol: running protoc with csharp_out + bitwise_out..." Importance="high" />
 
-        <MakeDir Directories="$(_GeneratedDir)" />
+        <MakeDir Directories="$(MSBuildProjectDirectory)\Generated" />
 
         <!-- Standard C# classes + bitwise Encode/Decode extensions in one pass -->
-        <Exec Command="&quot;$(Protobuf_ProtocFullPath)&quot; --proto_path=&quot;$(Protobuf_StandardImportsPath)&quot; --proto_path=&quot;$(_ProtoRoot)&quot; --csharp_out=&quot;$(_GeneratedDir)&quot; --plugin=protoc-gen-bitwise=&quot;$(_Plugin)&quot; --bitwise_out=&quot;$(_GeneratedDir)&quot; @(_ProtoSources->'&quot;%(Identity)&quot;', ' ') 2&gt;&amp;1"
+        <Exec Command="&quot;$(Protobuf_ProtocFullPath)&quot; --proto_path=&quot;$(Protobuf_StandardImportsPath)&quot; --proto_path=&quot;$(_ProtoRoot)&quot; --csharp_out=&quot;$(MSBuildProjectDirectory)\Generated&quot; --plugin=protoc-gen-bitwise=&quot;$(_Plugin)&quot; --bitwise_out=&quot;$(MSBuildProjectDirectory)\Generated&quot; @(_ProtoSources->'&quot;%(Identity)&quot;', ' ') 2&gt;&amp;1"
               WorkingDirectory="$(MSBuildProjectDirectory)" />
 
-        <Touch Files="$(_GeneratedDir)\.proto.stamp" AlwaysCreate="true" />
+        <!-- Copy Quantize.cs into Generated/ so it can be committed for Docker builds -->
+        <Copy SourceFiles="$(_ProtocolRepo)protoc-gen-bitwise\runtime\cs\Quantize.cs"
+              DestinationFolder="$(MSBuildProjectDirectory)\Generated" />
+
+        <Touch Files="$(MSBuildProjectDirectory)\Generated\.proto.stamp" AlwaysCreate="true" />
 
         <Message Text="Regenerating protocol: done." Importance="high" />
     </Target>
@@ -107,10 +121,17 @@
         Adding <Compile> items inside a target (not a static ItemGroup) means
         the glob is evaluated at target runtime — after generation — so it
         picks up freshly created files on the very first build.
+
+        When GenerateProto=false, these committed files (including Quantize.cs)
+        are the sole source of protocol types.
     -->
     <Target Name="_AddGeneratedProtoToCompile" BeforeTargets="CoreCompile">
         <ItemGroup>
-            <Compile Include="$(_GeneratedDir)\**\*.cs" />
+            <Compile Include="$(MSBuildProjectDirectory)\Generated\**\*.cs" />
+            <!-- When generating, Quantize.cs is compiled from the external repo via
+                 BitwiseRuntime ItemGroup — exclude the local copy to avoid duplicates. -->
+            <Compile Remove="$(MSBuildProjectDirectory)\Generated\Quantize.cs"
+                     Condition="'$(GenerateProto)' == 'true'" />
         </ItemGroup>
     </Target>
 

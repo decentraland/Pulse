@@ -1,0 +1,64 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+  push:
+    branches:
+      - "main"
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore src/DCLPulse/DCLPulse.sln
+
+      - name: Build
+        run: dotnet build src/DCLPulse/DCLPulse.sln -c Release --no-restore -p:GenerateProto=false
+
+      - name: Test
+        run: >
+          dotnet test src/DCLPulse/DCLPulse.sln
+          -c Release
+          --no-build
+          --logger "trx;LogFileName=results.trx"
+          -p:GenerateProto=false
+
+      - name: Report test results
+        if: always()
+        uses: dorny/test-reporter@v2.1.1
+        with:
+          name: Test Results
+          path: "**/results.trx"
+          reporter: dotnet-trx
+          fail-on-error: true
+          fail-on-empty: true
+          use-actions-summary: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: "**/results.trx"
+          if-no-files-found: error

@@ -1,0 +1,21 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /build
+COPY ["src/DCLPulse/DCLPulse.csproj", "src/DCLPulse/"]
+COPY ["src/DCLPulse/global.json", "src/DCLPulse/"]
+COPY ["src/DCLAuth/DCLAuth.csproj", "src/DCLAuth/"]
+COPY ["src/Protocol/Protocol.csproj", "src/Protocol/"]
+COPY ["src/Protocol/Directory.Build.props", "src/Protocol/"]
+RUN dotnet restore "src/DCLPulse/DCLPulse.csproj"
+COPY src/ src/
+WORKDIR "/build/src/DCLPulse"
+RUN dotnet publish "DCLPulse.csproj" -c Debug -o /app/publish /p:UseAppHost=false /p:GenerateProto=false
+
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip procps \
+    && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
+    && apt-get remove -y curl unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /app/publish .
+EXPOSE 7777/udp
+ENTRYPOINT ["dotnet", "DCLPulse.dll"]

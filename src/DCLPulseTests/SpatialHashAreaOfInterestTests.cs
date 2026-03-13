@@ -273,7 +273,8 @@ public class SpatialHashAreaOfInterestTests
             Seq: snapshotBoard.LastSeq(peer) + 1,
             ServerTick: 0,
             Parcel: 0,
-            Position: position,
+            LocalPosition: position,
+            GlobalPosition: position,
             Velocity: Vector3.Zero,
             RotationY: 0f,
             MovementBlend: 0f,
@@ -286,7 +287,8 @@ public class SpatialHashAreaOfInterestTests
 
     private static PeerSnapshot MakeSnapshot(Vector3 position) =>
         new (Seq: 1, ServerTick: 0, Parcel: 0,
-            Position: position, Velocity: Vector3.Zero,
+            LocalPosition: position, Velocity: Vector3.Zero,
+            GlobalPosition: position,
             RotationY: 0f, MovementBlend: 0f, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,

@@ -30,7 +30,8 @@ public partial class PeerSimulationTests
         var snapshot = new PeerSnapshot(
             Seq: 5, ServerTick: 42,
             Parcel: 0,
-            Position: new Vector3(1.0f, 2.0f, 3.0f),
+            LocalPosition: new Vector3(1.0f, 2.0f, 3.0f),
+            GlobalPosition: new Vector3(1.0f, 2.0f, 3.0f),
             Velocity: new Vector3(0.5f, 0f, -0.5f),
             RotationY: 1.57f,
             MovementBlend: 0.8f, SlideBlend: 0.2f,

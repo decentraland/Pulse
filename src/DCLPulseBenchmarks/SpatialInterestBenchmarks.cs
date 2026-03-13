@@ -96,7 +96,8 @@ public class SpatialInterestBenchmarks
 
             _snapshotBoard.Publish(peer, new PeerSnapshot(
                 Seq: 1, ServerTick: 0, Parcel: 0,
-                Position: pos, Velocity: Vector3.Zero,
+                LocalPosition: pos, Velocity: Vector3.Zero,
+                GlobalPosition: pos,
                 RotationY: 0f, MovementBlend: 0f, SlideBlend: 0f,
                 HeadYaw: null, HeadPitch: null,
                 AnimationFlags: PlayerAnimationFlags.None,
@@ -105,7 +106,8 @@ public class SpatialInterestBenchmarks
 
         _observerSnapshot = new PeerSnapshot(
             Seq: 1, ServerTick: 0, Parcel: 0,
-            Position: Vector3.Zero, Velocity: Vector3.Zero,
+            LocalPosition: Vector3.Zero, Velocity: Vector3.Zero,
+            GlobalPosition: Vector3.Zero,
             RotationY: 0f, MovementBlend: 0f, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
@@ -495,7 +497,7 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        Vector3 observerPos = observerSnapshot.Position;
+        Vector3 observerPos = observerSnapshot.LocalPosition;
 
         // Build the 3×3 neighbourhood keys
         Span<long> neighborKeys = stackalloc long[9];
@@ -527,8 +529,8 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
 
-            float distX = subjectSnapshot.Position.X - observerPos.X;
-            float distZ = subjectSnapshot.Position.Z - observerPos.Z;
+            float distX = subjectSnapshot.LocalPosition.X - observerPos.X;
+            float distZ = subjectSnapshot.LocalPosition.Z - observerPos.Z;
             float distSq = (distX * distX) + (distZ * distZ);
 
             if (distSq > maxDistanceSq) continue;
@@ -617,7 +619,7 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        Vector3 observerPos = observerSnapshot.Position;
+        Vector3 observerPos = observerSnapshot.LocalPosition;
 
         for (int dx = -1; dx <= 1; dx++)
         for (int dz = -1; dz <= 1; dz++)
@@ -633,8 +635,8 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
                 if (subject == observer) continue;
                 if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
 
-                float distX = subjectSnapshot.Position.X - observerPos.X;
-                float distZ = subjectSnapshot.Position.Z - observerPos.Z;
+                float distX = subjectSnapshot.LocalPosition.X - observerPos.X;
+                float distZ = subjectSnapshot.LocalPosition.Z - observerPos.Z;
                 float distSq = (distX * distX) + (distZ * distZ);
 
                 if (distSq > maxDistanceSq) continue;

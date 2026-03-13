@@ -68,5 +68,10 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
 
+builder.Services.Configure<ParcelEncoderOptions>(
+    builder.Configuration.GetSection(ParcelEncoderOptions.SECTION_NAME));
+
+builder.Services.AddSingleton<ParcelEncoder>();
+
 IHost host = builder.Build();
 host.Run();

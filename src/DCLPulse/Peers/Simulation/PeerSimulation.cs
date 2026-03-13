@@ -28,6 +28,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly MessagePipe messagePipe;
     private readonly uint[] simulationSteps;
     private readonly ITimeProvider timeProvider;
+    private readonly ITransport transport;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -62,7 +63,8 @@ public sealed class PeerSimulation : IPeerSimulation
         IdentityBoard identityBoard,
         MessagePipe messagePipe,
         uint[] simulationSteps,
-        ITimeProvider timeProvider)
+        ITimeProvider timeProvider,
+        ITransport transport)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -71,6 +73,7 @@ public sealed class PeerSimulation : IPeerSimulation
         this.messagePipe = messagePipe;
         this.simulationSteps = simulationSteps;
         this.timeProvider = timeProvider;
+        this.transport = transport;
 
         BaseTickMs = simulationSteps[0];
         tierDivisors = new uint[simulationSteps.Length];
@@ -86,6 +89,16 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         foreach ((PeerIndex observerId, PeerState observerState) in peers)
         {
+            if (observerState.ConnectionState == PeerConnectionState.PENDING_AUTH)
+            {
+                if (timeProvider.MonotonicTime - observerState.TransportState.ConnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
+                {
+                    // Trigger disconnection flow which will mark the peer as DISCONNECTING and eventually removed
+                    transport.Disconnect(observerId, ITransport.DisconnectReason.AuthTimeout);
+                    continue;
+                }
+            }
+
             if (observerState.ConnectionState == PeerConnectionState.DISCONNECTING)
             {
                 // Remove the peer from the registry after time has passed from disconnection event
@@ -262,7 +275,7 @@ public sealed class PeerSimulation : IPeerSimulation
         var state = new PlayerState
         {
             ParcelIndex = snapshot.Parcel,
-            Position = new Vector3 { X = snapshot.Position.X, Y = snapshot.Position.Y, Z = snapshot.Position.Z },
+            Position = new Vector3 { X = snapshot.LocalPosition.X, Y = snapshot.LocalPosition.Y, Z = snapshot.LocalPosition.Z },
             Velocity = new Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
             RotationY = snapshot.RotationY,
             MovementBlend = snapshot.MovementBlend,

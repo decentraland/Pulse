@@ -1,0 +1,244 @@
+using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using NSubstitute;
+using Pulse;
+using Pulse.InterestManagement;
+using Pulse.Messaging;
+using Pulse.Peers;
+using Pulse.Peers.Simulation;
+using System.Numerics;
+
+namespace DCLPulseTests;
+
+[TestFixture]
+public class PlayerStateInputHandlerTests
+{
+    private const uint MONOTONIC_TIME = 5000;
+
+    private ITimeProvider timeProvider;
+    private SnapshotBoard snapshotBoard;
+    private SpatialGrid spatialGrid;
+    private ParcelEncoder parcelEncoder;
+    private PlayerStateInputHandler handler;
+    private Dictionary<PeerIndex, PeerState> peers;
+
+    [SetUp]
+    public void SetUp()
+    {
+        timeProvider = Substitute.For<ITimeProvider>();
+        timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
+
+        snapshotBoard = new SnapshotBoard(100, 10);
+        spatialGrid = new SpatialGrid(100, 100);
+
+        var options = Options.Create(new ParcelEncoderOptions());
+        parcelEncoder = new ParcelEncoder(options);
+
+        handler = new PlayerStateInputHandler(
+            timeProvider,
+            snapshotBoard,
+            spatialGrid,
+            Substitute.For<ILogger<PlayerStateInputHandler>>(),
+            parcelEncoder);
+
+        peers = new Dictionary<PeerIndex, PeerState>();
+    }
+
+    [Test]
+    public void Handle_UnauthenticatedPeer_SkipsProcessing()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.PENDING_AUTH);
+
+        ClientMessage message = CreateInputMessage();
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.LastSeq(peerIndex), Is.EqualTo(uint.MaxValue));
+    }
+
+    [Test]
+    public void Handle_UnknownPeer_SkipsProcessing()
+    {
+        var peerIndex = new PeerIndex(1);
+        ClientMessage message = CreateInputMessage();
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.LastSeq(peerIndex), Is.EqualTo(uint.MaxValue));
+    }
+
+    [Test]
+    public void Handle_AuthenticatedPeer_PublishesSnapshot()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage();
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(0));
+        Assert.That(snapshot.ServerTick, Is.EqualTo(MONOTONIC_TIME));
+    }
+
+    [Test]
+    public void Handle_AuthenticatedPeer_SnapshotContainsInputState()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage(
+            rotationY: 1.5f,
+            movementBlend: 0.7f,
+            slideBlend: 0.3f,
+            stateFlags: (uint)PlayerAnimationFlags.Grounded);
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.RotationY, Is.EqualTo(1.5f));
+        Assert.That(snapshot.MovementBlend, Is.EqualTo(0.7f));
+        Assert.That(snapshot.SlideBlend, Is.EqualTo(0.3f));
+        Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
+    }
+
+    [Test]
+    public void Handle_AuthenticatedPeer_SequenceIncrementsOnEachCall()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        handler.Handle(peers, peerIndex, CreateInputMessage());
+        handler.Handle(peers, peerIndex, CreateInputMessage());
+        handler.Handle(peers, peerIndex, CreateInputMessage());
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(2));
+    }
+
+    [Test]
+    public void Handle_AuthenticatedPeer_UpdatesSpatialGrid()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage();
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        HashSet<PeerIndex>? gridPeers = spatialGrid.GetPeers(snapshot.GlobalPosition);
+        Assert.That(gridPeers, Is.Not.Null);
+        Assert.That(gridPeers, Does.Contain(peerIndex));
+    }
+
+    [TestCase(5, 10, 2f, 3f, 4f, 2642f, 3f, -348f)]
+    [TestCase(162, -150, 1f, 5f, 2f, 2593f, 5f, -2398f)]
+    [TestCase(161, -152, 0f, 0f, 0f, 2576f, 0f, -2432f)]
+    public void Handle_AuthenticatedPeer_ComputesGlobalPositionFromParcel(
+        int parcelX, int parcelZ,
+        float localX, float localY, float localZ,
+        float expectedGlobalX, float expectedGlobalY, float expectedGlobalZ)
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        var localPosition = new Vector3(localX, localY, localZ);
+        int parcelIndex = parcelEncoder.Encode(parcelX, parcelZ);
+        ClientMessage message = CreateInputMessage(parcelIndex: parcelIndex, position: localPosition);
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.GlobalPosition, Is.EqualTo(new Vector3(expectedGlobalX, expectedGlobalY, expectedGlobalZ)));
+        Assert.That(snapshot.LocalPosition, Is.EqualTo(localPosition));
+    }
+
+    [Test]
+    public void Handle_DisconnectingPeer_SkipsProcessing()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.DISCONNECTING);
+
+        handler.Handle(peers, peerIndex, CreateInputMessage());
+
+        Assert.That(snapshotBoard.LastSeq(peerIndex), Is.EqualTo(uint.MaxValue));
+    }
+
+    [Test]
+    public void Handle_WithHeadTracking_SnapshotContainsHeadValues()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage(headYaw: 45f, headPitch: -15f);
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.HeadYaw, Is.EqualTo(45f));
+        Assert.That(snapshot.HeadPitch, Is.EqualTo(-15f));
+    }
+
+    [Test]
+    public void Handle_WithoutHeadTracking_SnapshotHasNullHeadValues()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage();
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.HeadYaw, Is.Null);
+        Assert.That(snapshot.HeadPitch, Is.Null);
+    }
+
+    private static ClientMessage CreateInputMessage(
+        int parcelIndex = 0,
+        Vector3? position = null,
+        Vector3? velocity = null,
+        float rotationY = 0f,
+        float movementBlend = 0f,
+        float slideBlend = 0f,
+        float? headYaw = null,
+        float? headPitch = null,
+        uint stateFlags = 0)
+    {
+        var pos = position ?? Vector3.Zero;
+        var vel = velocity ?? Vector3.Zero;
+
+        var state = new PlayerState
+        {
+            ParcelIndex = parcelIndex,
+            Position = new Decentraland.Common.Vector3 { X = pos.X, Y = pos.Y, Z = pos.Z },
+            Velocity = new Decentraland.Common.Vector3 { X = vel.X, Y = vel.Y, Z = vel.Z },
+            RotationY = rotationY,
+            MovementBlend = movementBlend,
+            SlideBlend = slideBlend,
+            StateFlags = stateFlags
+        };
+
+        if (headYaw.HasValue)
+            state.HeadYaw = headYaw.Value;
+
+        if (headPitch.HasValue)
+            state.HeadPitch = headPitch.Value;
+
+        return new ClientMessage
+        {
+            Input = new PlayerStateInput { State = state }
+        };
+    }
+}

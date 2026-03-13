@@ -12,7 +12,7 @@ public sealed class SpatialAreaOfInterest(SnapshotBoard snapshotBoard, SpatialAr
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        Vector3 observerPos = observerSnapshot.Position;
+        Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         foreach (PeerIndex subject in snapshotBoard.GetActivePeers())
         {
@@ -22,8 +22,8 @@ public sealed class SpatialAreaOfInterest(SnapshotBoard snapshotBoard, SpatialAr
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
                 continue;
 
-            float dx = subjectSnapshot.Position.X - observerPos.X;
-            float dz = subjectSnapshot.Position.Z - observerPos.Z;
+            float dx = subjectSnapshot.GlobalPosition.X - observerPos.X;
+            float dz = subjectSnapshot.GlobalPosition.Z - observerPos.Z;
             float distSq = (dx * dx) + (dz * dz);
 
             if (distSq > maxDistanceSq)

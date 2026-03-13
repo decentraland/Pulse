@@ -6,6 +6,7 @@ using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Threading.Channels;
 
 namespace DCLPulseTests;
@@ -36,7 +37,8 @@ public class WorkerAsyncTests
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),
             timeProvider,
-            new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>());
+            new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
+            Substitute.For<ITransport>());
 
         messageChannel = Channel.CreateUnbounded<MessagePipe.IncomingMessage>();
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();

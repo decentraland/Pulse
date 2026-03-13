@@ -37,7 +37,7 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        Vector3 observerPos = observerSnapshot.Position;
+        Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         for (int dx = -1; dx <= 1; dx++)
             for (int dz = -1; dz <= 1; dz++)
@@ -61,8 +61,8 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
                 continue;
 
-            float distX = subjectSnapshot.Position.X - observerPos.X;
-            float distZ = subjectSnapshot.Position.Z - observerPos.Z;
+            float distX = subjectSnapshot.GlobalPosition.X - observerPos.X;
+            float distZ = subjectSnapshot.GlobalPosition.Z - observerPos.Z;
             float distSq = (distX * distX) + (distZ * distZ);
 
             if (distSq > maxDistanceSq)

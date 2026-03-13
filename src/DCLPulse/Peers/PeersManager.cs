@@ -2,6 +2,7 @@ using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Threading.Channels;
 using static Pulse.Messaging.MessagePipe;
 
@@ -42,6 +43,7 @@ public sealed class PeersManager : BackgroundService
     // Accessed only by the owning worker, so no concurrent access.
     internal readonly Dictionary<PeerIndex, PeerState>[] peerStates;
     private readonly Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers;
+    private readonly ITransport transport;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -53,12 +55,14 @@ public sealed class PeersManager : BackgroundService
         PeerOptions peerOptions,
         ILogger<PeersManager> logger,
         ITimeProvider timeProvider,
-        Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers)
+        Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
+        ITransport transport)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
         this.timeProvider = timeProvider;
         this.messageHandlers = messageHandlers;
+        this.transport = transport;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -93,7 +97,7 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider);
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport);
 
             tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader,
                 peerLifeCycleChannels[i].Reader, simulation, stoppingToken);
@@ -188,7 +192,7 @@ public sealed class PeersManager : BackgroundService
                 {
                     PeerState peerState = peerStateFactory.Create();
                     peerState.ConnectionState = PeerConnectionState.PENDING_AUTH;
-                    peerState.TransportState = new PeerTransportState(timeProvider.MonotonicTime);
+                    peerState.TransportState = peerState.TransportState with { ConnectionTime = timeProvider.MonotonicTime };
                     peers[from] = peerState;
                 }
                 else if (evt.Type == PeerEventType.Disconnected)

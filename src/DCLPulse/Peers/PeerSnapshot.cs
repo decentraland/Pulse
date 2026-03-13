@@ -13,8 +13,9 @@ public record struct PeerSnapshot(
     uint ServerTick,
 
     // Positional
-    uint Parcel,
-    Vector3 Position,
+    int Parcel,
+    Vector3 LocalPosition,
+    Vector3 GlobalPosition,
     Vector3 Velocity,
     float RotationY,
 

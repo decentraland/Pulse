@@ -57,21 +57,21 @@ public static class PeerViewDiff
             hasChanges = true;
         }
 
-        if (!Equals(from.Position.X, to.Position.X))
+        if (!Equals(from.LocalPosition.X, to.LocalPosition.X))
         {
-            delta.PositionXQuantized = to.Position.X;
+            delta.PositionXQuantized = to.LocalPosition.X;
             hasChanges = true;
         }
 
-        if (!Equals(from.Position.Y, to.Position.Y))
+        if (!Equals(from.LocalPosition.Y, to.LocalPosition.Y))
         {
-            delta.PositionYQuantized = to.Position.Y;
+            delta.PositionYQuantized = to.LocalPosition.Y;
             hasChanges = true;
         }
 
-        if (!Equals(from.Position.Z, to.Position.Z))
+        if (!Equals(from.LocalPosition.Z, to.LocalPosition.Z))
         {
-            delta.PositionZQuantized = to.Position.Z;
+            delta.PositionZQuantized = to.LocalPosition.Z;
             hasChanges = true;
         }
 

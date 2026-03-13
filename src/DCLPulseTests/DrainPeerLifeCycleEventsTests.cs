@@ -6,6 +6,7 @@ using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Threading.Channels;
 
 namespace DCLPulseTests;
@@ -37,7 +38,8 @@ public class DrainPeerLifeCycleEventsTests
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),
             timeProvider,
-            new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>());
+            new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
+            Substitute.For<ITransport>());
 
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();
@@ -66,6 +68,18 @@ public class DrainPeerLifeCycleEventsTests
     {
         var peerIndex = new PeerIndex(1);
         lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Connected));
+
+        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+
+        PeerTransportState transport = peers[peerIndex].TransportState;
+        Assert.That(transport.ConnectionTime, Is.EqualTo(MONOTONIC_TIME));
+    }
+
+    [Test]
+    public void DisconnectedEvent_SetsTransportStateWithCurrentTime()
+    {
+        var peerIndex = new PeerIndex(1);
+        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Disconnected));
 
         manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
 

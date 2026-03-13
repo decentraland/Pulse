@@ -6,6 +6,7 @@ using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Numerics;
 using static Pulse.Messaging.MessagePipe;
 
@@ -71,7 +72,7 @@ public partial class PeerSimulationTests
 
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
-            SimulationSteps, timeProvider);
+            SimulationSteps, timeProvider, Substitute.For<ITransport>());
 
         peers = new Dictionary<PeerIndex, PeerState>
         {
@@ -94,7 +95,8 @@ public partial class PeerSimulationTests
         snapshotBoard.Publish(peer, new PeerSnapshot(
             Seq: seq, ServerTick: seq * 10,
             Parcel: 0,
-            Position: position ?? Vector3.Zero, Velocity: Vector3.Zero,
+            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
+            GlobalPosition: position ?? Vector3.Zero,
             RotationY: 0f, MovementBlend: 0f, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,

@@ -43,6 +43,7 @@ public partial class PeerSimulationTests
     /// </summary>
     private List<(PeerIndex Subject, PeerViewSimulationTier Tier)> visibleSubjects;
     private SpatialGrid spatialGrid;
+    private ProfileBoard profileBoard;
 
     [SetUp]
     public void SetUp()
@@ -70,9 +71,12 @@ public partial class PeerSimulationTests
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(0u);
 
+        profileBoard = new ProfileBoard(MAX_PEERS);
+
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
-            SimulationSteps, timeProvider, Substitute.For<ITransport>());
+            SimulationSteps, timeProvider, Substitute.For<ITransport>(),
+            profileBoard);
 
         peers = new Dictionary<PeerIndex, PeerState>
         {

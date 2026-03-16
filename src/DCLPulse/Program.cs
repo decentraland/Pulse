@@ -25,12 +25,12 @@ builder.Services.AddSingleton<ENetHostedService>();
 builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService<ENetHostedService>());
 builder.Services.AddSingleton<ITransport>(sp => sp.GetRequiredService<ENetHostedService>());
 builder.Services.AddHostedService<PeersManager>();
-
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();
 builder.Services.AddSingleton<ResyncRequestHandler>();
 builder.Services.AddSingleton<HandshakeHandler>();
+builder.Services.AddSingleton<ProfileAnnouncementHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new NethereumPersonalSignVerifier()));
 
 builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
@@ -38,6 +38,13 @@ builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCas
     { ClientMessage.MessageOneofCase.Handshake, sp.GetRequiredService<HandshakeHandler>() },
     { ClientMessage.MessageOneofCase.Input, sp.GetRequiredService<PlayerStateInputHandler>() },
     { ClientMessage.MessageOneofCase.Resync, sp.GetRequiredService<ResyncRequestHandler>() },
+    { ClientMessage.MessageOneofCase.ProfileAnnouncement, sp.GetRequiredService<ProfileAnnouncementHandler>() },
+});
+
+builder.Services.AddSingleton<ProfileBoard>(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+    return new ProfileBoard(transportOptions.MaxPeers);
 });
 
 // Simulation

@@ -38,7 +38,8 @@ public class WorkerAsyncTests
             Substitute.For<ILogger<PeersManager>>(),
             timeProvider,
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
-            Substitute.For<ITransport>());
+            Substitute.For<ITransport>(),
+            new ProfileBoard(100));
 
         messageChannel = Channel.CreateUnbounded<MessagePipe.IncomingMessage>();
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();

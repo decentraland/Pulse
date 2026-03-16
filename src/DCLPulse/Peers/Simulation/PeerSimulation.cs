@@ -29,6 +29,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly uint[] simulationSteps;
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
+    private readonly ProfileBoard profileBoard;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -64,7 +65,8 @@ public sealed class PeerSimulation : IPeerSimulation
         MessagePipe messagePipe,
         uint[] simulationSteps,
         ITimeProvider timeProvider,
-        ITransport transport)
+        ITransport transport,
+        ProfileBoard profileBoard)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -74,6 +76,7 @@ public sealed class PeerSimulation : IPeerSimulation
         this.simulationSteps = simulationSteps;
         this.timeProvider = timeProvider;
         this.transport = transport;
+        this.profileBoard = profileBoard;
 
         BaseTickMs = simulationSteps[0];
         tierDivisors = new uint[simulationSteps.Length];
@@ -129,11 +132,14 @@ public sealed class PeerSimulation : IPeerSimulation
             areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
 
             ProcessVisibleSubjects(observerId, views, observerState.ResyncRequests, tickCounter);
+
             observerState.ResyncRequests?.Clear();
 
             if (tickCounter % SWEEP_INTERVAL == 0)
                 SweepStaleViews(observerId, views, tickCounter);
         }
+
+        profileBoard.ClearAnnouncements();
 
         foreach (PeerIndex pi in peersToBeRemoved)
             peers.Remove(pi);
@@ -198,29 +204,53 @@ public sealed class PeerSimulation : IPeerSimulation
                     PlayerJoined = new PlayerJoined
                     {
                         UserId = identityBoard.Get(entry.Subject),
+                        ProfileVersion = profileBoard.Get(entry.Subject),
                         State = CreateFullState(entry.Subject, subjectSnapshot),
                     },
                 }, ITransport.PacketMode.RELIABLE));
             }
-            else if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
+            else
             {
-                // Try a targeted delta from the client's baseline; fall back to full state
-                // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
-                if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
-                    || !SendDelta(knownSnapshot, ITransport.PacketMode.RELIABLE))
+                if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
                 {
-                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    // Try a targeted delta from the client's baseline; fall back to full state
+                    // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
+                    if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
+                        || !SendDelta(knownSnapshot, ITransport.PacketMode.RELIABLE))
                     {
-                        PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
-                    }, ITransport.PacketMode.RELIABLE));
+                        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                        {
+                            PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
+                        }, ITransport.PacketMode.RELIABLE));
+                    }
                 }
+                else
+                    SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
+
+                TryAnnounceProfile();
             }
-            else { SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED); }
 
             view.LastSentSeq = subjectSnapshot.Seq;
             view.LastSentSnapshot = subjectSnapshot;
             view.LastSeenTick = tickCounter;
             views[entry.Subject] = view;
+
+            continue;
+
+            void TryAnnounceProfile()
+            {
+                if (profileBoard.HasBeenRecentlyAnnounced(entry.Subject))
+                {
+                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    {
+                        PlayerProfileVersionAnnounced = new PlayerProfileVersionsAnnounced
+                        {
+                            Version = profileBoard.Get(entry.Subject),
+                            SubjectId = entry.Subject,
+                        },
+                    }, ITransport.PacketMode.RELIABLE));
+                }
+            }
 
             bool SendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
             {

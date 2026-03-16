@@ -139,7 +139,7 @@ public class PlayerStateInputHandlerTests
         Assert.That(gridPeers, Does.Contain(peerIndex));
     }
 
-    [TestCase(5, 10, 2f, 3f, 4f, 2642f, 3f, -348f)]
+    [TestCase(5, 10, 2f, 3f, 4f, 82, 3f, 164)]
     [TestCase(162, -150, 1f, 5f, 2f, 2593f, 5f, -2398f)]
     [TestCase(161, -152, 0f, 0f, 0f, 2576f, 0f, -2432f)]
     public void Handle_AuthenticatedPeer_ComputesGlobalPositionFromParcel(

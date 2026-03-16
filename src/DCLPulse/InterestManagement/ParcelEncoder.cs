@@ -14,7 +14,7 @@ public class ParcelEncoder
     {
         ParcelEncoderOptions options = optionsContainer.Value;
         int padding = options.Padding;
-        minX = options.MaxParcelX - padding;
+        minX = options.MinParcelX - padding;
         minZ = options.MinParcelZ - padding;
         int maxX = options.MaxParcelX + padding;
         width = maxX - minX + 1;

@@ -26,6 +26,7 @@ public sealed class PeersManager : BackgroundService
 {
     private readonly MessagePipe messagePipe;
     private readonly ILogger<PeersManager> logger;
+    private readonly ILogger<PeerSimulation> peerSimulationLogger;
     private readonly ITimeProvider timeProvider;
     private readonly PeerStateFactory peerStateFactory;
     private readonly IAreaOfInterest areaOfInterest;
@@ -55,6 +56,7 @@ public sealed class PeersManager : BackgroundService
         IdentityBoard identityBoard,
         PeerOptions peerOptions,
         ILogger<PeersManager> logger,
+        ILogger<PeerSimulation> peerSimulationLogger,
         ITimeProvider timeProvider,
         Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
         ITransport transport,
@@ -62,6 +64,7 @@ public sealed class PeersManager : BackgroundService
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
+        this.peerSimulationLogger = peerSimulationLogger;
         this.timeProvider = timeProvider;
         this.messageHandlers = messageHandlers;
         this.transport = transport;
@@ -100,7 +103,7 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard);
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, peerSimulationLogger);
 
             tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader,
                 peerLifeCycleChannels[i].Reader, simulation, stoppingToken);
@@ -197,6 +200,8 @@ public sealed class PeersManager : BackgroundService
                     peerState.ConnectionState = PeerConnectionState.PENDING_AUTH;
                     peerState.TransportState = peerState.TransportState with { ConnectionTime = timeProvider.MonotonicTime };
                     peers[from] = peerState;
+
+                    logger.LogInformation("Peer connected {Peer}", from);
                 }
                 else if (evt.Type == PeerEventType.Disconnected)
                 {
@@ -211,6 +216,8 @@ public sealed class PeersManager : BackgroundService
                     };
 
                     peers[from] = peerState;
+
+                    logger.LogInformation("Peer disconnected {Peer}", from);
                 }
             }
             catch (Exception ex)

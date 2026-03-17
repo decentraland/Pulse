@@ -30,6 +30,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
+    private readonly ILogger<PeerSimulation> logger;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -66,7 +67,8 @@ public sealed class PeerSimulation : IPeerSimulation
         uint[] simulationSteps,
         ITimeProvider timeProvider,
         ITransport transport,
-        ProfileBoard profileBoard)
+        ProfileBoard profileBoard,
+        ILogger<PeerSimulation> logger)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -77,6 +79,7 @@ public sealed class PeerSimulation : IPeerSimulation
         this.timeProvider = timeProvider;
         this.transport = transport;
         this.profileBoard = profileBoard;
+        this.logger = logger;
 
         BaseTickMs = simulationSteps[0];
         tierDivisors = new uint[simulationSteps.Length];
@@ -98,6 +101,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 {
                     // Trigger disconnection flow which will mark the peer as DISCONNECTING and eventually removed
                     transport.Disconnect(observerId, ITransport.DisconnectReason.AuthTimeout);
+                    logger.LogInformation("Peer {Peer} disconnected due to authentication timed out", observerId);
                     continue;
                 }
             }
@@ -112,6 +116,7 @@ public sealed class PeerSimulation : IPeerSimulation
                     identityBoard.Clear(observerId);
                     observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);
+                    logger.LogInformation("Peer {Peer} removed after disconnected", observerId);
                     continue;
                 }
             }

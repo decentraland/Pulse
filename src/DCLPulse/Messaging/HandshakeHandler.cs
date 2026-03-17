@@ -12,7 +12,8 @@ public class HandshakeHandler(MessagePipe messagePipe,
     PeerStateFactory peerStateFactory,
     SnapshotBoard snapshotBoard,
     IdentityBoard identityBoard,
-    ITransport transport) : IMessageHandler
+    ITransport transport,
+    ILogger<HandshakeHandler> logger) : IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
@@ -30,6 +31,8 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Error = "Invalid auth chain JSON",
                 },
             }, ITransport.PacketMode.RELIABLE));
+
+            logger.LogInformation("Handshake validation failed: cannot parse auth-chain");
 
             return;
         }
@@ -60,8 +63,13 @@ public class HandshakeHandler(MessagePipe messagePipe,
             peers[from] = peer;
 
             if (identityBoard.TryGetPeerIndexByWallet(peer.WalletId, out PeerIndex duplicatedPeer))
+            {
                 if (duplicatedPeer != from)
+                {
                     transport.Disconnect(duplicatedPeer, ITransport.DisconnectReason.DuplicateSession);
+                    logger.LogInformation("Duplicated peer found {Wallet}, disconnecting peer {Peer}", result.UserAddress, duplicatedPeer);
+                }
+            }
 
             identityBoard.Set(from, result.UserAddress);
             snapshotBoard.SetActive(from);
@@ -73,6 +81,8 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Success = true,
                 },
             }, ITransport.PacketMode.RELIABLE));
+
+            logger.LogInformation("Peer handshake accepted with wallet {Wallet} - peerId {Peer}", result.UserAddress, from);
         }
         catch (Exception e)
         {
@@ -84,6 +94,8 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Error = e.Message,
                 },
             }, ITransport.PacketMode.RELIABLE));
+
+            logger.LogInformation("Handshake validation failed: {Error}", e.Message);
         }
     }
 }

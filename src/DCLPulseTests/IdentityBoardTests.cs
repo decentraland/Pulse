@@ -88,7 +88,7 @@ public class IdentityBoardTests
                                             {
                                                 var id = new PeerIndex((uint)i);
                                                 board.Set(id, expectedWallets[i]);
-                                                board.Clear(id);
+                                                board.Remove(id);
                                                 board.Set(id, expectedWallets[i]);
                                             }
                                         }

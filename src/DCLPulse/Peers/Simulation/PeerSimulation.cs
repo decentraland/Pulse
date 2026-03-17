@@ -113,7 +113,8 @@ public sealed class PeerSimulation : IPeerSimulation
                 {
                     snapshotBoard.ClearActive(observerId);
                     spatialGrid.Remove(observerId);
-                    identityBoard.Clear(observerId);
+                    identityBoard.Remove(observerId);
+                    profileBoard.Remove(observerId);
                     observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);
                     logger.LogInformation("Peer {Peer} removed after disconnected", observerId);

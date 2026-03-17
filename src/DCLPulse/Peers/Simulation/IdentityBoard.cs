@@ -27,7 +27,7 @@ public sealed class IdentityBoard(int maxPeers)
     public bool TryGetPeerIndexByWallet(string walletId, out PeerIndex peerIndex) =>
         peerIdsByWallets.TryGetValue(walletId, out peerIndex);
 
-    public void Clear(PeerIndex id)
+    public void Remove(PeerIndex id)
     {
         string? walletId = GetWalletIdByPeerIndex(id);
 

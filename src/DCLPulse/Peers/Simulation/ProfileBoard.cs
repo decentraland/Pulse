@@ -17,8 +17,11 @@ public class ProfileBoard(int maxPeers)
     public int Get(PeerIndex id) =>
         Volatile.Read(ref versions[(int)id.Value]);
 
-    public void Clear(PeerIndex id) =>
+    public void Remove(PeerIndex id)
+    {
         Volatile.Write(ref versions[(int)id.Value], 0);
+        announcements.TryRemove(id, out _);
+    }
 
     public bool HasBeenRecentlyAnnounced(PeerIndex id) =>
         announcements.GetValueOrDefault(id, false);

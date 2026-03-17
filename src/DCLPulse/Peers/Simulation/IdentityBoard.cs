@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Pulse.Peers.Simulation;
 
 /// <summary>
@@ -10,18 +12,28 @@ namespace Pulse.Peers.Simulation;
 /// </summary>
 public sealed class IdentityBoard(int maxPeers)
 {
-    private readonly string?[] walletIds = new string?[maxPeers];
+    private readonly string?[] walletsByPeerIds = new string?[maxPeers];
+    private readonly ConcurrentDictionary<string, PeerIndex> peerIdsByWallets = new (StringComparer.OrdinalIgnoreCase);
 
     public void Set(PeerIndex id, string walletId)
     {
-        Volatile.Write(ref walletIds[(int)id.Value], walletId);
+        Volatile.Write(ref walletsByPeerIds[(int)id.Value], walletId);
+        peerIdsByWallets[walletId] = id;
     }
 
-    public string? Get(PeerIndex id) =>
-        Volatile.Read(ref walletIds[(int)id.Value]);
+    public string? GetWalletIdByPeerIndex(PeerIndex id) =>
+        Volatile.Read(ref walletsByPeerIds[(int)id.Value]);
+
+    public bool TryGetPeerIndexByWallet(string walletId, out PeerIndex peerIndex) =>
+        peerIdsByWallets.TryGetValue(walletId, out peerIndex);
 
     public void Clear(PeerIndex id)
     {
-        Volatile.Write(ref walletIds[(int)id.Value], null);
+        string? walletId = GetWalletIdByPeerIndex(id);
+
+        if (walletId != null)
+            peerIdsByWallets.TryRemove(walletId, out _);
+
+        Volatile.Write(ref walletsByPeerIds[(int)id.Value], null);
     }
 }

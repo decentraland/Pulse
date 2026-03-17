@@ -44,7 +44,7 @@ public class IdentityBoardTests
                                         {
                                             for (var i = 0; i < MAX_PEERS; i++)
                                             {
-                                                string? value = board.Get(new PeerIndex((uint)i));
+                                                string? value = board.GetWalletIdByPeerIndex(new PeerIndex((uint)i));
 
                                                 // Must be either null (not yet written) or the exact expected value
                                                 if (value != null && value != expectedWallets[i])
@@ -104,7 +104,7 @@ public class IdentityBoardTests
                                         {
                                             for (var i = 0; i < MAX_PEERS; i++)
                                             {
-                                                string? value = board.Get(new PeerIndex((uint)i));
+                                                string? value = board.GetWalletIdByPeerIndex(new PeerIndex((uint)i));
 
                                                 if (value != null && value != expectedWallets[i])
                                                     errors.Add($"Slot {i}: expected null or '{expectedWallets[i]}', got '{value}'");
@@ -141,7 +141,7 @@ public class IdentityBoardTests
                                         {
                                             for (var i = 0; i < MAX_PEERS; i++)
                                             {
-                                                string? value = board.Get(new PeerIndex((uint)i));
+                                                string? value = board.GetWalletIdByPeerIndex(new PeerIndex((uint)i));
 
                                                 if (value != expectedWallets[i])
                                                     errors.Add($"Slot {i}: expected '{expectedWallets[i]}', got '{value}'");

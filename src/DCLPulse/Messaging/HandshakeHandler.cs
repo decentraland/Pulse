@@ -58,6 +58,11 @@ public class HandshakeHandler(MessagePipe messagePipe,
             peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
 
             peers[from] = peer;
+
+            if (identityBoard.TryGetPeerIndexByWallet(peer.WalletId, out PeerIndex duplicatedPeer))
+                if (duplicatedPeer != from)
+                    transport.Disconnect(duplicatedPeer, ITransport.DisconnectReason.DuplicateSession);
+
             identityBoard.Set(from, result.UserAddress);
             snapshotBoard.SetActive(from);
 
@@ -68,8 +73,6 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Success = true,
                 },
             }, ITransport.PacketMode.RELIABLE));
-
-            DisconnectDuplicatedSessions(peers, from, result);
         }
         catch (Exception e)
         {
@@ -81,18 +84,6 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Error = e.Message,
                 },
             }, ITransport.PacketMode.RELIABLE));
-        }
-    }
-
-    private void DisconnectDuplicatedSessions(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, AuthChainValidationResult result)
-    {
-        // TODO: could be improved if we index by walletId, although we would need to keep in sync both lists
-        foreach ((PeerIndex pi, PeerState ps) in peers)
-        {
-            if (!string.Equals(ps.WalletId, result.UserAddress, StringComparison.OrdinalIgnoreCase)) continue;
-
-            if (pi != from)
-                transport.Disconnect(pi, ITransport.DisconnectReason.DuplicateSession);
         }
     }
 }

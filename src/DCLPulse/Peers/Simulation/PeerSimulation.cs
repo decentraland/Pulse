@@ -203,7 +203,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 {
                     PlayerJoined = new PlayerJoined
                     {
-                        UserId = identityBoard.Get(entry.Subject),
+                        UserId = identityBoard.GetWalletIdByPeerIndex(entry.Subject),
                         ProfileVersion = profileBoard.Get(entry.Subject),
                         State = CreateFullState(entry.Subject, subjectSnapshot),
                     },

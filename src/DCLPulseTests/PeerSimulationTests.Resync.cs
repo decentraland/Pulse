@@ -34,59 +34,6 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void Resync_SendsTargetedDeltaWhenKnownSeqStillInRing()
-    {
-        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
-        simulation.SimulateTick(peers, tickCounter: 0);
-        DrainAllMessages(); // PlayerJoined
-
-        // Advance a few seqs — all still within ring capacity
-        PublishSnapshot(subject, seq: 2);
-        PublishSnapshot(subject, seq: 3, position: new Vector3(5f, 0f, 0f));
-
-        // Observer's known_seq is 1, which is still in the ring
-        AddResyncRequest(observer, subject, knownSeq: 1);
-
-        simulation.SimulateTick(peers, tickCounter: 1);
-
-        OutgoingMessage msg = DrainSingleMessage();
-        Assert.That(msg.To, Is.EqualTo(observer));
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
-        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
-        Assert.That(msg.Message.PlayerStateDelta.NewSeq, Is.EqualTo(3u));
-        Assert.That(msg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(5f));
-    }
-
-    [Test]
-    public void Resync_TargetedDeltaDiffsFromKnownSeqNotLastSent()
-    {
-        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
-        simulation.SimulateTick(peers, tickCounter: 0);
-        DrainAllMessages(); // PlayerJoined at seq 1
-
-        // Server sends a normal delta at seq 2 (position X=10)
-        PublishSnapshot(subject, seq: 2, position: new Vector3(10f, 0f, 0f));
-        simulation.SimulateTick(peers, tickCounter: 1);
-        DrainAllMessages(); // delta seq 2, view baseline is now seq 2
-
-        // Subject moves again to seq 3 (position X=10 unchanged, Y=5 changed)
-        PublishSnapshot(subject, seq: 3, position: new Vector3(10f, 5f, 0f));
-
-        // Client says it's stuck at seq 1 (never got seq 2)
-        AddResyncRequest(observer, subject, knownSeq: 1);
-
-        simulation.SimulateTick(peers, tickCounter: 2);
-
-        OutgoingMessage msg = DrainSingleMessage();
-        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
-        Assert.That(msg.Message.PlayerStateDelta.NewSeq, Is.EqualTo(3u));
-
-        // Diff is from seq 1 (Zero) to seq 3 — both X and Y changed
-        Assert.That(msg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(10f));
-        Assert.That(msg.Message.PlayerStateDelta.PositionYQuantized, Is.EqualTo(5f));
-    }
-
-    [Test]
     public void Resync_ViewBaselineAdvancesToCurrentAfterResync()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
@@ -147,29 +94,6 @@ public partial class PeerSimulationTests
         // The resync dictionary should have been cleared — invisible request doesn't linger
         Assert.That(peers[observer].ResyncRequests, Is.Not.Null);
         Assert.That(peers[observer].ResyncRequests, Is.Empty);
-    }
-
-    [Test]
-    public void Resync_OnlyLatestKnownSeqKeptPerSubject()
-    {
-        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
-        simulation.SimulateTick(peers, tickCounter: 0);
-        DrainAllMessages();
-
-        PublishSnapshot(subject, seq: 2, position: new Vector3(1f, 0f, 0f));
-        PublishSnapshot(subject, seq: 3, position: new Vector3(2f, 0f, 0f));
-
-        // Client sends two resyncs — only the second should matter
-        AddResyncRequest(observer, subject, knownSeq: 1);
-        AddResyncRequest(observer, subject, knownSeq: 2);
-
-        simulation.SimulateTick(peers, tickCounter: 1);
-
-        OutgoingMessage msg = DrainSingleMessage();
-        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
-
-        // Diff is from seq 2 (X=1) to seq 3 (X=2), not from seq 1
-        Assert.That(msg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(2f));
     }
 
     [Test]

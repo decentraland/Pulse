@@ -70,13 +70,12 @@ public partial class PeerSimulationTests
 
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(0u);
-
         profileBoard = new ProfileBoard(MAX_PEERS);
 
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard);
+            profileBoard, Substitute.For<ILogger<PeerSimulation>>());
 
         peers = new Dictionary<PeerIndex, PeerState>
         {

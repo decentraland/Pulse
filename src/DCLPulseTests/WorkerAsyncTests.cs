@@ -36,6 +36,7 @@ public class WorkerAsyncTests
             new IdentityBoard(100),
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),
+            Substitute.For<ILogger<PeerSimulation>>(),
             timeProvider,
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),

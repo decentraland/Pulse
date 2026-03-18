@@ -217,18 +217,15 @@ public sealed class PeerSimulation : IPeerSimulation
             }
             else
             {
-                if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
+                if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out _))
                 {
-                    // Try a targeted delta from the client's baseline; fall back to full state
-                    // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
-                    if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
-                        || !SendDelta(knownSnapshot, ITransport.PacketMode.RELIABLE))
+                    // Always respond with STATE_FULL, never a delta. The client uses the
+                    // message type (full vs delta) to resolve the pending resync — a delta
+                    // is indistinguishable from a normal update and won't clear the resync state.
+                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                     {
-                        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
-                        {
-                            PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
-                        }, ITransport.PacketMode.RELIABLE));
-                    }
+                        PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
+                    }, ITransport.PacketMode.RELIABLE));
                 }
                 else
                     SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
@@ -272,6 +269,8 @@ public sealed class PeerSimulation : IPeerSimulation
                 {
                     PlayerStateDelta = delta,
                 }, packetMode));
+
+                logger.LogInformation("Sending delta player state {Sequence} to {Observer}", delta.NewSeq, observerId);
 
                 return true;
             }

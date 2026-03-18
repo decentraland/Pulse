@@ -20,6 +20,7 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     private const uint SWEEP_INTERVAL = 100;
     private const uint PEER_DISCONNECTION_CLEAN_TIMEOUT = 5000;
+    private const uint PEER_PENDING_AUTH_CLEAN_TIMEOUT = 30000;
 
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
@@ -97,7 +98,7 @@ public sealed class PeerSimulation : IPeerSimulation
         {
             if (observerState.ConnectionState == PeerConnectionState.PENDING_AUTH)
             {
-                if (timeProvider.MonotonicTime - observerState.TransportState.ConnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
+                if (timeProvider.MonotonicTime - observerState.TransportState.ConnectionTime >= PEER_PENDING_AUTH_CLEAN_TIMEOUT)
                 {
                     // Trigger disconnection flow which will mark the peer as DISCONNECTING and eventually removed
                     transport.Disconnect(observerId, ITransport.DisconnectReason.AuthTimeout);
@@ -228,7 +229,7 @@ public sealed class PeerSimulation : IPeerSimulation
                     }, ITransport.PacketMode.RELIABLE));
                 }
                 else
-                    SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
+                    TrySendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
 
                 TryAnnounceProfile();
             }
@@ -255,7 +256,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
             }
 
-            bool SendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
+            bool TrySendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
             {
                 if (baseline.Seq == subjectSnapshot.Seq)
                     return false;

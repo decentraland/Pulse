@@ -1,0 +1,13 @@
+name: Deploy Dev (Debug)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cd-dcl-pulse-debug:
+    uses: decentraland/platform-actions/.github/workflows/apps-docker-next.yml@main
+    with:
+      service-name: dcl-pulse
+      dockerfile-url: https://raw.githubusercontent.com/decentraland/Pulse/main/src/DCLPulse/Dockerfile.dev-debug
+      deployment-environment: dev
+    secrets: inherit

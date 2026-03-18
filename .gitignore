@@ -1,5 +1,5 @@
-## Proto generated output
-src/Protocol/Generated/
+## Proto generation stamp (regenerated on build, not needed in VCS)
+src/Protocol/Generated/.proto.stamp
 
 ## Proto code-generation tooling stamp files (produced during build)
 tools/protoc-gen-bitwise/.pip.stamp

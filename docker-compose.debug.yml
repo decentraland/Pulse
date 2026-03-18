@@ -1,0 +1,17 @@
+services:
+  dcl-pulse:
+    build:
+      context: .
+      dockerfile: Dockerfile.debug
+    container_name: dcl-pulse-debug
+    ports:
+      - "7777:7777/udp"
+    volumes:
+      - ./src:/app/src
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      Logging__LogLevel__Default: Debug
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined

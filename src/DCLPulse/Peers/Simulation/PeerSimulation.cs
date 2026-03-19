@@ -218,18 +218,21 @@ public sealed class PeerSimulation : IPeerSimulation
             }
             else
             {
-                if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out _))
+                if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
                 {
-                    // Always respond with STATE_FULL, never a delta. The client uses the
-                    // message type (full vs delta) to resolve the pending resync — a delta
-                    // is indistinguishable from a normal update and won't clear the resync state.
-                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    // Try a targeted delta from the client's baseline; fall back to full state
+                    // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
+                    if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
+                        || !SendDelta(knownSnapshot, ITransport.PacketMode.RELIABLE))
                     {
-                        PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
-                    }, ITransport.PacketMode.RELIABLE));
+                        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                        {
+                            PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
+                        }, ITransport.PacketMode.RELIABLE));
+                    }
                 }
                 else
-                    TrySendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
+                    SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
 
                 TryAnnounceProfile();
             }
@@ -256,7 +259,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
             }
 
-            bool TrySendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
+            bool SendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
             {
                 if (baseline.Seq == subjectSnapshot.Seq)
                     return false;
@@ -270,8 +273,6 @@ public sealed class PeerSimulation : IPeerSimulation
                 {
                     PlayerStateDelta = delta,
                 }, packetMode));
-
-                logger.LogInformation("Sending delta player state {Sequence} to {Observer}", delta.NewSeq, observerId);
 
                 return true;
             }

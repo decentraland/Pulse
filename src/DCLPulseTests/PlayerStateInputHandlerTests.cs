@@ -76,7 +76,7 @@ public class PlayerStateInputHandlerTests
         peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peerIndex);
 
-        ClientMessage message = CreateInputMessage();
+        ClientMessage message = CreateInputMessage(parcelIndex: 1, position: new Vector3(3, 5, 7));
 
         handler.Handle(peers, peerIndex, message);
 
@@ -114,9 +114,9 @@ public class PlayerStateInputHandlerTests
         peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peerIndex);
 
-        handler.Handle(peers, peerIndex, CreateInputMessage());
-        handler.Handle(peers, peerIndex, CreateInputMessage());
-        handler.Handle(peers, peerIndex, CreateInputMessage());
+        handler.Handle(peers, peerIndex, CreateInputMessage(parcelIndex: 3, new Vector3(3, 6, 2)));
+        handler.Handle(peers, peerIndex, CreateInputMessage(velocity: new Vector3(1, 0, 7)));
+        handler.Handle(peers, peerIndex, CreateInputMessage(stateFlags: (uint) PlayerAnimationFlags.Grounded));
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.Seq, Is.EqualTo(2));
@@ -129,7 +129,7 @@ public class PlayerStateInputHandlerTests
         peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peerIndex);
 
-        ClientMessage message = CreateInputMessage();
+        ClientMessage message = CreateInputMessage(movementBlend: 2);
 
         handler.Handle(peers, peerIndex, message);
 
@@ -203,6 +203,112 @@ public class PlayerStateInputHandlerTests
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.HeadYaw, Is.Null);
         Assert.That(snapshot.HeadPitch, Is.Null);
+    }
+
+    [Test]
+    public void Handle_IdenticalState_DoesNotIncrementSeq()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage(
+            position: new Vector3(1f, 2f, 3f),
+            rotationY: 1.5f,
+            stateFlags: (uint)PlayerAnimationFlags.Grounded);
+
+        handler.Handle(peers, peerIndex, message);
+        handler.Handle(peers, peerIndex, message);
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(0));
+    }
+
+    [Test]
+    public void Handle_IdenticalState_DoesNotUpdateSpatialGrid()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage message = CreateInputMessage(position: new Vector3(5f, 0f, 5f));
+
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Vector3 firstGlobal = snapshot.GlobalPosition;
+
+        // Send same state again — spatial grid should not be touched
+        handler.Handle(peers, peerIndex, message);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot secondSnapshot), Is.True);
+        Assert.That(secondSnapshot.Seq, Is.EqualTo(0));
+        Assert.That(spatialGrid.GetPeers(firstGlobal), Does.Contain(peerIndex));
+    }
+
+    [Test]
+    public void Handle_StateChangesAfterIdle_IncrementsSeq()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        ClientMessage idle = CreateInputMessage(position: new Vector3(1f, 0f, 0f));
+        handler.Handle(peers, peerIndex, idle);
+        handler.Handle(peers, peerIndex, idle);
+        handler.Handle(peers, peerIndex, idle);
+
+        // State changes — seq should go from 0 to 1, not 0 to 3
+        ClientMessage moved = CreateInputMessage(position: new Vector3(5f, 0f, 0f));
+        handler.Handle(peers, peerIndex, moved);
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Handle_OnlyAnimationFlagsChange_IncrementsSeq()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        handler.Handle(peers, peerIndex, CreateInputMessage(stateFlags: (uint)PlayerAnimationFlags.None));
+        handler.Handle(peers, peerIndex, CreateInputMessage(stateFlags: (uint)PlayerAnimationFlags.Grounded));
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(1));
+        Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
+    }
+
+    [Test]
+    public void Handle_OnlyHeadTrackingChanges_IncrementsSeq()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        handler.Handle(peers, peerIndex, CreateInputMessage(headYaw: 10f, headPitch: 5f));
+        handler.Handle(peers, peerIndex, CreateInputMessage(headYaw: 20f, headPitch: 5f));
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(1));
+        Assert.That(snapshot.HeadYaw, Is.EqualTo(20f));
+    }
+
+    [Test]
+    public void Handle_FirstMessage_AlwaysPublishes()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        // Even with all-zero state, the first message should publish
+        handler.Handle(peers, peerIndex, CreateInputMessage());
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(0));
     }
 
     private static ClientMessage CreateInputMessage(

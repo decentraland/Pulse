@@ -70,6 +70,7 @@ public partial class PeerSimulationTests
 
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(0u);
+
         profileBoard = new ProfileBoard(MAX_PEERS);
 
         simulation = new PeerSimulation(

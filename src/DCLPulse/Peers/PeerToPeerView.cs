@@ -28,4 +28,10 @@ public struct PeerToPeerView
     ///     reset on re-entry (STATE_FULL) or swept periodically for memory cleanup.
     /// </summary>
     public uint LastSeenTick;
+
+    /// <summary>
+    ///     The emote ID last sent to the observer for this subject, or null if idle.
+    ///     Compared against <see cref="Simulation.EmoteBoard" /> each tick to detect transitions.
+    /// </summary>
+    public string? LastSentEmoteId;
 }

@@ -25,6 +25,7 @@ builder.Services.AddSingleton<ENetHostedService>();
 builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService<ENetHostedService>());
 builder.Services.AddSingleton<ITransport>(sp => sp.GetRequiredService<ENetHostedService>());
 builder.Services.AddHostedService<PeersManager>();
+builder.Services.AddHostedService<HealthCheckService>();
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();

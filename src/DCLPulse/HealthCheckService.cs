@@ -1,17 +1,19 @@
+using Microsoft.Extensions.Options;
 using System.Net;
 using System.Net.Sockets;
 
 namespace Pulse;
 
-public class HealthCheckService(ILogger<HealthCheckService> logger) : BackgroundService
+public class HealthCheckService(IOptions<HealthCheckService.Options> options,
+    ILogger<HealthCheckService> logger) : BackgroundService
 {
-    private const int PORT = 8080;
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var listener = new TcpListener(IPAddress.Any, PORT);
+        int port = options.Value.Port;
+        var listener = new TcpListener(IPAddress.Any, port);
         listener.Start();
-        logger.LogInformation("Health check listening on TCP port {Port}", PORT);
+
+        logger.LogInformation("Health check listening on TCP port {Port}", port);
 
         try
         {
@@ -25,5 +27,12 @@ public class HealthCheckService(ILogger<HealthCheckService> logger) : Background
         {
             listener.Stop();
         }
+    }
+
+    public class Options
+    {
+        public const string SECTION_NAME = "HealthCheck";
+
+        public int Port { get; set; }
     }
 }

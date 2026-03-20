@@ -16,6 +16,8 @@ builder.Services.Configure<ENetTransportOptions>(
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));
 
+builder.Services.Configure<HealthCheckService.Options>(builder.Configuration.GetSection(HealthCheckService.Options.SECTION_NAME));
+
 // Resolve PeerOptions directly for services that don't use IOptions<T>
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<PeerOptions>>().Value);
 

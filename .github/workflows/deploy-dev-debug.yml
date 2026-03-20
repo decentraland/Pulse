@@ -7,7 +7,7 @@ jobs:
   cd-dcl-pulse-debug:
     uses: decentraland/platform-actions/.github/workflows/apps-docker-next.yml@main
     with:
-      service-name: dcl-pulse
+      service-name: pulse-server
       dockerfile-url: https://raw.githubusercontent.com/decentraland/Pulse/main/src/DCLPulse/Dockerfile.dev-debug
       deployment-environment: dev
     secrets: inherit

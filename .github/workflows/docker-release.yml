@@ -9,7 +9,7 @@ jobs:
   cd-dcl-pulse:
     uses: decentraland/platform-actions/.github/workflows/apps-docker-release.yml@main
     with:
-      service-name: dcl-pulse
+      service-name: pulse-server
       dockerfile-url: https://raw.githubusercontent.com/decentraland/Pulse/main/src/DCLPulse/Dockerfile
       deployment-environment: prd
     secrets: inherit

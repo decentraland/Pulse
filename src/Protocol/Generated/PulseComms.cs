@@ -88,19 +88,20 @@ namespace Decentraland.Pulse {
             "Cg9wcm9maWxlX3ZlcnNpb24YAiABKAUSMgoFc3RhdGUYAyABKAsyIy5kZWNl",
             "bnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVGdWxsIiAKClBsYXllckxlZnQS",
             "EgoKc3ViamVjdF9pZBgBIAEoDSI2Cg1SZXN5bmNSZXF1ZXN0EhIKCnN1Ympl",
-            "Y3RfaWQYASABKA0SEQoJa25vd25fc2VxGAIgASgNIh4KCkVtb3RlU3RhcnQS",
-            "EAoIZW1vdGVfaWQYASABKAkiCwoJRW1vdGVTdG9wIoABCgxFbW90ZVN0YXJ0",
-            "ZWQSEgoKc3ViamVjdF9pZBgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoDRIQ",
-            "CghlbW90ZV9pZBgDIAEoCRI1CgxwbGF5ZXJfc3RhdGUYBCABKAsyHy5kZWNl",
-            "bnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGUibAoMRW1vdGVTdG9wcGVkEhIK",
-            "CnN1YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKA0SMwoGcmVh",
-            "c29uGAMgASgOMiMuZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RvcFJlYXNv",
-            "bipmChRQbGF5ZXJBbmltYXRpb25GbGFncxIICgROT05FEAASDAoIR1JPVU5E",
-            "RUQQARINCglMT05HX0pVTVAQAhINCglMT05HX0ZBTEwQBBILCgdGQUxMSU5H",
-            "EAgSCwoHU1RVTk5FRBAQKk4KCkdsaWRlU3RhdGUSDwoLUFJPUF9DTE9TRUQQ",
-            "ABIQCgxPUEVOSU5HX1BST1AQARILCgdHTElESU5HEAISEAoMQ0xPU0lOR19Q",
-            "Uk9QEAMqLwoPRW1vdGVTdG9wUmVhc29uEg0KCUNPTVBMRVRFRBAAEg0KCUNB",
-            "TkNFTExFRBABYgZwcm90bzM="));
+            "Y3RfaWQYASABKA0SEQoJa25vd25fc2VxGAIgASgNIkgKCkVtb3RlU3RhcnQS",
+            "EAoIZW1vdGVfaWQYASABKAkSGAoLZHVyYXRpb25fbXMYAiABKA1IAIgBAUIO",
+            "CgxfZHVyYXRpb25fbXMiCwoJRW1vdGVTdG9wIoABCgxFbW90ZVN0YXJ0ZWQS",
+            "EgoKc3ViamVjdF9pZBgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoDRIQCghl",
+            "bW90ZV9pZBgDIAEoCRI1CgxwbGF5ZXJfc3RhdGUYBCABKAsyHy5kZWNlbnRy",
+            "YWxhbmQucHVsc2UuUGxheWVyU3RhdGUibAoMRW1vdGVTdG9wcGVkEhIKCnN1",
+            "YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKA0SMwoGcmVhc29u",
+            "GAMgASgOMiMuZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RvcFJlYXNvbipm",
+            "ChRQbGF5ZXJBbmltYXRpb25GbGFncxIICgROT05FEAASDAoIR1JPVU5ERUQQ",
+            "ARINCglMT05HX0pVTVAQAhINCglMT05HX0ZBTEwQBBILCgdGQUxMSU5HEAgS",
+            "CwoHU1RVTk5FRBAQKk4KCkdsaWRlU3RhdGUSDwoLUFJPUF9DTE9TRUQQABIQ",
+            "CgxPUEVOSU5HX1BST1AQARILCgdHTElESU5HEAISEAoMQ0xPU0lOR19QUk9Q",
+            "EAMqLwoPRW1vdGVTdG9wUmVhc29uEg0KCUNPTVBMRVRFRBAAEg0KCUNBTkNF",
+            "TExFRBABYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Common.OptionsReflection.Descriptor, global::Decentraland.Common.VectorsReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Decentraland.Pulse.PlayerAnimationFlags), typeof(global::Decentraland.Pulse.GlideState), typeof(global::Decentraland.Pulse.EmoteStopReason), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -117,7 +118,7 @@ namespace Decentraland.Pulse {
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerJoined), global::Decentraland.Pulse.PlayerJoined.Parser, new[]{ "UserId", "ProfileVersion", "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerLeft), global::Decentraland.Pulse.PlayerLeft.Parser, new[]{ "SubjectId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ResyncRequest), global::Decentraland.Pulse.ResyncRequest.Parser, new[]{ "SubjectId", "KnownSeq" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStart), global::Decentraland.Pulse.EmoteStart.Parser, new[]{ "EmoteId" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStart), global::Decentraland.Pulse.EmoteStart.Parser, new[]{ "EmoteId", "DurationMs" }, new[]{ "DurationMs" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStop), global::Decentraland.Pulse.EmoteStop.Parser, null, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStarted), global::Decentraland.Pulse.EmoteStarted.Parser, new[]{ "SubjectId", "ServerTick", "EmoteId", "PlayerState" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStopped), global::Decentraland.Pulse.EmoteStopped.Parser, new[]{ "SubjectId", "ServerTick", "Reason" }, null, null, null, null)
@@ -5061,6 +5062,7 @@ namespace Decentraland.Pulse {
   {
     private static readonly pb::MessageParser<EmoteStart> _parser = new pb::MessageParser<EmoteStart>(() => new EmoteStart());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<EmoteStart> Parser { get { return _parser; } }
@@ -5088,7 +5090,9 @@ namespace Decentraland.Pulse {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public EmoteStart(EmoteStart other) : this() {
+      _hasBits0 = other._hasBits0;
       emoteId_ = other.emoteId_;
+      durationMs_ = other.durationMs_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -5110,6 +5114,33 @@ namespace Decentraland.Pulse {
       }
     }
 
+    /// <summary>Field number for the "duration_ms" field.</summary>
+    public const int DurationMsFieldNumber = 2;
+    private readonly static uint DurationMsDefaultValue = 0;
+
+    private uint durationMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint DurationMs {
+      get { if ((_hasBits0 & 1) != 0) { return durationMs_; } else { return DurationMsDefaultValue; } }
+      set {
+        _hasBits0 |= 1;
+        durationMs_ = value;
+      }
+    }
+    /// <summary>Gets whether the "duration_ms" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasDurationMs {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "duration_ms" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearDurationMs() {
+      _hasBits0 &= ~1;
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -5126,6 +5157,7 @@ namespace Decentraland.Pulse {
         return true;
       }
       if (EmoteId != other.EmoteId) return false;
+      if (DurationMs != other.DurationMs) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -5134,6 +5166,7 @@ namespace Decentraland.Pulse {
     public override int GetHashCode() {
       int hash = 1;
       if (EmoteId.Length != 0) hash ^= EmoteId.GetHashCode();
+      if (HasDurationMs) hash ^= DurationMs.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -5156,6 +5189,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(10);
         output.WriteString(EmoteId);
       }
+      if (HasDurationMs) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(DurationMs);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -5170,6 +5207,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(10);
         output.WriteString(EmoteId);
       }
+      if (HasDurationMs) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(DurationMs);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -5182,6 +5223,9 @@ namespace Decentraland.Pulse {
       int size = 0;
       if (EmoteId.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(EmoteId);
+      }
+      if (HasDurationMs) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(DurationMs);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -5197,6 +5241,9 @@ namespace Decentraland.Pulse {
       }
       if (other.EmoteId.Length != 0) {
         EmoteId = other.EmoteId;
+      }
+      if (other.HasDurationMs) {
+        DurationMs = other.DurationMs;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -5221,6 +5268,10 @@ namespace Decentraland.Pulse {
             EmoteId = input.ReadString();
             break;
           }
+          case 16: {
+            DurationMs = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -5242,6 +5293,10 @@ namespace Decentraland.Pulse {
             break;
           case 10: {
             EmoteId = input.ReadString();
+            break;
+          }
+          case 16: {
+            DurationMs = input.ReadUInt32();
             break;
           }
         }

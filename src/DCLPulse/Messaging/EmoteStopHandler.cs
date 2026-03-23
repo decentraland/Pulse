@@ -12,7 +12,7 @@ public class EmoteStopHandler(EmoteBoard emoteBoard, ITimeProvider timeProvider,
         if (SkipFromUnauthorizedPeer(peers, from, message, out _))
             return;
 
-        if (emoteBoard.GetCurrentEmote(from) == null)
+        if (!emoteBoard.IsEmoting(from))
         {
             logger.LogWarning("Peer {Peer} sent EmoteStop but no emote is active", from.Value);
             return;

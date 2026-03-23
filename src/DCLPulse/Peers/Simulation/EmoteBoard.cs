@@ -1,3 +1,5 @@
+using Decentraland.Pulse;
+
 namespace Pulse.Peers.Simulation;
 
 /// <summary>
@@ -9,31 +11,34 @@ namespace Pulse.Peers.Simulation;
 /// </summary>
 public class EmoteBoard(int maxPeers)
 {
-    private readonly string?[] emoteIds = new string?[maxPeers];
-    private readonly uint[] startTicks = new uint[maxPeers];
-    private readonly uint[] stopTicks = new uint[maxPeers];
+    private readonly EmoteState?[] states = new EmoteState?[maxPeers];
 
-    public void Start(PeerIndex id, string emoteId, uint serverTick)
+    public void Start(PeerIndex id, string emoteId, uint serverTick, uint? durationMs) =>
+        Volatile.Write(ref states[(int)id.Value], new EmoteState(emoteId, serverTick, null, durationMs));
+
+    public void Stop(PeerIndex id, uint serverTick) =>
+        // Maybe it could be useful to keep the start tick if its needed somehow in the future
+        Volatile.Write(ref states[(int)id.Value], new EmoteState(null, 0, serverTick, StopReason: EmoteStopReason.Cancelled));
+
+    public EmoteState? Get(PeerIndex id) =>
+        Volatile.Read(ref states[(int)id.Value]);
+
+    public bool IsEmoting(PeerIndex id) =>
+        Volatile.Read(ref states[(int)id.Value])?.EmoteId != null;
+
+    public void TryComplete(PeerIndex id, uint now)
     {
-        Volatile.Write(ref startTicks[(int)id.Value], serverTick);
-        Volatile.Write(ref emoteIds[(int)id.Value], emoteId);
+        EmoteState? state = Volatile.Read(ref states[(int)id.Value]);
+
+        if (state?.EmoteId == null || state.DurationMs == null)
+            return;
+
+        if (now - state.StartTick >= state.DurationMs.Value)
+            Volatile.Write(ref states[(int)id.Value], new EmoteState(null, 0, now, StopReason: EmoteStopReason.Completed));
     }
-
-    public void Stop(PeerIndex id, uint serverTick)
-    {
-        Volatile.Write(ref stopTicks[(int)id.Value], serverTick);
-        Volatile.Write(ref emoteIds[(int)id.Value], null);
-    }
-
-    public string? GetCurrentEmote(PeerIndex id) =>
-        Volatile.Read(ref emoteIds[(int)id.Value]);
-
-    public uint GetStartTick(PeerIndex id) =>
-        Volatile.Read(ref startTicks[(int)id.Value]);
-
-    public uint GetStopTick(PeerIndex id) =>
-        Volatile.Read(ref stopTicks[(int)id.Value]);
 
     public void Remove(PeerIndex id) =>
-        Volatile.Write(ref emoteIds[(int)id.Value], null);
+        Volatile.Write(ref states[(int)id.Value], null);
 }
+
+public record EmoteState(string? EmoteId, uint StartTick, uint? StopTick, uint? DurationMs = null, EmoteStopReason? StopReason = null);

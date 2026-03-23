@@ -14,7 +14,9 @@ public class EmoteStartHandler(EmoteBoard emoteBoard, ITimeProvider timeProvider
 
         EmoteStart emoteStart = message.EmoteStart;
 
-        emoteBoard.Start(from, emoteStart.EmoteId, timeProvider.MonotonicTime);
+        uint? durationMs = emoteStart.HasDurationMs ? emoteStart.DurationMs : null;
+
+        emoteBoard.Start(from, emoteStart.EmoteId, timeProvider.MonotonicTime, durationMs);
 
         logger.LogDebug("Peer {Peer} started emote {EmoteId}", from.Value, emoteStart.EmoteId);
     }

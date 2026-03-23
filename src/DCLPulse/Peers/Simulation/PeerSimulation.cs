@@ -130,6 +130,9 @@ public sealed class PeerSimulation : IPeerSimulation
             if (observerState.ConnectionState != PeerConnectionState.AUTHENTICATED)
                 continue;
 
+            // Completes the emote in case no observer is near this peer
+            emoteBoard.TryComplete(observerId, timeProvider.MonotonicTime);
+
             if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
                 continue;
 
@@ -268,7 +271,11 @@ public sealed class PeerSimulation : IPeerSimulation
 
             void SyncEmoteState()
             {
-                string? currentEmote = emoteBoard.GetCurrentEmote(entry.Subject);
+                // If the emote completion has not been process by the peer's worker yet, try to complete it now
+                emoteBoard.TryComplete(entry.Subject, timeProvider.MonotonicTime);
+
+                EmoteState? emoteState = emoteBoard.Get(entry.Subject);
+                string? currentEmote = emoteState?.EmoteId;
 
                 if (currentEmote == view.LastSentEmoteId)
                     return;
@@ -280,21 +287,21 @@ public sealed class PeerSimulation : IPeerSimulation
                         EmoteStarted = new EmoteStarted
                         {
                             SubjectId = entry.Subject.Value,
-                            ServerTick = emoteBoard.GetStartTick(entry.Subject),
+                            ServerTick = emoteState!.StartTick,
                             EmoteId = currentEmote,
                             PlayerState = CreatePlayerState(subjectSnapshot),
                         },
                     }, ITransport.PacketMode.RELIABLE));
                 }
-                else
+                else if (emoteState is { StopTick: not null, StopReason: not null })
                 {
                     messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                     {
                         EmoteStopped = new EmoteStopped
                         {
                             SubjectId = entry.Subject.Value,
-                            ServerTick = emoteBoard.GetStopTick(entry.Subject),
-                            Reason = EmoteStopReason.Cancelled,
+                            ServerTick = emoteState.StopTick.Value,
+                            Reason = emoteState.StopReason.Value,
                         },
                     }, ITransport.PacketMode.RELIABLE));
                 }

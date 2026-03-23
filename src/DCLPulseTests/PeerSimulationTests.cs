@@ -76,7 +76,7 @@ public partial class PeerSimulationTests
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<ILogger<PeerSimulation>>());
+            profileBoard, new EmoteBoard(MAX_PEERS), Substitute.For<ILogger<PeerSimulation>>());
 
         peers = new Dictionary<PeerIndex, PeerState>
         {

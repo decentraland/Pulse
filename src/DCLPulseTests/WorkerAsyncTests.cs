@@ -40,7 +40,8 @@ public class WorkerAsyncTests
             timeProvider,
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
-            new ProfileBoard(100));
+            new ProfileBoard(100),
+            new EmoteBoard(100));
 
         messageChannel = Channel.CreateUnbounded<MessagePipe.IncomingMessage>();
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();

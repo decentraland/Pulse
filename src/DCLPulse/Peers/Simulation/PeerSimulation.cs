@@ -280,7 +280,7 @@ public sealed class PeerSimulation : IPeerSimulation
                         EmoteStarted = new EmoteStarted
                         {
                             SubjectId = entry.Subject.Value,
-                            ServerTick = subjectSnapshot.ServerTick,
+                            ServerTick = emoteBoard.GetStartTick(entry.Subject),
                             EmoteId = currentEmote,
                             PlayerState = CreatePlayerState(subjectSnapshot),
                         },
@@ -293,7 +293,7 @@ public sealed class PeerSimulation : IPeerSimulation
                         EmoteStopped = new EmoteStopped
                         {
                             SubjectId = entry.Subject.Value,
-                            ServerTick = subjectSnapshot.ServerTick,
+                            ServerTick = emoteBoard.GetStopTick(entry.Subject),
                             Reason = EmoteStopReason.Cancelled,
                         },
                     }, ITransport.PacketMode.RELIABLE));

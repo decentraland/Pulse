@@ -4,7 +4,7 @@ using Pulse.Peers.Simulation;
 
 namespace Pulse.Messaging;
 
-public class EmoteStopHandler(EmoteBoard emoteBoard, ILogger<EmoteStopHandler> logger)
+public class EmoteStopHandler(EmoteBoard emoteBoard, ITimeProvider timeProvider, ILogger<EmoteStopHandler> logger)
     : RuntimePacketHandlerBase<EmoteStopHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -20,6 +20,6 @@ public class EmoteStopHandler(EmoteBoard emoteBoard, ILogger<EmoteStopHandler> l
 
         logger.LogDebug("Peer {Peer} stopped emote", from.Value);
 
-        emoteBoard.Stop(from);
+        emoteBoard.Stop(from, timeProvider.MonotonicTime);
     }
 }

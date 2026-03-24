@@ -28,4 +28,10 @@ public struct PeerToPeerView
     ///     reset on re-entry (STATE_FULL) or swept periodically for memory cleanup.
     /// </summary>
     public uint LastSeenTick;
+
+    /// <summary>
+    ///     The profile version last sent to the observer for this subject.
+    ///     Compared against <see cref="Simulation.ProfileBoard" /> each tick to detect changes.
+    /// </summary>
+    public int LastSentProfileVersion;
 }

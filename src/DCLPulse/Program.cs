@@ -74,6 +74,9 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
+builder.Services.Configure<HealthCheckOptions>(
+    builder.Configuration.GetSection(HealthCheckOptions.SECTION_NAME));
+builder.Services.AddHostedService<HealthCheckService>();
 
 builder.Services.Configure<ParcelEncoderOptions>(
     builder.Configuration.GetSection(ParcelEncoderOptions.SECTION_NAME));

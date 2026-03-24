@@ -153,8 +153,6 @@ public sealed class PeerSimulation : IPeerSimulation
                 SweepStaleViews(observerId, views, tickCounter);
         }
 
-        profileBoard.ClearAnnouncements();
-
         foreach (PeerIndex pi in peersToBeRemoved)
             peers.Remove(pi);
 
@@ -213,15 +211,19 @@ public sealed class PeerSimulation : IPeerSimulation
                 resyncRequests?.Remove(entry.Subject);
                 view = new PeerToPeerView { Onto = entry.Subject };
 
+                int profileVersion = profileBoard.Get(entry.Subject);
+
                 messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                 {
                     PlayerJoined = new PlayerJoined
                     {
                         UserId = identityBoard.GetWalletIdByPeerIndex(entry.Subject),
-                        ProfileVersion = profileBoard.Get(entry.Subject),
+                        ProfileVersion = profileVersion,
                         State = CreateFullState(entry.Subject, subjectSnapshot),
                     },
                 }, ITransport.PacketMode.RELIABLE));
+
+                view.LastSentProfileVersion = profileVersion;
             }
             else
             {
@@ -256,16 +258,20 @@ public sealed class PeerSimulation : IPeerSimulation
 
             void TryAnnounceProfile()
             {
-                if (profileBoard.HasBeenRecentlyAnnounced(entry.Subject))
+                int currentVersion = profileBoard.Get(entry.Subject);
+
+                if (currentVersion != view.LastSentProfileVersion)
                 {
                     messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                     {
                         PlayerProfileVersionAnnounced = new PlayerProfileVersionsAnnounced
                         {
-                            Version = profileBoard.Get(entry.Subject),
+                            Version = currentVersion,
                             SubjectId = entry.Subject,
                         },
                     }, ITransport.PacketMode.RELIABLE));
+
+                    view.LastSentProfileVersion = currentVersion;
                 }
             }
 

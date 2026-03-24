@@ -1,17 +1,12 @@
-using System.Collections.Concurrent;
-
 namespace Pulse.Peers.Simulation;
 
 public class ProfileBoard(int maxPeers)
 {
     private readonly int[] versions = new int[maxPeers];
-    private readonly ConcurrentDictionary<PeerIndex, bool> announcements = new ();
 
     public void Set(PeerIndex id, int version)
     {
-        if (Get(id) == version) return;
         Volatile.Write(ref versions[(int)id.Value], version);
-        announcements[id] = true;
     }
 
     public int Get(PeerIndex id) =>
@@ -20,12 +15,5 @@ public class ProfileBoard(int maxPeers)
     public void Remove(PeerIndex id)
     {
         Volatile.Write(ref versions[(int)id.Value], 0);
-        announcements.TryRemove(id, out _);
     }
-
-    public bool HasBeenRecentlyAnnounced(PeerIndex id) =>
-        announcements.GetValueOrDefault(id, false);
-
-    public void ClearAnnouncements() =>
-        announcements.Clear();
 }

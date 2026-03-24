@@ -274,7 +274,7 @@ public class PlayerStateInputHandlerTests
         peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peerIndex);
 
-        handler.Handle(peers, peerIndex, CreateInputMessage(stateFlags: (uint)PlayerAnimationFlags.None));
+        handler.Handle(peers, peerIndex, CreateInputMessage(stateFlags: (uint)PlayerAnimationFlags.Falling));
         handler.Handle(peers, peerIndex, CreateInputMessage(stateFlags: (uint)PlayerAnimationFlags.Grounded));
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);

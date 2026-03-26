@@ -31,6 +31,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
+    private readonly EmoteBoard emoteBoard;
     private readonly ILogger<PeerSimulation> logger;
 
     /// <summary>
@@ -69,6 +70,7 @@ public sealed class PeerSimulation : IPeerSimulation
         ITimeProvider timeProvider,
         ITransport transport,
         ProfileBoard profileBoard,
+        EmoteBoard emoteBoard,
         ILogger<PeerSimulation> logger)
     {
         this.areaOfInterest = areaOfInterest;
@@ -80,6 +82,7 @@ public sealed class PeerSimulation : IPeerSimulation
         this.timeProvider = timeProvider;
         this.transport = transport;
         this.profileBoard = profileBoard;
+        this.emoteBoard = emoteBoard;
         this.logger = logger;
 
         BaseTickMs = simulationSteps[0];
@@ -116,6 +119,7 @@ public sealed class PeerSimulation : IPeerSimulation
                     spatialGrid.Remove(observerId);
                     identityBoard.Remove(observerId);
                     profileBoard.Remove(observerId);
+                    emoteBoard.Remove(observerId);
                     observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);
                     logger.LogInformation("Peer {Peer} removed after disconnected", observerId);
@@ -125,6 +129,9 @@ public sealed class PeerSimulation : IPeerSimulation
 
             if (observerState.ConnectionState != PeerConnectionState.AUTHENTICATED)
                 continue;
+
+            // Completes the emote in case no observer is near this peer
+            emoteBoard.TryComplete(observerId, timeProvider.MonotonicTime);
 
             if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
                 continue;
@@ -236,8 +243,11 @@ public sealed class PeerSimulation : IPeerSimulation
                 else
                     SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
 
+                // Only announce on delta because PlayerJoined is considered as an announcement
                 TryAnnounceProfile();
             }
+
+            SyncEmoteState();
 
             view.LastSentSeq = subjectSnapshot.Seq;
             view.LastSentSnapshot = subjectSnapshot;
@@ -263,6 +273,46 @@ public sealed class PeerSimulation : IPeerSimulation
 
                     view.LastSentProfileVersion = currentVersion;
                 }
+            }
+
+            void SyncEmoteState()
+            {
+                // If the emote completion has not been process by the peer's worker yet, try to complete it now
+                emoteBoard.TryComplete(entry.Subject, timeProvider.MonotonicTime);
+
+                EmoteState? emoteState = emoteBoard.Get(entry.Subject);
+                string? currentEmote = emoteState?.EmoteId;
+
+                if (currentEmote == view.LastSentEmoteId)
+                    return;
+
+                if (currentEmote != null)
+                {
+                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    {
+                        EmoteStarted = new EmoteStarted
+                        {
+                            SubjectId = entry.Subject.Value,
+                            ServerTick = emoteState!.StartTick,
+                            EmoteId = currentEmote,
+                            PlayerState = CreatePlayerState(subjectSnapshot),
+                        },
+                    }, ITransport.PacketMode.RELIABLE));
+                }
+                else if (emoteState is { StopTick: not null, StopReason: not null })
+                {
+                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    {
+                        EmoteStopped = new EmoteStopped
+                        {
+                            SubjectId = entry.Subject.Value,
+                            ServerTick = emoteState.StopTick.Value,
+                            Reason = emoteState.StopReason.Value,
+                        },
+                    }, ITransport.PacketMode.RELIABLE));
+                }
+
+                view.LastSentEmoteId = currentEmote;
             }
 
             bool SendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
@@ -313,7 +363,16 @@ public sealed class PeerSimulation : IPeerSimulation
         }
     }
 
-    private PlayerStateFull CreateFullState(PeerIndex subjectId, PeerSnapshot snapshot)
+    private PlayerStateFull CreateFullState(PeerIndex subjectId, PeerSnapshot snapshot) =>
+        new ()
+        {
+            SubjectId = subjectId.Value,
+            Sequence = snapshot.Seq,
+            ServerTick = snapshot.ServerTick,
+            State = CreatePlayerState(snapshot),
+        };
+
+    private static PlayerState CreatePlayerState(PeerSnapshot snapshot)
     {
         var state = new PlayerState
         {
@@ -333,12 +392,6 @@ public sealed class PeerSimulation : IPeerSimulation
         if (snapshot.HeadPitch.HasValue)
             state.HeadPitch = snapshot.HeadPitch.Value;
 
-        return new PlayerStateFull
-        {
-            SubjectId = subjectId.Value,
-            Sequence = snapshot.Seq,
-            ServerTick = snapshot.ServerTick,
-            State = state,
-        };
+        return state;
     }
 }

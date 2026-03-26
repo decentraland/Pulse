@@ -31,6 +31,8 @@ builder.Services.AddSingleton<PlayerStateInputHandler>();
 builder.Services.AddSingleton<ResyncRequestHandler>();
 builder.Services.AddSingleton<HandshakeHandler>();
 builder.Services.AddSingleton<ProfileAnnouncementHandler>();
+builder.Services.AddSingleton<EmoteStartHandler>();
+builder.Services.AddSingleton<EmoteStopHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new NethereumPersonalSignVerifier()));
 
 builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
@@ -39,12 +41,20 @@ builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCas
     { ClientMessage.MessageOneofCase.Input, sp.GetRequiredService<PlayerStateInputHandler>() },
     { ClientMessage.MessageOneofCase.Resync, sp.GetRequiredService<ResyncRequestHandler>() },
     { ClientMessage.MessageOneofCase.ProfileAnnouncement, sp.GetRequiredService<ProfileAnnouncementHandler>() },
+    { ClientMessage.MessageOneofCase.EmoteStart, sp.GetRequiredService<EmoteStartHandler>() },
+    { ClientMessage.MessageOneofCase.EmoteStop, sp.GetRequiredService<EmoteStopHandler>() },
 });
 
 builder.Services.AddSingleton<ProfileBoard>(sp =>
 {
     ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
     return new ProfileBoard(transportOptions.MaxPeers);
+});
+
+builder.Services.AddSingleton(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+    return new EmoteBoard(transportOptions.MaxPeers);
 });
 
 // Simulation

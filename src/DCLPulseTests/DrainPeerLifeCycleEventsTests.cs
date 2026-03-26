@@ -41,7 +41,8 @@ public class DrainPeerLifeCycleEventsTests
             timeProvider,
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
-            new ProfileBoard(100));
+            new ProfileBoard(100),
+            new EmoteBoard(100));
 
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();

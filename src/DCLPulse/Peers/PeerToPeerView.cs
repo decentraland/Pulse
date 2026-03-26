@@ -34,4 +34,10 @@ public struct PeerToPeerView
     ///     Compared against <see cref="Simulation.ProfileBoard" /> each tick to detect changes.
     /// </summary>
     public int LastSentProfileVersion;
+
+    /// <summary>
+    ///     The emote ID last sent to the observer for this subject, or null if idle.
+    ///     Compared against <see cref="Simulation.EmoteBoard" /> each tick to detect transitions.
+    /// </summary>
+    public string? LastSentEmoteId;
 }

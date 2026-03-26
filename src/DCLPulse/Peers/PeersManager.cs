@@ -106,7 +106,8 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, emoteBoard, peerSimulationLogger);
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, emoteBoard, peerSimulationLogger,
+                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier);
 
             tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader,
                 peerLifeCycleChannels[i].Reader, simulation, stoppingToken);

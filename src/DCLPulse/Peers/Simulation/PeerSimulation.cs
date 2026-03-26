@@ -22,6 +22,8 @@ public sealed class PeerSimulation : IPeerSimulation
     private const uint PEER_DISCONNECTION_CLEAN_TIMEOUT = 5000;
     private const uint PEER_PENDING_AUTH_CLEAN_TIMEOUT = 30000;
 
+    public const string SELF_MIRROR_WALLET_ID = "self_mirror";
+
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
     private readonly SpatialGrid spatialGrid;
@@ -33,6 +35,8 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly ProfileBoard profileBoard;
     private readonly EmoteBoard emoteBoard;
     private readonly ILogger<PeerSimulation> logger;
+    private readonly bool selfMirrorEnabled;
+    private readonly PeerViewSimulationTier selfMirrorTier;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -71,7 +75,9 @@ public sealed class PeerSimulation : IPeerSimulation
         ITransport transport,
         ProfileBoard profileBoard,
         EmoteBoard emoteBoard,
-        ILogger<PeerSimulation> logger)
+        ILogger<PeerSimulation> logger,
+        bool selfMirrorEnabled = false,
+        int selfMirrorTier = 0)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -84,6 +90,8 @@ public sealed class PeerSimulation : IPeerSimulation
         this.profileBoard = profileBoard;
         this.emoteBoard = emoteBoard;
         this.logger = logger;
+        this.selfMirrorEnabled = selfMirrorEnabled;
+        this.selfMirrorTier = new PeerViewSimulationTier((byte)selfMirrorTier);
 
         BaseTickMs = simulationSteps[0];
         tierDivisors = new uint[simulationSteps.Length];
@@ -145,6 +153,9 @@ public sealed class PeerSimulation : IPeerSimulation
             collector.Clear();
             areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
 
+            if (selfMirrorEnabled)
+                collector.Add(observerId, selfMirrorTier);
+
             ProcessVisibleSubjects(observerId, views, observerState.ResyncRequests, tickCounter);
 
             observerState.ResyncRequests?.Clear();
@@ -177,7 +188,9 @@ public sealed class PeerSimulation : IPeerSimulation
         {
             InterestEntry entry = collector.Entries[i];
 
-            if (entry.Subject == observerId)
+            bool isSelfMirror = entry.Subject == observerId;
+
+            if (isSelfMirror && !selfMirrorEnabled)
                 continue;
 
             bool isNew = !views.TryGetValue(entry.Subject, out PeerToPeerView view);
@@ -213,11 +226,15 @@ public sealed class PeerSimulation : IPeerSimulation
 
                 int profileVersion = profileBoard.Get(entry.Subject);
 
+                string? userId = isSelfMirror
+                    ? SELF_MIRROR_WALLET_ID
+                    : identityBoard.GetWalletIdByPeerIndex(entry.Subject);
+
                 messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                 {
                     PlayerJoined = new PlayerJoined
                     {
-                        UserId = identityBoard.GetWalletIdByPeerIndex(entry.Subject),
+                        UserId = userId,
                         ProfileVersion = profileVersion,
                         State = CreateFullState(entry.Subject, subjectSnapshot),
                     },
@@ -277,7 +294,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
             void SyncEmoteState()
             {
-                // If the emote completion has not been process by the peer's worker yet, try to complete it now
+                // If the emote completion has not been processed by the peer's worker yet, try to complete it now
                 emoteBoard.TryComplete(entry.Subject, timeProvider.MonotonicTime);
 
                 EmoteState? emoteState = emoteBoard.Get(entry.Subject);

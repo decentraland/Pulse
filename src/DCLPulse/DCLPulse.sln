@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulseTests", "..\DCLPuls
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulseBenchmarks", "..\DCLPulseBenchmarks\DCLPulseBenchmarks.csproj", "{A94265FD-7ED8-40EF-A346-1E4138593ED1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulseTestClient", "..\DCLPulseTestClient\DCLPulseTestClient.csproj", "{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -80,6 +82,18 @@ Global
 		{A94265FD-7ED8-40EF-A346-1E4138593ED1}.Release|x64.Build.0 = Release|Any CPU
 		{A94265FD-7ED8-40EF-A346-1E4138593ED1}.Release|x86.ActiveCfg = Release|Any CPU
 		{A94265FD-7ED8-40EF-A346-1E4138593ED1}.Release|x86.Build.0 = Release|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Debug|x64.Build.0 = Debug|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Debug|x86.Build.0 = Debug|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Release|x64.ActiveCfg = Release|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Release|x64.Build.0 = Release|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Release|x86.ActiveCfg = Release|Any CPU
+		{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

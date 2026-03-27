@@ -1,23 +1,54 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace PulseTestClient.Profiles;
 
 public class MetaForgeProfileGateway : IProfileGateway
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
     public async Task<Profile> GetAsync(string account, CancellationToken ct)
     {
-        var raw = await MetaForge.RunCommandAsync($"account info {account}", ct);
-        var output = Regex.Replace(raw, @"\x1B\[[0-9;]*m", "");
+        var json = await MetaForge.RunCommandAsync($"account info {account} --json", ct);
 
-        var address = Regex.Match(output, @"Address:\s+(0x[0-9a-fA-F]+)").Groups[1].Value;
-        var version = int.Parse(Regex.Match(output, @"Version\s+(\d+)").Groups[1].Value);
+        var response = JsonSerializer.Deserialize<ProfileResponse>(json, JsonOptions)!;
+        var avatar = response.Metadata.Avatars[0];
 
-        // Match emote rows from the right-side table (lines ending with │ <item> │  │)
-        var emotes = Regex.Matches(output, @"│\s+(\w+)\s+│\s+│\s*$", RegexOptions.Multiline)
-            .Select(m => m.Groups[1].Value)
-            .Where(v => v != "Item")
+        var emotes = avatar.Avatar.Emotes
+            .Select(e => e.Urn)
             .ToArray();
 
-        return new Profile(new Web3Address(address), version, emotes);
+        return new Profile(new Web3Address(avatar.EthAddress), avatar.Version, emotes);
     }
+}
+
+file class ProfileResponse
+{
+    [JsonPropertyName("metadata")] public ProfileMetadata Metadata { get; set; } = null!;
+}
+
+file class ProfileMetadata
+{
+    [JsonPropertyName("avatars")] public List<AvatarEntry> Avatars { get; set; } = [];
+}
+
+file class AvatarEntry
+{
+    [JsonPropertyName("ethAddress")] public string EthAddress { get; set; } = "";
+    [JsonPropertyName("version")] public int Version { get; set; }
+    [JsonPropertyName("avatar")] public AvatarData Avatar { get; set; } = null!;
+}
+
+file class AvatarData
+{
+    [JsonPropertyName("emotes")] public List<EmoteEntry> Emotes { get; set; } = [];
+}
+
+file class EmoteEntry
+{
+    [JsonPropertyName("urn")] public string Urn { get; set; } = "";
 }

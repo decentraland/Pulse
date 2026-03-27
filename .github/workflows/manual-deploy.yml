@@ -20,7 +20,7 @@ on:
 jobs:
   deployment:
     if: ${{ inputs.deployment-environment }}
-    name: Deploy dcl-pulse to ${{ inputs.deployment-environment }}
+    name: Deploy pulse-server to ${{ inputs.deployment-environment }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.deployment-environment }}
     steps:
@@ -28,7 +28,7 @@ jobs:
         id: deploy
         uses: decentraland/dcl-deploy-action@main
         with:
-          dockerImage: "quay.io/decentraland/dcl-pulse:${{ inputs.tag }}"
-          serviceName: "dcl-pulse"
+          dockerImage: "quay.io/decentraland/pulse-server:${{ inputs.tag }}"
+          serviceName: "pulse-server"
           env: ${{ inputs.deployment-environment }}
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -9,7 +9,8 @@ public sealed class HealthCheckService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var prefix = $"http://+:{(int)options.Value.Port}/";
+        string host = OperatingSystem.IsWindows() ? "localhost" : "+";
+        var prefix = $"http://{host}:{(int)options.Value.Port}/";
 
         var listener = new HttpListener();
         listener.Prefixes.Add(prefix);

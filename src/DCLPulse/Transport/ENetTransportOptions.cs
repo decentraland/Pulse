@@ -8,4 +8,6 @@ public sealed class ENetTransportOptions
     public int MaxPeers { get; set; } = 4095;
     public int ServiceTimeoutMs { get; set; } = 1000;
     public int BufferSize { get; set; } = 4096;
+
+    public uint PeerTimeoutMs { get; set; } = 30000;
 }

@@ -116,6 +116,7 @@ public sealed class ENetHostedService(
         switch (netEvent.Type)
         {
             case EventType.Connect:
+                netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);
                 connectedPeers[peerIndex] = netEvent.Peer;
 
                 messagePipe.OnPeerConnected(peerIndex);

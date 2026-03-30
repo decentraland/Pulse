@@ -103,7 +103,7 @@ public partial class PeerSimulationTests
             Parcel: 0,
             LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
             GlobalPosition: position ?? Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, SlideBlend: 0f,
+            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed));

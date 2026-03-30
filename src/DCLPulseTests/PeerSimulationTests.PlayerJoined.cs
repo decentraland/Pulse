@@ -35,6 +35,7 @@ public partial class PeerSimulationTests
             Velocity: new Vector3(0.5f, 0f, -0.5f),
             RotationY: 1.57f,
             MovementBlend: 0.8f, SlideBlend: 0.2f,
+            JumpCount: 0,
             HeadYaw: 0.3f, HeadPitch: -0.1f,
             AnimationFlags: PlayerAnimationFlags.Grounded,
             GlideState: GlideState.PropClosed);

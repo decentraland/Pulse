@@ -226,6 +226,10 @@ public sealed class PeerSimulation : IPeerSimulation
                 resyncRequests?.Remove(entry.Subject);
                 view = new PeerToPeerView { Onto = entry.Subject };
 
+                // PlayerJoined carries the full state — mark any pending teleport as already seen
+                if (teleportBoard.TryRead(entry.Subject, out TeleportEntry pendingTeleport))
+                    view.LastSentTeleportTick = pendingTeleport.ServerTick;
+
                 int profileVersion = profileBoard.Get(entry.Subject);
 
                 string? userId = isSelfMirror

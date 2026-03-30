@@ -112,6 +112,34 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void Teleport_NotSentToNewObserver_WhenTeleportHappenedBeforeJoining()
+    {
+        // Observer A already sees subject and receives the teleport
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+
+        teleportBoard.Publish(subject, new Vector3(10, 20, 30), serverTick: 5000);
+        PublishSnapshot(subject, seq: 2);
+        simulation.SimulateTick(peers, tickCounter: 1);
+        DrainAllMessages(); // observer received Teleported
+
+        // Observer B joins later — subject is still in the board with the same teleport
+        var lateObserver = new PeerIndex(2);
+        peers[lateObserver] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        PublishSnapshot(lateObserver, seq: 1);
+
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        List<OutgoingMessage> messages = DrainAllMessages();
+
+        // Late observer gets PlayerJoined (full state) but NOT the stale Teleported
+        List<OutgoingMessage> lateMessages = messages.Where(m => m.To == lateObserver).ToList();
+        Assert.That(lateMessages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined), Is.True);
+        Assert.That(lateMessages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported), Is.False);
+    }
+
+    [Test]
     public void Teleport_BoardClearedOnDisconnect()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));

@@ -81,6 +81,12 @@ public static class PeerViewDiff
             hasChanges = true;
         }
 
+        if (!Equals(from.JumpCount, to.JumpCount))
+        {
+            delta.JumpCount = to.JumpCount;
+            hasChanges = true;
+        }
+
         // TIER_2: spatial state flags only
         if (tier.Equals(PeerViewSimulationTier.TIER_0) || tier.Equals(PeerViewSimulationTier.TIER_1))
         {

@@ -20,6 +20,7 @@ public record struct PeerSnapshot(
     float RotationY,
 
     // Animation-related
+    int JumpCount,
     float MovementBlend,
     float SlideBlend,
     float? HeadYaw,

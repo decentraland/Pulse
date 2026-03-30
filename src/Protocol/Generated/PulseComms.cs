@@ -54,54 +54,55 @@ namespace Decentraland.Pulse {
             "LmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0YXJ0ZWRIABI5Cg1lbW90ZV9z",
             "dG9wcGVkGAggASgLMiAuZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RvcHBl",
             "ZEgAQgkKB21lc3NhZ2UiQgoQUGxheWVyU3RhdGVJbnB1dBIuCgVzdGF0ZRgB",
-            "IAEoCzIfLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZSLaAgoLUGxh",
+            "IAEoCzIfLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZSLuAgoLUGxh",
             "eWVyU3RhdGUSFAoMcGFyY2VsX2luZGV4GAEgASgFEi4KCHBvc2l0aW9uGAIg",
             "ASgLMhwuZGVjZW50cmFsYW5kLmNvbW1vbi5WZWN0b3IzEi4KCHZlbG9jaXR5",
             "GAMgASgLMhwuZGVjZW50cmFsYW5kLmNvbW1vbi5WZWN0b3IzEhIKCnJvdGF0",
             "aW9uX3kYBCABKAISFgoObW92ZW1lbnRfYmxlbmQYBSABKAISEwoLc2xpZGVf",
             "YmxlbmQYBiABKAISFQoIaGVhZF95YXcYByABKAJIAIgBARIXCgpoZWFkX3Bp",
             "dGNoGAggASgCSAGIAQESEwoLc3RhdGVfZmxhZ3MYCSABKA0SMwoLZ2xpZGVf",
-            "c3RhdGUYCiABKA4yHi5kZWNlbnRyYWxhbmQucHVsc2UuR2xpZGVTdGF0ZUIL",
-            "CglfaGVhZF95YXdCDQoLX2hlYWRfcGl0Y2gizQYKFVBsYXllclN0YXRlRGVs",
-            "dGFUaWVyMBISCgpzdWJqZWN0X2lkGAEgASgNEg8KB25ld19zZXEYAiABKA0S",
-            "EwoLc2VydmVyX3RpY2sYAyABKA0SGQoMcGFyY2VsX2luZGV4GAQgASgFSACI",
-            "AQESJAoKcG9zaXRpb25feBgFIAEoDUILirUYBxUAAIBBGAhIAYgBARIkCgpw",
-            "b3NpdGlvbl95GAYgASgNQguKtRgHFQAASEMYDUgCiAEBEiQKCnBvc2l0aW9u",
-            "X3oYByABKA1CC4q1GAcVAACAQRgISAOIAQESKQoKdmVsb2NpdHlfeBgIIAEo",
-            "DUIQirUYDA0AAEjCFQAASEIYCEgEiAEBEikKCnZlbG9jaXR5X3kYCSABKA1C",
-            "EIq1GAwNAABIwhUAAEhCGAhIBYgBARIpCgp2ZWxvY2l0eV96GAogASgNQhCK",
-            "tRgMDQAASMIVAABIQhgISAaIAQESJAoKcm90YXRpb25feRgLIAEoDUILirUY",
-            "BxUAALRDGAdIB4gBARIoCg5tb3ZlbWVudF9ibGVuZBgMIAEoDUILirUYBxUA",
-            "AEBAGARICIgBARIlCgtzbGlkZV9ibGVuZBgNIAEoDUILirUYBxUAAIA/GARI",
-            "CYgBARIiCghoZWFkX3lhdxgOIAEoDUILirUYBxUAALRDGAdICogBARIkCgpo",
-            "ZWFkX3BpdGNoGA8gASgNQguKtRgHFQAANEMYBkgLiAEBEhgKC3N0YXRlX2Zs",
-            "YWdzGBAgASgNSAyIAQESOAoLZ2xpZGVfc3RhdGUYESABKA4yHi5kZWNlbnRy",
-            "YWxhbmQucHVsc2UuR2xpZGVTdGF0ZUgNiAEBQg8KDV9wYXJjZWxfaW5kZXhC",
+            "c3RhdGUYCiABKA4yHi5kZWNlbnRyYWxhbmQucHVsc2UuR2xpZGVTdGF0ZRIS",
+            "CgpqdW1wX2NvdW50GAsgASgFQgsKCV9oZWFkX3lhd0INCgtfaGVhZF9waXRj",
+            "aCL1BgoVUGxheWVyU3RhdGVEZWx0YVRpZXIwEhIKCnN1YmplY3RfaWQYASAB",
+            "KA0SDwoHbmV3X3NlcRgCIAEoDRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIZCgxw",
+            "YXJjZWxfaW5kZXgYBCABKAVIAIgBARIkCgpwb3NpdGlvbl94GAUgASgNQguK",
+            "tRgHFQAAgEEYCEgBiAEBEiQKCnBvc2l0aW9uX3kYBiABKA1CC4q1GAcVAABI",
+            "QxgNSAKIAQESJAoKcG9zaXRpb25fehgHIAEoDUILirUYBxUAAIBBGAhIA4gB",
+            "ARIpCgp2ZWxvY2l0eV94GAggASgNQhCKtRgMDQAASMIVAABIQhgISASIAQES",
+            "KQoKdmVsb2NpdHlfeRgJIAEoDUIQirUYDA0AAEjCFQAASEIYCEgFiAEBEikK",
+            "CnZlbG9jaXR5X3oYCiABKA1CEIq1GAwNAABIwhUAAEhCGAhIBogBARIkCgpy",
+            "b3RhdGlvbl95GAsgASgNQguKtRgHFQAAtEMYB0gHiAEBEigKDm1vdmVtZW50",
+            "X2JsZW5kGAwgASgNQguKtRgHFQAAQEAYBUgIiAEBEiUKC3NsaWRlX2JsZW5k",
+            "GA0gASgNQguKtRgHFQAAgD8YBEgJiAEBEiIKCGhlYWRfeWF3GA4gASgNQguK",
+            "tRgHFQAAtEMYB0gKiAEBEiQKCmhlYWRfcGl0Y2gYDyABKA1CC4q1GAcVAAA0",
+            "QxgGSAuIAQESGAoLc3RhdGVfZmxhZ3MYECABKA1IDIgBARI4CgtnbGlkZV9z",
+            "dGF0ZRgRIAEoDjIeLmRlY2VudHJhbGFuZC5wdWxzZS5HbGlkZVN0YXRlSA2I",
+            "AQESFwoKanVtcF9jb3VudBgSIAEoBUgOiAEBQg8KDV9wYXJjZWxfaW5kZXhC",
             "DQoLX3Bvc2l0aW9uX3hCDQoLX3Bvc2l0aW9uX3lCDQoLX3Bvc2l0aW9uX3pC",
             "DQoLX3ZlbG9jaXR5X3hCDQoLX3ZlbG9jaXR5X3lCDQoLX3ZlbG9jaXR5X3pC",
             "DQoLX3JvdGF0aW9uX3lCEQoPX21vdmVtZW50X2JsZW5kQg4KDF9zbGlkZV9i",
             "bGVuZEILCglfaGVhZF95YXdCDQoLX2hlYWRfcGl0Y2hCDgoMX3N0YXRlX2Zs",
-            "YWdzQg4KDF9nbGlkZV9zdGF0ZSJ8Cg9QbGF5ZXJTdGF0ZUZ1bGwSEgoKc3Vi",
-            "amVjdF9pZBgBIAEoDRIQCghzZXF1ZW5jZRgCIAEoDRITCgtzZXJ2ZXJfdGlj",
-            "axgDIAEoDRIuCgVzdGF0ZRgEIAEoCzIfLmRlY2VudHJhbGFuZC5wdWxzZS5Q",
-            "bGF5ZXJTdGF0ZSJsCgxQbGF5ZXJKb2luZWQSDwoHdXNlcl9pZBgBIAEoCRIX",
-            "Cg9wcm9maWxlX3ZlcnNpb24YAiABKAUSMgoFc3RhdGUYAyABKAsyIy5kZWNl",
-            "bnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVGdWxsIiAKClBsYXllckxlZnQS",
-            "EgoKc3ViamVjdF9pZBgBIAEoDSI2Cg1SZXN5bmNSZXF1ZXN0EhIKCnN1Ympl",
-            "Y3RfaWQYASABKA0SEQoJa25vd25fc2VxGAIgASgNIkgKCkVtb3RlU3RhcnQS",
-            "EAoIZW1vdGVfaWQYASABKAkSGAoLZHVyYXRpb25fbXMYAiABKA1IAIgBAUIO",
-            "CgxfZHVyYXRpb25fbXMiCwoJRW1vdGVTdG9wIoABCgxFbW90ZVN0YXJ0ZWQS",
-            "EgoKc3ViamVjdF9pZBgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoDRIQCghl",
-            "bW90ZV9pZBgDIAEoCRI1CgxwbGF5ZXJfc3RhdGUYBCABKAsyHy5kZWNlbnRy",
-            "YWxhbmQucHVsc2UuUGxheWVyU3RhdGUibAoMRW1vdGVTdG9wcGVkEhIKCnN1",
-            "YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKA0SMwoGcmVhc29u",
-            "GAMgASgOMiMuZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RvcFJlYXNvbipm",
-            "ChRQbGF5ZXJBbmltYXRpb25GbGFncxIICgROT05FEAASDAoIR1JPVU5ERUQQ",
-            "ARINCglMT05HX0pVTVAQAhINCglMT05HX0ZBTEwQBBILCgdGQUxMSU5HEAgS",
-            "CwoHU1RVTk5FRBAQKk4KCkdsaWRlU3RhdGUSDwoLUFJPUF9DTE9TRUQQABIQ",
-            "CgxPUEVOSU5HX1BST1AQARILCgdHTElESU5HEAISEAoMQ0xPU0lOR19QUk9Q",
-            "EAMqLwoPRW1vdGVTdG9wUmVhc29uEg0KCUNPTVBMRVRFRBAAEg0KCUNBTkNF",
-            "TExFRBABYgZwcm90bzM="));
+            "YWdzQg4KDF9nbGlkZV9zdGF0ZUINCgtfanVtcF9jb3VudCJ8Cg9QbGF5ZXJT",
+            "dGF0ZUZ1bGwSEgoKc3ViamVjdF9pZBgBIAEoDRIQCghzZXF1ZW5jZRgCIAEo",
+            "DRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIuCgVzdGF0ZRgEIAEoCzIfLmRlY2Vu",
+            "dHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZSJsCgxQbGF5ZXJKb2luZWQSDwoH",
+            "dXNlcl9pZBgBIAEoCRIXCg9wcm9maWxlX3ZlcnNpb24YAiABKAUSMgoFc3Rh",
+            "dGUYAyABKAsyIy5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVGdWxs",
+            "IiAKClBsYXllckxlZnQSEgoKc3ViamVjdF9pZBgBIAEoDSI2Cg1SZXN5bmNS",
+            "ZXF1ZXN0EhIKCnN1YmplY3RfaWQYASABKA0SEQoJa25vd25fc2VxGAIgASgN",
+            "IkgKCkVtb3RlU3RhcnQSEAoIZW1vdGVfaWQYASABKAkSGAoLZHVyYXRpb25f",
+            "bXMYAiABKA1IAIgBAUIOCgxfZHVyYXRpb25fbXMiCwoJRW1vdGVTdG9wIoAB",
+            "CgxFbW90ZVN0YXJ0ZWQSEgoKc3ViamVjdF9pZBgBIAEoDRITCgtzZXJ2ZXJf",
+            "dGljaxgCIAEoDRIQCghlbW90ZV9pZBgDIAEoCRI1CgxwbGF5ZXJfc3RhdGUY",
+            "BCABKAsyHy5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGUibAoMRW1v",
+            "dGVTdG9wcGVkEhIKCnN1YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sY",
+            "AiABKA0SMwoGcmVhc29uGAMgASgOMiMuZGVjZW50cmFsYW5kLnB1bHNlLkVt",
+            "b3RlU3RvcFJlYXNvbipmChRQbGF5ZXJBbmltYXRpb25GbGFncxIICgROT05F",
+            "EAASDAoIR1JPVU5ERUQQARINCglMT05HX0pVTVAQAhINCglMT05HX0ZBTEwQ",
+            "BBILCgdGQUxMSU5HEAgSCwoHU1RVTk5FRBAQKk4KCkdsaWRlU3RhdGUSDwoL",
+            "UFJPUF9DTE9TRUQQABIQCgxPUEVOSU5HX1BST1AQARILCgdHTElESU5HEAIS",
+            "EAoMQ0xPU0lOR19QUk9QEAMqLwoPRW1vdGVTdG9wUmVhc29uEg0KCUNPTVBM",
+            "RVRFRBAAEg0KCUNBTkNFTExFRBABYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Common.OptionsReflection.Descriptor, global::Decentraland.Common.VectorsReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Decentraland.Pulse.PlayerAnimationFlags), typeof(global::Decentraland.Pulse.GlideState), typeof(global::Decentraland.Pulse.EmoteStopReason), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -112,8 +113,8 @@ namespace Decentraland.Pulse {
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ClientMessage), global::Decentraland.Pulse.ClientMessage.Parser, new[]{ "Handshake", "Input", "Resync", "ProfileAnnouncement", "EmoteStart", "EmoteStop" }, new[]{ "Message" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ServerMessage), global::Decentraland.Pulse.ServerMessage.Parser, new[]{ "Handshake", "PlayerStateFull", "PlayerStateDelta", "PlayerJoined", "PlayerLeft", "PlayerProfileVersionAnnounced", "EmoteStarted", "EmoteStopped" }, new[]{ "Message" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateInput), global::Decentraland.Pulse.PlayerStateInput.Parser, new[]{ "State" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerState), global::Decentraland.Pulse.PlayerState.Parser, new[]{ "ParcelIndex", "Position", "Velocity", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState" }, new[]{ "HeadYaw", "HeadPitch" }, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateDeltaTier0), global::Decentraland.Pulse.PlayerStateDeltaTier0.Parser, new[]{ "SubjectId", "NewSeq", "ServerTick", "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState" }, new[]{ "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerState), global::Decentraland.Pulse.PlayerState.Parser, new[]{ "ParcelIndex", "Position", "Velocity", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, new[]{ "HeadYaw", "HeadPitch" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateDeltaTier0), global::Decentraland.Pulse.PlayerStateDeltaTier0.Parser, new[]{ "SubjectId", "NewSeq", "ServerTick", "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, new[]{ "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateFull), global::Decentraland.Pulse.PlayerStateFull.Parser, new[]{ "SubjectId", "Sequence", "ServerTick", "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerJoined), global::Decentraland.Pulse.PlayerJoined.Parser, new[]{ "UserId", "ProfileVersion", "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerLeft), global::Decentraland.Pulse.PlayerLeft.Parser, new[]{ "SubjectId" }, null, null, null, null),
@@ -2454,6 +2455,7 @@ namespace Decentraland.Pulse {
       headPitch_ = other.headPitch_;
       stateFlags_ = other.stateFlags_;
       glideState_ = other.glideState_;
+      jumpCount_ = other.jumpCount_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2613,6 +2615,18 @@ namespace Decentraland.Pulse {
       }
     }
 
+    /// <summary>Field number for the "jump_count" field.</summary>
+    public const int JumpCountFieldNumber = 11;
+    private int jumpCount_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int JumpCount {
+      get { return jumpCount_; }
+      set {
+        jumpCount_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -2638,6 +2652,7 @@ namespace Decentraland.Pulse {
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(HeadPitch, other.HeadPitch)) return false;
       if (StateFlags != other.StateFlags) return false;
       if (GlideState != other.GlideState) return false;
+      if (JumpCount != other.JumpCount) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2655,6 +2670,7 @@ namespace Decentraland.Pulse {
       if (HasHeadPitch) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(HeadPitch);
       if (StateFlags != 0) hash ^= StateFlags.GetHashCode();
       if (GlideState != global::Decentraland.Pulse.GlideState.PropClosed) hash ^= GlideState.GetHashCode();
+      if (JumpCount != 0) hash ^= JumpCount.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -2713,6 +2729,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(80);
         output.WriteEnum((int) GlideState);
       }
+      if (JumpCount != 0) {
+        output.WriteRawTag(88);
+        output.WriteInt32(JumpCount);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -2763,6 +2783,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(80);
         output.WriteEnum((int) GlideState);
       }
+      if (JumpCount != 0) {
+        output.WriteRawTag(88);
+        output.WriteInt32(JumpCount);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -2802,6 +2826,9 @@ namespace Decentraland.Pulse {
       }
       if (GlideState != global::Decentraland.Pulse.GlideState.PropClosed) {
         size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) GlideState);
+      }
+      if (JumpCount != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(JumpCount);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -2850,6 +2877,9 @@ namespace Decentraland.Pulse {
       }
       if (other.GlideState != global::Decentraland.Pulse.GlideState.PropClosed) {
         GlideState = other.GlideState;
+      }
+      if (other.JumpCount != 0) {
+        JumpCount = other.JumpCount;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -2914,6 +2944,10 @@ namespace Decentraland.Pulse {
           }
           case 80: {
             GlideState = (global::Decentraland.Pulse.GlideState) input.ReadEnum();
+            break;
+          }
+          case 88: {
+            JumpCount = input.ReadInt32();
             break;
           }
         }
@@ -2981,6 +3015,10 @@ namespace Decentraland.Pulse {
             GlideState = (global::Decentraland.Pulse.GlideState) input.ReadEnum();
             break;
           }
+          case 88: {
+            JumpCount = input.ReadInt32();
+            break;
+          }
         }
       }
     }
@@ -3042,6 +3080,7 @@ namespace Decentraland.Pulse {
       headPitch_ = other.headPitch_;
       stateFlags_ = other.stateFlags_;
       glideState_ = other.glideState_;
+      jumpCount_ = other.jumpCount_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -3477,6 +3516,33 @@ namespace Decentraland.Pulse {
       _hasBits0 &= ~8192;
     }
 
+    /// <summary>Field number for the "jump_count" field.</summary>
+    public const int JumpCountFieldNumber = 18;
+    private readonly static int JumpCountDefaultValue = 0;
+
+    private int jumpCount_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int JumpCount {
+      get { if ((_hasBits0 & 16384) != 0) { return jumpCount_; } else { return JumpCountDefaultValue; } }
+      set {
+        _hasBits0 |= 16384;
+        jumpCount_ = value;
+      }
+    }
+    /// <summary>Gets whether the "jump_count" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasJumpCount {
+      get { return (_hasBits0 & 16384) != 0; }
+    }
+    /// <summary>Clears the value of the "jump_count" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearJumpCount() {
+      _hasBits0 &= ~16384;
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -3509,6 +3575,7 @@ namespace Decentraland.Pulse {
       if (HeadPitch != other.HeadPitch) return false;
       if (StateFlags != other.StateFlags) return false;
       if (GlideState != other.GlideState) return false;
+      if (JumpCount != other.JumpCount) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -3533,6 +3600,7 @@ namespace Decentraland.Pulse {
       if (HasHeadPitch) hash ^= HeadPitch.GetHashCode();
       if (HasStateFlags) hash ^= StateFlags.GetHashCode();
       if (HasGlideState) hash ^= GlideState.GetHashCode();
+      if (HasJumpCount) hash ^= JumpCount.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -3619,6 +3687,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(136, 1);
         output.WriteEnum((int) GlideState);
       }
+      if (HasJumpCount) {
+        output.WriteRawTag(144, 1);
+        output.WriteInt32(JumpCount);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -3697,6 +3769,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(136, 1);
         output.WriteEnum((int) GlideState);
       }
+      if (HasJumpCount) {
+        output.WriteRawTag(144, 1);
+        output.WriteInt32(JumpCount);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -3757,6 +3833,9 @@ namespace Decentraland.Pulse {
       }
       if (HasGlideState) {
         size += 2 + pb::CodedOutputStream.ComputeEnumSize((int) GlideState);
+      }
+      if (HasJumpCount) {
+        size += 2 + pb::CodedOutputStream.ComputeInt32Size(JumpCount);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -3820,6 +3899,9 @@ namespace Decentraland.Pulse {
       }
       if (other.HasGlideState) {
         GlideState = other.GlideState;
+      }
+      if (other.HasJumpCount) {
+        JumpCount = other.JumpCount;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -3908,6 +3990,10 @@ namespace Decentraland.Pulse {
             GlideState = (global::Decentraland.Pulse.GlideState) input.ReadEnum();
             break;
           }
+          case 144: {
+            JumpCount = input.ReadInt32();
+            break;
+          }
         }
       }
     #endif
@@ -3993,6 +4079,10 @@ namespace Decentraland.Pulse {
           }
           case 136: {
             GlideState = (global::Decentraland.Pulse.GlideState) input.ReadEnum();
+            break;
+          }
+          case 144: {
+            JumpCount = input.ReadInt32();
             break;
           }
         }

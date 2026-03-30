@@ -40,6 +40,7 @@ public class PlayerStateInputHandler(
             globalPeerPosition,
             state.Velocity,
             state.RotationY,
+            state.JumpCount,
             state.MovementBlend,
             state.SlideBlend,
             state.GetHeadYaw(),

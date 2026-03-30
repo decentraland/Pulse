@@ -45,6 +45,7 @@ public partial class PeerSimulationTests
     private SpatialGrid spatialGrid;
     private ProfileBoard profileBoard;
     private EmoteBoard emoteBoard;
+    private TeleportBoard teleportBoard;
 
     [SetUp]
     public void SetUp()
@@ -74,11 +75,12 @@ public partial class PeerSimulationTests
 
         profileBoard = new ProfileBoard(MAX_PEERS);
         emoteBoard = new EmoteBoard(MAX_PEERS);
+        teleportBoard = new TeleportBoard(MAX_PEERS);
 
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>());
+            profileBoard, emoteBoard, teleportBoard, Substitute.For<ILogger<PeerSimulation>>());
 
         peers = new Dictionary<PeerIndex, PeerState>
         {

@@ -21,6 +21,14 @@ public class ParcelEncoder
         parcelSize =  options.ParcelSize;
     }
 
+    public int EncodeFromGlobalPosition(Vector3 globalPosition, out Vector3 localPosition)
+    {
+        int x = (int)MathF.Floor(globalPosition.X / parcelSize);
+        int z = (int)MathF.Floor(globalPosition.Z / parcelSize);
+        localPosition = new Vector3(globalPosition.X - (x * parcelSize), globalPosition.Y, globalPosition.Z - (z * parcelSize));
+        return Encode(x, z);
+    }
+
     public int Encode(int x, int z) =>
         x - minX + ((z - minZ) * width);
 

@@ -32,7 +32,7 @@ namespace Decentraland.Pulse {
             "GAEgASgIEhIKBWVycm9yGAIgASgJSACIAQFCCAoGX2Vycm9yIi0KGlByb2Zp",
             "bGVWZXJzaW9uQW5ub3VuY2VtZW50Eg8KB3ZlcnNpb24YASABKAUiRQoeUGxh",
             "eWVyUHJvZmlsZVZlcnNpb25zQW5ub3VuY2VkEhIKCnN1YmplY3RfaWQYASAB",
-            "KA0SDwoHdmVyc2lvbhgCIAEoBSL9AgoNQ2xpZW50TWVzc2FnZRI5CgloYW5k",
+            "KA0SDwoHdmVyc2lvbhgCIAEoBSK2AwoNQ2xpZW50TWVzc2FnZRI5CgloYW5k",
             "c2hha2UYASABKAsyJC5kZWNlbnRyYWxhbmQucHVsc2UuSGFuZHNoYWtlUmVx",
             "dWVzdEgAEjUKBWlucHV0GAIgASgLMiQuZGVjZW50cmFsYW5kLnB1bHNlLlBs",
             "YXllclN0YXRlSW5wdXRIABIzCgZyZXN5bmMYAyABKAsyIS5kZWNlbnRyYWxh",
@@ -40,73 +40,76 @@ namespace Decentraland.Pulse {
             "ZW50GAQgASgLMi4uZGVjZW50cmFsYW5kLnB1bHNlLlByb2ZpbGVWZXJzaW9u",
             "QW5ub3VuY2VtZW50SAASNQoLZW1vdGVfc3RhcnQYBSABKAsyHi5kZWNlbnRy",
             "YWxhbmQucHVsc2UuRW1vdGVTdGFydEgAEjMKCmVtb3RlX3N0b3AYBiABKAsy",
-            "HS5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVTdG9wSABCCQoHbWVzc2FnZSKp",
-            "BAoNU2VydmVyTWVzc2FnZRI6CgloYW5kc2hha2UYASABKAsyJS5kZWNlbnRy",
-            "YWxhbmQucHVsc2UuSGFuZHNoYWtlUmVzcG9uc2VIABJAChFwbGF5ZXJfc3Rh",
-            "dGVfZnVsbBgCIAEoCzIjLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0",
-            "ZUZ1bGxIABJHChJwbGF5ZXJfc3RhdGVfZGVsdGEYAyABKAsyKS5kZWNlbnRy",
-            "YWxhbmQucHVsc2UuUGxheWVyU3RhdGVEZWx0YVRpZXIwSAASOQoNcGxheWVy",
-            "X2pvaW5lZBgEIAEoCzIgLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJKb2lu",
-            "ZWRIABI1CgtwbGF5ZXJfbGVmdBgFIAEoCzIeLmRlY2VudHJhbGFuZC5wdWxz",
-            "ZS5QbGF5ZXJMZWZ0SAASXgogcGxheWVyX3Byb2ZpbGVfdmVyc2lvbl9hbm5v",
-            "dW5jZWQYBiABKAsyMi5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyUHJvZmls",
-            "ZVZlcnNpb25zQW5ub3VuY2VkSAASOQoNZW1vdGVfc3RhcnRlZBgHIAEoCzIg",
-            "LmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0YXJ0ZWRIABI5Cg1lbW90ZV9z",
-            "dG9wcGVkGAggASgLMiAuZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RvcHBl",
-            "ZEgAQgkKB21lc3NhZ2UiQgoQUGxheWVyU3RhdGVJbnB1dBIuCgVzdGF0ZRgB",
-            "IAEoCzIfLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZSLuAgoLUGxh",
-            "eWVyU3RhdGUSFAoMcGFyY2VsX2luZGV4GAEgASgFEi4KCHBvc2l0aW9uGAIg",
-            "ASgLMhwuZGVjZW50cmFsYW5kLmNvbW1vbi5WZWN0b3IzEi4KCHZlbG9jaXR5",
-            "GAMgASgLMhwuZGVjZW50cmFsYW5kLmNvbW1vbi5WZWN0b3IzEhIKCnJvdGF0",
-            "aW9uX3kYBCABKAISFgoObW92ZW1lbnRfYmxlbmQYBSABKAISEwoLc2xpZGVf",
-            "YmxlbmQYBiABKAISFQoIaGVhZF95YXcYByABKAJIAIgBARIXCgpoZWFkX3Bp",
-            "dGNoGAggASgCSAGIAQESEwoLc3RhdGVfZmxhZ3MYCSABKA0SMwoLZ2xpZGVf",
-            "c3RhdGUYCiABKA4yHi5kZWNlbnRyYWxhbmQucHVsc2UuR2xpZGVTdGF0ZRIS",
-            "CgpqdW1wX2NvdW50GAsgASgFQgsKCV9oZWFkX3lhd0INCgtfaGVhZF9waXRj",
-            "aCL1BgoVUGxheWVyU3RhdGVEZWx0YVRpZXIwEhIKCnN1YmplY3RfaWQYASAB",
-            "KA0SDwoHbmV3X3NlcRgCIAEoDRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIZCgxw",
-            "YXJjZWxfaW5kZXgYBCABKAVIAIgBARIkCgpwb3NpdGlvbl94GAUgASgNQguK",
-            "tRgHFQAAgEEYCEgBiAEBEiQKCnBvc2l0aW9uX3kYBiABKA1CC4q1GAcVAABI",
-            "QxgNSAKIAQESJAoKcG9zaXRpb25fehgHIAEoDUILirUYBxUAAIBBGAhIA4gB",
-            "ARIpCgp2ZWxvY2l0eV94GAggASgNQhCKtRgMDQAASMIVAABIQhgISASIAQES",
-            "KQoKdmVsb2NpdHlfeRgJIAEoDUIQirUYDA0AAEjCFQAASEIYCEgFiAEBEikK",
-            "CnZlbG9jaXR5X3oYCiABKA1CEIq1GAwNAABIwhUAAEhCGAhIBogBARIkCgpy",
-            "b3RhdGlvbl95GAsgASgNQguKtRgHFQAAtEMYB0gHiAEBEigKDm1vdmVtZW50",
-            "X2JsZW5kGAwgASgNQguKtRgHFQAAQEAYBUgIiAEBEiUKC3NsaWRlX2JsZW5k",
-            "GA0gASgNQguKtRgHFQAAgD8YBEgJiAEBEiIKCGhlYWRfeWF3GA4gASgNQguK",
-            "tRgHFQAAtEMYB0gKiAEBEiQKCmhlYWRfcGl0Y2gYDyABKA1CC4q1GAcVAAA0",
-            "QxgGSAuIAQESGAoLc3RhdGVfZmxhZ3MYECABKA1IDIgBARI4CgtnbGlkZV9z",
-            "dGF0ZRgRIAEoDjIeLmRlY2VudHJhbGFuZC5wdWxzZS5HbGlkZVN0YXRlSA2I",
-            "AQESFwoKanVtcF9jb3VudBgSIAEoBUgOiAEBQg8KDV9wYXJjZWxfaW5kZXhC",
-            "DQoLX3Bvc2l0aW9uX3hCDQoLX3Bvc2l0aW9uX3lCDQoLX3Bvc2l0aW9uX3pC",
-            "DQoLX3ZlbG9jaXR5X3hCDQoLX3ZlbG9jaXR5X3lCDQoLX3ZlbG9jaXR5X3pC",
-            "DQoLX3JvdGF0aW9uX3lCEQoPX21vdmVtZW50X2JsZW5kQg4KDF9zbGlkZV9i",
-            "bGVuZEILCglfaGVhZF95YXdCDQoLX2hlYWRfcGl0Y2hCDgoMX3N0YXRlX2Zs",
-            "YWdzQg4KDF9nbGlkZV9zdGF0ZUINCgtfanVtcF9jb3VudCJ8Cg9QbGF5ZXJT",
-            "dGF0ZUZ1bGwSEgoKc3ViamVjdF9pZBgBIAEoDRIQCghzZXF1ZW5jZRgCIAEo",
-            "DRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIuCgVzdGF0ZRgEIAEoCzIfLmRlY2Vu",
-            "dHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZSJsCgxQbGF5ZXJKb2luZWQSDwoH",
-            "dXNlcl9pZBgBIAEoCRIXCg9wcm9maWxlX3ZlcnNpb24YAiABKAUSMgoFc3Rh",
-            "dGUYAyABKAsyIy5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVGdWxs",
-            "IiAKClBsYXllckxlZnQSEgoKc3ViamVjdF9pZBgBIAEoDSI2Cg1SZXN5bmNS",
-            "ZXF1ZXN0EhIKCnN1YmplY3RfaWQYASABKA0SEQoJa25vd25fc2VxGAIgASgN",
-            "IkgKCkVtb3RlU3RhcnQSEAoIZW1vdGVfaWQYASABKAkSGAoLZHVyYXRpb25f",
-            "bXMYAiABKA1IAIgBAUIOCgxfZHVyYXRpb25fbXMiCwoJRW1vdGVTdG9wIoAB",
-            "CgxFbW90ZVN0YXJ0ZWQSEgoKc3ViamVjdF9pZBgBIAEoDRITCgtzZXJ2ZXJf",
-            "dGljaxgCIAEoDRIQCghlbW90ZV9pZBgDIAEoCRI1CgxwbGF5ZXJfc3RhdGUY",
-            "BCABKAsyHy5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGUibAoMRW1v",
-            "dGVTdG9wcGVkEhIKCnN1YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sY",
-            "AiABKA0SMwoGcmVhc29uGAMgASgOMiMuZGVjZW50cmFsYW5kLnB1bHNlLkVt",
-            "b3RlU3RvcFJlYXNvbiJBCg9UZWxlcG9ydFJlcXVlc3QSLgoIcG9zaXRpb24Y",
-            "ASABKAsyHC5kZWNlbnRyYWxhbmQuY29tbW9uLlZlY3RvcjMibAoRVGVsZXBv",
-            "cnRQZXJmb3JtZWQSEgoKc3ViamVjdF9pZBgBIAEoDRITCgtzZXJ2ZXJfdGlj",
-            "axgCIAEoDRIuCghwb3NpdGlvbhgDIAEoCzIcLmRlY2VudHJhbGFuZC5jb21t",
-            "b24uVmVjdG9yMypmChRQbGF5ZXJBbmltYXRpb25GbGFncxIICgROT05FEAAS",
-            "DAoIR1JPVU5ERUQQARINCglMT05HX0pVTVAQAhINCglMT05HX0ZBTEwQBBIL",
-            "CgdGQUxMSU5HEAgSCwoHU1RVTk5FRBAQKk4KCkdsaWRlU3RhdGUSDwoLUFJP",
-            "UF9DTE9TRUQQABIQCgxPUEVOSU5HX1BST1AQARILCgdHTElESU5HEAISEAoM",
-            "Q0xPU0lOR19QUk9QEAMqLwoPRW1vdGVTdG9wUmVhc29uEg0KCUNPTVBMRVRF",
-            "RBAAEg0KCUNBTkNFTExFRBABYgZwcm90bzM="));
+            "HS5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVTdG9wSAASNwoIdGVsZXBvcnQY",
+            "ByABKAsyIy5kZWNlbnRyYWxhbmQucHVsc2UuVGVsZXBvcnRSZXF1ZXN0SABC",
+            "CQoHbWVzc2FnZSLmBAoNU2VydmVyTWVzc2FnZRI6CgloYW5kc2hha2UYASAB",
+            "KAsyJS5kZWNlbnRyYWxhbmQucHVsc2UuSGFuZHNoYWtlUmVzcG9uc2VIABJA",
+            "ChFwbGF5ZXJfc3RhdGVfZnVsbBgCIAEoCzIjLmRlY2VudHJhbGFuZC5wdWxz",
+            "ZS5QbGF5ZXJTdGF0ZUZ1bGxIABJHChJwbGF5ZXJfc3RhdGVfZGVsdGEYAyAB",
+            "KAsyKS5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVEZWx0YVRpZXIw",
+            "SAASOQoNcGxheWVyX2pvaW5lZBgEIAEoCzIgLmRlY2VudHJhbGFuZC5wdWxz",
+            "ZS5QbGF5ZXJKb2luZWRIABI1CgtwbGF5ZXJfbGVmdBgFIAEoCzIeLmRlY2Vu",
+            "dHJhbGFuZC5wdWxzZS5QbGF5ZXJMZWZ0SAASXgogcGxheWVyX3Byb2ZpbGVf",
+            "dmVyc2lvbl9hbm5vdW5jZWQYBiABKAsyMi5kZWNlbnRyYWxhbmQucHVsc2Uu",
+            "UGxheWVyUHJvZmlsZVZlcnNpb25zQW5ub3VuY2VkSAASOQoNZW1vdGVfc3Rh",
+            "cnRlZBgHIAEoCzIgLmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0YXJ0ZWRI",
+            "ABI5Cg1lbW90ZV9zdG9wcGVkGAggASgLMiAuZGVjZW50cmFsYW5kLnB1bHNl",
+            "LkVtb3RlU3RvcHBlZEgAEjsKCnRlbGVwb3J0ZWQYCSABKAsyJS5kZWNlbnRy",
+            "YWxhbmQucHVsc2UuVGVsZXBvcnRQZXJmb3JtZWRIAEIJCgdtZXNzYWdlIkIK",
+            "EFBsYXllclN0YXRlSW5wdXQSLgoFc3RhdGUYASABKAsyHy5kZWNlbnRyYWxh",
+            "bmQucHVsc2UuUGxheWVyU3RhdGUi7gIKC1BsYXllclN0YXRlEhQKDHBhcmNl",
+            "bF9pbmRleBgBIAEoBRIuCghwb3NpdGlvbhgCIAEoCzIcLmRlY2VudHJhbGFu",
+            "ZC5jb21tb24uVmVjdG9yMxIuCgh2ZWxvY2l0eRgDIAEoCzIcLmRlY2VudHJh",
+            "bGFuZC5jb21tb24uVmVjdG9yMxISCgpyb3RhdGlvbl95GAQgASgCEhYKDm1v",
+            "dmVtZW50X2JsZW5kGAUgASgCEhMKC3NsaWRlX2JsZW5kGAYgASgCEhUKCGhl",
+            "YWRfeWF3GAcgASgCSACIAQESFwoKaGVhZF9waXRjaBgIIAEoAkgBiAEBEhMK",
+            "C3N0YXRlX2ZsYWdzGAkgASgNEjMKC2dsaWRlX3N0YXRlGAogASgOMh4uZGVj",
+            "ZW50cmFsYW5kLnB1bHNlLkdsaWRlU3RhdGUSEgoKanVtcF9jb3VudBgLIAEo",
+            "BUILCglfaGVhZF95YXdCDQoLX2hlYWRfcGl0Y2gi9QYKFVBsYXllclN0YXRl",
+            "RGVsdGFUaWVyMBISCgpzdWJqZWN0X2lkGAEgASgNEg8KB25ld19zZXEYAiAB",
+            "KA0SEwoLc2VydmVyX3RpY2sYAyABKA0SGQoMcGFyY2VsX2luZGV4GAQgASgF",
+            "SACIAQESJAoKcG9zaXRpb25feBgFIAEoDUILirUYBxUAAIBBGAhIAYgBARIk",
+            "Cgpwb3NpdGlvbl95GAYgASgNQguKtRgHFQAASEMYDUgCiAEBEiQKCnBvc2l0",
+            "aW9uX3oYByABKA1CC4q1GAcVAACAQRgISAOIAQESKQoKdmVsb2NpdHlfeBgI",
+            "IAEoDUIQirUYDA0AAEjCFQAASEIYCEgEiAEBEikKCnZlbG9jaXR5X3kYCSAB",
+            "KA1CEIq1GAwNAABIwhUAAEhCGAhIBYgBARIpCgp2ZWxvY2l0eV96GAogASgN",
+            "QhCKtRgMDQAASMIVAABIQhgISAaIAQESJAoKcm90YXRpb25feRgLIAEoDUIL",
+            "irUYBxUAALRDGAdIB4gBARIoCg5tb3ZlbWVudF9ibGVuZBgMIAEoDUILirUY",
+            "BxUAAEBAGAVICIgBARIlCgtzbGlkZV9ibGVuZBgNIAEoDUILirUYBxUAAIA/",
+            "GARICYgBARIiCghoZWFkX3lhdxgOIAEoDUILirUYBxUAALRDGAdICogBARIk",
+            "CgpoZWFkX3BpdGNoGA8gASgNQguKtRgHFQAANEMYBkgLiAEBEhgKC3N0YXRl",
+            "X2ZsYWdzGBAgASgNSAyIAQESOAoLZ2xpZGVfc3RhdGUYESABKA4yHi5kZWNl",
+            "bnRyYWxhbmQucHVsc2UuR2xpZGVTdGF0ZUgNiAEBEhcKCmp1bXBfY291bnQY",
+            "EiABKAVIDogBAUIPCg1fcGFyY2VsX2luZGV4Qg0KC19wb3NpdGlvbl94Qg0K",
+            "C19wb3NpdGlvbl95Qg0KC19wb3NpdGlvbl96Qg0KC192ZWxvY2l0eV94Qg0K",
+            "C192ZWxvY2l0eV95Qg0KC192ZWxvY2l0eV96Qg0KC19yb3RhdGlvbl95QhEK",
+            "D19tb3ZlbWVudF9ibGVuZEIOCgxfc2xpZGVfYmxlbmRCCwoJX2hlYWRfeWF3",
+            "Qg0KC19oZWFkX3BpdGNoQg4KDF9zdGF0ZV9mbGFnc0IOCgxfZ2xpZGVfc3Rh",
+            "dGVCDQoLX2p1bXBfY291bnQifAoPUGxheWVyU3RhdGVGdWxsEhIKCnN1Ympl",
+            "Y3RfaWQYASABKA0SEAoIc2VxdWVuY2UYAiABKA0SEwoLc2VydmVyX3RpY2sY",
+            "AyABKA0SLgoFc3RhdGUYBCABKAsyHy5kZWNlbnRyYWxhbmQucHVsc2UuUGxh",
+            "eWVyU3RhdGUibAoMUGxheWVySm9pbmVkEg8KB3VzZXJfaWQYASABKAkSFwoP",
+            "cHJvZmlsZV92ZXJzaW9uGAIgASgFEjIKBXN0YXRlGAMgASgLMiMuZGVjZW50",
+            "cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlRnVsbCIgCgpQbGF5ZXJMZWZ0EhIK",
+            "CnN1YmplY3RfaWQYASABKA0iNgoNUmVzeW5jUmVxdWVzdBISCgpzdWJqZWN0",
+            "X2lkGAEgASgNEhEKCWtub3duX3NlcRgCIAEoDSJICgpFbW90ZVN0YXJ0EhAK",
+            "CGVtb3RlX2lkGAEgASgJEhgKC2R1cmF0aW9uX21zGAIgASgNSACIAQFCDgoM",
+            "X2R1cmF0aW9uX21zIgsKCUVtb3RlU3RvcCKAAQoMRW1vdGVTdGFydGVkEhIK",
+            "CnN1YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKA0SEAoIZW1v",
+            "dGVfaWQYAyABKAkSNQoMcGxheWVyX3N0YXRlGAQgASgLMh8uZGVjZW50cmFs",
+            "YW5kLnB1bHNlLlBsYXllclN0YXRlImwKDEVtb3RlU3RvcHBlZBISCgpzdWJq",
+            "ZWN0X2lkGAEgASgNEhMKC3NlcnZlcl90aWNrGAIgASgNEjMKBnJlYXNvbhgD",
+            "IAEoDjIjLmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0b3BSZWFzb24iQQoP",
+            "VGVsZXBvcnRSZXF1ZXN0Ei4KCHBvc2l0aW9uGAEgASgLMhwuZGVjZW50cmFs",
+            "YW5kLmNvbW1vbi5WZWN0b3IzImwKEVRlbGVwb3J0UGVyZm9ybWVkEhIKCnN1",
+            "YmplY3RfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKA0SLgoIcG9zaXRp",
+            "b24YAyABKAsyHC5kZWNlbnRyYWxhbmQuY29tbW9uLlZlY3RvcjMqZgoUUGxh",
+            "eWVyQW5pbWF0aW9uRmxhZ3MSCAoETk9ORRAAEgwKCEdST1VOREVEEAESDQoJ",
+            "TE9OR19KVU1QEAISDQoJTE9OR19GQUxMEAQSCwoHRkFMTElORxAIEgsKB1NU",
+            "VU5ORUQQECpOCgpHbGlkZVN0YXRlEg8KC1BST1BfQ0xPU0VEEAASEAoMT1BF",
+            "TklOR19QUk9QEAESCwoHR0xJRElORxACEhAKDENMT1NJTkdfUFJPUBADKi8K",
+            "D0Vtb3RlU3RvcFJlYXNvbhINCglDT01QTEVURUQQABINCglDQU5DRUxMRUQQ",
+            "AWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Common.OptionsReflection.Descriptor, global::Decentraland.Common.VectorsReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Decentraland.Pulse.PlayerAnimationFlags), typeof(global::Decentraland.Pulse.GlideState), typeof(global::Decentraland.Pulse.EmoteStopReason), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -114,8 +117,8 @@ namespace Decentraland.Pulse {
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.HandshakeResponse), global::Decentraland.Pulse.HandshakeResponse.Parser, new[]{ "Success", "Error" }, new[]{ "Error" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ProfileVersionAnnouncement), global::Decentraland.Pulse.ProfileVersionAnnouncement.Parser, new[]{ "Version" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerProfileVersionsAnnounced), global::Decentraland.Pulse.PlayerProfileVersionsAnnounced.Parser, new[]{ "SubjectId", "Version" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ClientMessage), global::Decentraland.Pulse.ClientMessage.Parser, new[]{ "Handshake", "Input", "Resync", "ProfileAnnouncement", "EmoteStart", "EmoteStop" }, new[]{ "Message" }, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ServerMessage), global::Decentraland.Pulse.ServerMessage.Parser, new[]{ "Handshake", "PlayerStateFull", "PlayerStateDelta", "PlayerJoined", "PlayerLeft", "PlayerProfileVersionAnnounced", "EmoteStarted", "EmoteStopped" }, new[]{ "Message" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ClientMessage), global::Decentraland.Pulse.ClientMessage.Parser, new[]{ "Handshake", "Input", "Resync", "ProfileAnnouncement", "EmoteStart", "EmoteStop", "Teleport" }, new[]{ "Message" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ServerMessage), global::Decentraland.Pulse.ServerMessage.Parser, new[]{ "Handshake", "PlayerStateFull", "PlayerStateDelta", "PlayerJoined", "PlayerLeft", "PlayerProfileVersionAnnounced", "EmoteStarted", "EmoteStopped", "Teleported" }, new[]{ "Message" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateInput), global::Decentraland.Pulse.PlayerStateInput.Parser, new[]{ "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerState), global::Decentraland.Pulse.PlayerState.Parser, new[]{ "ParcelIndex", "Position", "Velocity", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, new[]{ "HeadYaw", "HeadPitch" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateDeltaTier0), global::Decentraland.Pulse.PlayerStateDeltaTier0.Parser, new[]{ "SubjectId", "NewSeq", "ServerTick", "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, new[]{ "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, null, null, null),
@@ -1140,6 +1143,9 @@ namespace Decentraland.Pulse {
         case MessageOneofCase.EmoteStop:
           EmoteStop = other.EmoteStop.Clone();
           break;
+        case MessageOneofCase.Teleport:
+          Teleport = other.Teleport.Clone();
+          break;
       }
 
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1223,6 +1229,18 @@ namespace Decentraland.Pulse {
       }
     }
 
+    /// <summary>Field number for the "teleport" field.</summary>
+    public const int TeleportFieldNumber = 7;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Decentraland.Pulse.TeleportRequest Teleport {
+      get { return messageCase_ == MessageOneofCase.Teleport ? (global::Decentraland.Pulse.TeleportRequest) message_ : null; }
+      set {
+        message_ = value;
+        messageCase_ = value == null ? MessageOneofCase.None : MessageOneofCase.Teleport;
+      }
+    }
+
     private object message_;
     /// <summary>Enum of possible cases for the "message" oneof.</summary>
     public enum MessageOneofCase {
@@ -1233,6 +1251,7 @@ namespace Decentraland.Pulse {
       ProfileAnnouncement = 4,
       EmoteStart = 5,
       EmoteStop = 6,
+      Teleport = 7,
     }
     private MessageOneofCase messageCase_ = MessageOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1269,6 +1288,7 @@ namespace Decentraland.Pulse {
       if (!object.Equals(ProfileAnnouncement, other.ProfileAnnouncement)) return false;
       if (!object.Equals(EmoteStart, other.EmoteStart)) return false;
       if (!object.Equals(EmoteStop, other.EmoteStop)) return false;
+      if (!object.Equals(Teleport, other.Teleport)) return false;
       if (MessageCase != other.MessageCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -1283,6 +1303,7 @@ namespace Decentraland.Pulse {
       if (messageCase_ == MessageOneofCase.ProfileAnnouncement) hash ^= ProfileAnnouncement.GetHashCode();
       if (messageCase_ == MessageOneofCase.EmoteStart) hash ^= EmoteStart.GetHashCode();
       if (messageCase_ == MessageOneofCase.EmoteStop) hash ^= EmoteStop.GetHashCode();
+      if (messageCase_ == MessageOneofCase.Teleport) hash ^= Teleport.GetHashCode();
       hash ^= (int) messageCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -1326,6 +1347,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(50);
         output.WriteMessage(EmoteStop);
       }
+      if (messageCase_ == MessageOneofCase.Teleport) {
+        output.WriteRawTag(58);
+        output.WriteMessage(Teleport);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1360,6 +1385,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(50);
         output.WriteMessage(EmoteStop);
       }
+      if (messageCase_ == MessageOneofCase.Teleport) {
+        output.WriteRawTag(58);
+        output.WriteMessage(Teleport);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1387,6 +1416,9 @@ namespace Decentraland.Pulse {
       }
       if (messageCase_ == MessageOneofCase.EmoteStop) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(EmoteStop);
+      }
+      if (messageCase_ == MessageOneofCase.Teleport) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Teleport);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1436,6 +1468,12 @@ namespace Decentraland.Pulse {
             EmoteStop = new global::Decentraland.Pulse.EmoteStop();
           }
           EmoteStop.MergeFrom(other.EmoteStop);
+          break;
+        case MessageOneofCase.Teleport:
+          if (Teleport == null) {
+            Teleport = new global::Decentraland.Pulse.TeleportRequest();
+          }
+          Teleport.MergeFrom(other.Teleport);
           break;
       }
 
@@ -1512,6 +1550,15 @@ namespace Decentraland.Pulse {
             EmoteStop = subBuilder;
             break;
           }
+          case 58: {
+            global::Decentraland.Pulse.TeleportRequest subBuilder = new global::Decentraland.Pulse.TeleportRequest();
+            if (messageCase_ == MessageOneofCase.Teleport) {
+              subBuilder.MergeFrom(Teleport);
+            }
+            input.ReadMessage(subBuilder);
+            Teleport = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -1585,6 +1632,15 @@ namespace Decentraland.Pulse {
             EmoteStop = subBuilder;
             break;
           }
+          case 58: {
+            global::Decentraland.Pulse.TeleportRequest subBuilder = new global::Decentraland.Pulse.TeleportRequest();
+            if (messageCase_ == MessageOneofCase.Teleport) {
+              subBuilder.MergeFrom(Teleport);
+            }
+            input.ReadMessage(subBuilder);
+            Teleport = subBuilder;
+            break;
+          }
         }
       }
     }
@@ -1651,6 +1707,9 @@ namespace Decentraland.Pulse {
           break;
         case MessageOneofCase.EmoteStopped:
           EmoteStopped = other.EmoteStopped.Clone();
+          break;
+        case MessageOneofCase.Teleported:
+          Teleported = other.Teleported.Clone();
           break;
       }
 
@@ -1759,6 +1818,18 @@ namespace Decentraland.Pulse {
       }
     }
 
+    /// <summary>Field number for the "teleported" field.</summary>
+    public const int TeleportedFieldNumber = 9;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Decentraland.Pulse.TeleportPerformed Teleported {
+      get { return messageCase_ == MessageOneofCase.Teleported ? (global::Decentraland.Pulse.TeleportPerformed) message_ : null; }
+      set {
+        message_ = value;
+        messageCase_ = value == null ? MessageOneofCase.None : MessageOneofCase.Teleported;
+      }
+    }
+
     private object message_;
     /// <summary>Enum of possible cases for the "message" oneof.</summary>
     public enum MessageOneofCase {
@@ -1771,6 +1842,7 @@ namespace Decentraland.Pulse {
       PlayerProfileVersionAnnounced = 6,
       EmoteStarted = 7,
       EmoteStopped = 8,
+      Teleported = 9,
     }
     private MessageOneofCase messageCase_ = MessageOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1809,6 +1881,7 @@ namespace Decentraland.Pulse {
       if (!object.Equals(PlayerProfileVersionAnnounced, other.PlayerProfileVersionAnnounced)) return false;
       if (!object.Equals(EmoteStarted, other.EmoteStarted)) return false;
       if (!object.Equals(EmoteStopped, other.EmoteStopped)) return false;
+      if (!object.Equals(Teleported, other.Teleported)) return false;
       if (MessageCase != other.MessageCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -1825,6 +1898,7 @@ namespace Decentraland.Pulse {
       if (messageCase_ == MessageOneofCase.PlayerProfileVersionAnnounced) hash ^= PlayerProfileVersionAnnounced.GetHashCode();
       if (messageCase_ == MessageOneofCase.EmoteStarted) hash ^= EmoteStarted.GetHashCode();
       if (messageCase_ == MessageOneofCase.EmoteStopped) hash ^= EmoteStopped.GetHashCode();
+      if (messageCase_ == MessageOneofCase.Teleported) hash ^= Teleported.GetHashCode();
       hash ^= (int) messageCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -1876,6 +1950,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(66);
         output.WriteMessage(EmoteStopped);
       }
+      if (messageCase_ == MessageOneofCase.Teleported) {
+        output.WriteRawTag(74);
+        output.WriteMessage(Teleported);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1918,6 +1996,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(66);
         output.WriteMessage(EmoteStopped);
       }
+      if (messageCase_ == MessageOneofCase.Teleported) {
+        output.WriteRawTag(74);
+        output.WriteMessage(Teleported);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1951,6 +2033,9 @@ namespace Decentraland.Pulse {
       }
       if (messageCase_ == MessageOneofCase.EmoteStopped) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(EmoteStopped);
+      }
+      if (messageCase_ == MessageOneofCase.Teleported) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Teleported);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -2012,6 +2097,12 @@ namespace Decentraland.Pulse {
             EmoteStopped = new global::Decentraland.Pulse.EmoteStopped();
           }
           EmoteStopped.MergeFrom(other.EmoteStopped);
+          break;
+        case MessageOneofCase.Teleported:
+          if (Teleported == null) {
+            Teleported = new global::Decentraland.Pulse.TeleportPerformed();
+          }
+          Teleported.MergeFrom(other.Teleported);
           break;
       }
 
@@ -2106,6 +2197,15 @@ namespace Decentraland.Pulse {
             EmoteStopped = subBuilder;
             break;
           }
+          case 74: {
+            global::Decentraland.Pulse.TeleportPerformed subBuilder = new global::Decentraland.Pulse.TeleportPerformed();
+            if (messageCase_ == MessageOneofCase.Teleported) {
+              subBuilder.MergeFrom(Teleported);
+            }
+            input.ReadMessage(subBuilder);
+            Teleported = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -2195,6 +2295,15 @@ namespace Decentraland.Pulse {
             }
             input.ReadMessage(subBuilder);
             EmoteStopped = subBuilder;
+            break;
+          }
+          case 74: {
+            global::Decentraland.Pulse.TeleportPerformed subBuilder = new global::Decentraland.Pulse.TeleportPerformed();
+            if (messageCase_ == MessageOneofCase.Teleported) {
+              subBuilder.MergeFrom(Teleported);
+            }
+            input.ReadMessage(subBuilder);
+            Teleported = subBuilder;
             break;
           }
         }

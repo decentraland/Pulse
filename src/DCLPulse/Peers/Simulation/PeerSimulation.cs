@@ -29,11 +29,11 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly SpatialGrid spatialGrid;
     private readonly IdentityBoard identityBoard;
     private readonly MessagePipe messagePipe;
-    private readonly uint[] simulationSteps;
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
     private readonly EmoteBoard emoteBoard;
+    private readonly TeleportBoard teleportBoard;
     private readonly ILogger<PeerSimulation> logger;
     private readonly bool selfMirrorEnabled;
     private readonly PeerViewSimulationTier selfMirrorTier;
@@ -75,6 +75,7 @@ public sealed class PeerSimulation : IPeerSimulation
         ITransport transport,
         ProfileBoard profileBoard,
         EmoteBoard emoteBoard,
+        TeleportBoard teleportBoard,
         ILogger<PeerSimulation> logger,
         bool selfMirrorEnabled = false,
         int selfMirrorTier = 0)
@@ -84,11 +85,11 @@ public sealed class PeerSimulation : IPeerSimulation
         this.spatialGrid = spatialGrid;
         this.identityBoard = identityBoard;
         this.messagePipe = messagePipe;
-        this.simulationSteps = simulationSteps;
         this.timeProvider = timeProvider;
         this.transport = transport;
         this.profileBoard = profileBoard;
         this.emoteBoard = emoteBoard;
+        this.teleportBoard = teleportBoard;
         this.logger = logger;
         this.selfMirrorEnabled = selfMirrorEnabled;
         this.selfMirrorTier = new PeerViewSimulationTier((byte)selfMirrorTier);
@@ -128,6 +129,7 @@ public sealed class PeerSimulation : IPeerSimulation
                     identityBoard.Remove(observerId);
                     profileBoard.Remove(observerId);
                     emoteBoard.Remove(observerId);
+                    teleportBoard.Remove(observerId);
                     observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);
                     logger.LogInformation("Peer {Peer} removed after disconnected", observerId);
@@ -244,6 +246,11 @@ public sealed class PeerSimulation : IPeerSimulation
             }
             else
             {
+                // Only announce on delta because PlayerJoined is considered as an announcement
+                TryAnnounceProfile();
+                // Its only needed to broadcast teleport on existent observers
+                TrySyncTeleport();
+
                 if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
                 {
                     // Try a targeted delta from the client's baseline; fall back to full state
@@ -259,9 +266,6 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
                 else
                     SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
-
-                // Only announce on delta because PlayerJoined is considered as an announcement
-                TryAnnounceProfile();
             }
 
             SyncEmoteState();
@@ -272,6 +276,31 @@ public sealed class PeerSimulation : IPeerSimulation
             views[entry.Subject] = view;
 
             continue;
+
+            void TrySyncTeleport()
+            {
+                if (!teleportBoard.TryRead(entry.Subject, out TeleportEntry teleport)) return;
+
+                if (view.LastSentTeleportTick == teleport.ServerTick)
+                    return;
+
+                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                {
+                    Teleported = new TeleportPerformed
+                    {
+                        Position = new Vector3
+                        {
+                            X = teleport.Position.X,
+                            Y = teleport.Position.Y,
+                            Z = teleport.Position.Z
+                        },
+                        ServerTick = teleport.ServerTick,
+                        SubjectId = entry.Subject,
+                    }
+                }, ITransport.PacketMode.RELIABLE));
+
+                view.LastSentTeleportTick = teleport.ServerTick;
+            }
 
             void TryAnnounceProfile()
             {

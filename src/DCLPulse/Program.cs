@@ -57,6 +57,12 @@ builder.Services.AddSingleton(sp =>
     return new EmoteBoard(transportOptions.MaxPeers);
 });
 
+builder.Services.AddSingleton(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+    return new TeleportBoard(transportOptions.MaxPeers);
+});
+
 // Simulation
 builder.Services.AddSingleton(sp =>
 {

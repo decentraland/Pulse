@@ -34,6 +34,7 @@ public class SelfMirrorTests
     private SpatialGrid spatialGrid;
     private ProfileBoard profileBoard;
     private EmoteBoard emoteBoard;
+    private TeleportBoard teleportBoard;
 
     [SetUp]
     public void SetUp()
@@ -63,11 +64,12 @@ public class SelfMirrorTests
 
         profileBoard = new ProfileBoard(MAX_PEERS);
         emoteBoard = new EmoteBoard(MAX_PEERS);
+        teleportBoard = new TeleportBoard(MAX_PEERS);
 
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>(),
+            profileBoard, emoteBoard, teleportBoard, Substitute.For<ILogger<PeerSimulation>>(),
             selfMirrorEnabled: true, selfMirrorTier: 0);
 
         peers = new Dictionary<PeerIndex, PeerState>
@@ -224,8 +226,9 @@ public class SelfMirrorTests
     {
         var disabledSimulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
-            SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>());
+            SimulationSteps, timeProvider,
+            Substitute.For<ITransport>(),
+            profileBoard, emoteBoard, teleportBoard, Substitute.For<ILogger<PeerSimulation>>());
 
         SetVisibleSubjects((observer, PeerViewSimulationTier.TIER_0));
 
@@ -240,7 +243,8 @@ public class SelfMirrorTests
         var tier1Simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>(),
+            profileBoard, emoteBoard, teleportBoard,
+            Substitute.For<ILogger<PeerSimulation>>(),
             selfMirrorEnabled: true, selfMirrorTier: 1);
 
         SetVisibleSubjects();

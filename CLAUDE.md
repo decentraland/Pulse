@@ -293,8 +293,63 @@ Selected approach: **Rider → Docker Attach to .NET process** (not SSH remote).
 - `protoc-gen-bitwise` — Python plugin, reads `CodeGeneratorRequest`, emits C# serializers
 - `BitWriter` / `BitReader` (C#) — bit packing + quantization (`WriteQuantizedFloat` / `ReadQuantizedFloat`), used by generated C# serializers
 
+## MetaForge — Test Account & Identity Toolkit
+
+**Local copy:** sibling directory `../MetaForge` (same parent as this repo checkout)
+
+MetaForge is a CLI toolkit (.NET 10, self-contained binary) used by `DCLPulseTestClient` for test account management, identity creation, and profile deployment. It provides the Decentraland ECDSA auth chain that the test client needs to connect to the game server.
+
+### How DCLPulseTestClient uses MetaForge
+
+The test client shells out to the `metaforge` CLI via `MetaForge.RunCommandAsync()` (`src/DCLPulseTestClient/MetaForge.cs`). Three integration points:
+
+1. **Account creation:** `metaforge account create <name> --skip-update-check --skip-auto-login` — generates a BIP39 wallet, derives Ethereum address, deploys a default profile to Catalyst
+2. **Auth chain signing:** `metaforge account chain <name> --method connect --path / --metadata {} --json` — returns the 3-link auth chain (SIGNER → ECDSA_EPHEMERAL → ECDSA_SIGNED_ENTITY) that `MetaForgeAuthenticator` formats into `x-identity-auth-chain-{n}` headers for the handshake
+3. **Profile fetching:** `metaforge account info <name> --json` — returns profile metadata (eth address, version, emotes) that `MetaForgeProfileGateway` parses
+
+### Key MetaForge CLI commands
+
+```bash
+metaforge account create [name] [--skip-auto-login] [--env org|zone]
+metaforge account chain <name> --method <m> --path <p> --metadata <json> [--json]
+metaforge account info [name] [--json]
+metaforge account list
+metaforge account remove [name] [--all]
+metaforge account steal-identity <name> [--id <n>] [--env org|zone]
+metaforge explorer install|run|logs|prefs|backup|test [...]
+metaforge mob auth|update-addresses|run <world> [--log-events]
+metaforge launcher install|run|uninstall|log
+```
+
+### MetaForge project structure
+
+```
+MetaForge/
+├── MetaForgeCLI/              # Main CLI application
+│   ├── Auth/                  # Identity.cs, AuthChain.cs — wallet + ephemeral key delegation
+│   ├── Wallet/                # WalletService.cs — BIP39 HD wallet (m/44'/60'/0'/0/0)
+│   ├── Commands/              # Account/, Explorer/, Launcher/, Mob/ command groups
+│   ├── Services/              # CatalystService, SignedHttpClient, ExplorerVersionService, AltTesterService, etc.
+│   ├── Persistency/           # AccountStore.cs (JSON), MobConfigStore.cs (.env)
+│   └── Config/                # EnvironmentConfig.cs — org vs zone environment URLs
+└── MoB/                       # LiveKit bot controller (BotManager, LiveKitBot, LiveTui)
+```
+
+### Environments
+
+| Environment | Auth API | Catalyst |
+|---|---|---|
+| `org` (default) | `https://auth-api.decentraland.org` | `https://peer.decentraland.org` |
+| `zone` | `https://auth-api.decentraland.zone` | `https://peer.decentraland.zone` |
+
+---
+
 ## Build instructions
 
-- The project targets .NET 10. If `dotnet --version` shows a lower version, the required SDK may be installed in a non-default location.
-- Search for it: look for directories named `10.*` under common SDK paths (`~/.dotnet/sdk/`, `/usr/share/dotnet/sdk/`, `C:\Program Files\dotnet\sdk\`, or Rider's bundled SDK).
-- Once found, prefix commands with the SDK root, e.g.: `DOTNET_ROOT="<path>" PATH="<path>:$PATH" dotnet ...`
+- The project targets .NET 10. The SDK is installed at `~/.dotnet` (user-local). Always prefix all `dotnet` commands with the environment override — no probing needed:
+  ```bash
+  DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false
+  ```
+- The solution file is `src/DCLPulse/DCLPulse.sln` — always pass it explicitly since it's not in the repo root.
+- Use `-p:GenerateProto=false` unless the user explicitly asks to regenerate proto files.
+- To run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`

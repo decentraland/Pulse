@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using Decentraland.Pulse;
 using PulseTestClient;
 using PulseTestClient.Auth;
@@ -7,227 +7,322 @@ using PulseTestClient.Networking;
 using PulseTestClient.Profiles;
 using PulseTestClient.Timing;
 
-// 30 fps
 const float TICK_RATE = 1 / 30f;
 
 string Arg(string name, string fallback) =>
     args.FirstOrDefault(a => a.StartsWith($"--{name}="))?[(name.Length + 3)..] ?? fallback;
 
-string metaforgeAccountName = Arg("account", "enetclient-test");
+string accountPrefix = Arg("account", "enetclient-test");
 string serverIpAddress = Arg("ip", "127.0.0.1");
 int serverPort = int.Parse(Arg("port", "7777"));
 float rotateSpeed = float.Parse(Arg("rotate-speed", "90"));
+var botCount = int.Parse(Arg("bot-count", "1"));
 
-// Fallback to Genesis Plaza spawn point
 float initialPositionX = float.Parse(Arg("pos-x", "-104"));
 float initialPositionY = float.Parse(Arg("pos-y", "0"));
 float initialPositionZ = float.Parse(Arg("pos-z", "5"));
 
 IAuthenticator authenticator = new MetaForgeAuthenticator();
-IProfileGateway profileGateway = new MetaForgeProfileGateway();
-MessagePipe pipe = new MessagePipe();
-ITransport transport = new ENetTransport(new ENetTransportOptions(), pipe);
-PulseMultiplayerService service = new PulseMultiplayerService(transport, pipe);
-
-// Settings extracted from explorer
+using var profileGateway = new CatalystProfileGateway();
 ParcelEncoder parcelEncoder = new ParcelEncoder(-150, -150, 163, 2, 16);
-Dictionary<uint, Web3Address> peerAddresses = new Dictionary<uint, Web3Address>();
 ITimeProvider timeProvider = new StopWatchTimeProvider();
-InputState inputCollector = new ();
+
 using CancellationTokenSource lifeCycleCts = new ();
 
-Console.WriteLine("Login into account..");
-
-string authChain = await authenticator.LoginAsync(metaforgeAccountName, lifeCycleCts.Token);
-
-Console.WriteLine("Connecting to Pulse server..");
-
-await service.ConnectAsync(serverIpAddress, serverPort, authChain, lifeCycleCts.Token);
-
-Console.WriteLine("Subscribing into incoming server events..");
-
-_ = Task.WhenAll(SubscribeToEmoteStartedAsync(lifeCycleCts.Token),
-    SubscribeToEmoteStopped(lifeCycleCts.Token),
-    SubscribeToPeerJoinedAsync(lifeCycleCts.Token),
-    SubscribeToPeerLeftAsync(lifeCycleCts.Token),
-    SubscribeToProfileAnnouncementAsync(lifeCycleCts.Token),
-    SubscribeToPeerDeltaState(lifeCycleCts.Token),
-    SubscribeToPeerFullState(lifeCycleCts.Token));
-
-Console.WriteLine("Getting profile info..");
-
-Profile profile = await profileGateway.GetAsync(metaforgeAccountName, lifeCycleCts.Token);
-
-IInputReader inputReader = new BotWithManualExitInput(new Bot(profile.Emotes), new ConsoleInputReader(profile.Emotes));
-
-// IInputReader inputReader = new PlayLoopEmote("urn:decentraland:matic:collections-v2:0x0ae365f8acc27f2c95fc7d60cf49a74f3af21573:3");
-
-Console.WriteLine("Announcing profile..");
-
-pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+Console.CancelKeyPress += (_, e) =>
 {
-    ProfileAnnouncement = new ProfileVersionAnnouncement
-    {
-        Version = profile.Version
-    }
-}, ITransport.PacketMode.RELIABLE));
+    e.Cancel = true;
+    lifeCycleCts.Cancel();
+};
 
-Console.WriteLine("Ready! Starting Simulation.. Press ESC to quit.");
+string stopFile = Path.Combine(Path.GetTempPath(), "dcl-pulse-test-client.stop");
+File.Delete(stopFile);
 
-var position = new Vector3(initialPositionX, initialPositionY, initialPositionZ);
-float rotationY = 0f;
-uint lastFrameTick = timeProvider.TimeSinceStartupMs;
-
-while (true)
+_ = Task.Run(async () =>
 {
-    float deltaTimeSecs = (timeProvider.TimeSinceStartupMs - lastFrameTick) / 1000f;
-    lastFrameTick = timeProvider.TimeSinceStartupMs;
-
-    inputCollector.Reset();
-    inputReader.Update(deltaTimeSecs, inputCollector);
-
-    if (inputCollector.Quit) break;
-
-    float dx = inputCollector.Velocity.X;
-    float dz = inputCollector.Velocity.Z;
-    float dRot = inputCollector.RotationDelta;
-    bool moving = dx != 0f || dz != 0f;
-
-    if (moving)
+    while (!lifeCycleCts.Token.IsCancellationRequested)
     {
-        // Face the direction of movement
-        rotationY = MathF.Atan2(dx, dz) * (180f / MathF.PI);
+        if (File.Exists(stopFile))
+        {
+            File.Delete(stopFile);
+            Console.WriteLine("Stop file detected, shutting down..");
+            await lifeCycleCts.CancelAsync();
+            break;
+        }
+
+        await Task.Delay(500, lifeCycleCts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
-    else
+});
+
+var sharedTransport = new ENetTransport(new ENetTransportOptions { PeerLimit = botCount });
+var sessions = new List<BotSession>(botCount);
+
+for (var i = 0; i < botCount; i++)
+{
+    string accountName = botCount == 1 ? accountPrefix : $"{accountPrefix}-{i}";
+
+    Console.WriteLine($"[{accountName}] Logging in..");
+    LoginResult login = await authenticator.LoginAsync(accountName, lifeCycleCts.Token);
+
+    Console.WriteLine($"[{accountName}] Fetching profile for {login.WalletAddress}..");
+    Profile profile = await profileGateway.GetAsync(login.WalletAddress, lifeCycleCts.Token);
+
+    var pipe = new MessagePipe();
+    var botTransport = new BotTransport(sharedTransport, pipe);
+    var service = new PulseMultiplayerService(botTransport, pipe);
+
+    // Spread bots in a circle around the spawn point
+    float angle = botCount > 1 ? 2f * MathF.PI * i / botCount : 0f;
+    float spawnRadius = botCount > 1 ? 2f * botCount : 0f;
+
+    var position = new Vector3(
+        initialPositionX + (MathF.Cos(angle) * spawnRadius),
+        initialPositionY,
+        initialPositionZ + (MathF.Sin(angle) * spawnRadius));
+
+    IInputReader inputReader = botCount == 1
+        ? new BotWithManualExitInput(new Bot(profile.Emotes), new ConsoleInputReader(profile.Emotes))
+        : new Bot(profile.Emotes);
+
+    var session = new BotSession
     {
-        // Rotate in place when idle
-        rotationY += dRot * rotateSpeed * TICK_RATE;
-    }
+        AccountName = accountName,
+        Profile = profile,
+        Pipe = pipe,
+        Service = service,
+        InputReader = inputReader,
+        Position = position,
+        LastFrameTick = timeProvider.TimeSinceStartupMs,
+    };
 
-    // Move relative to facing direction
-    float radY = rotationY * MathF.PI / 180f;
-    float forward = dz * TICK_RATE;
-    float strafe = dx * TICK_RATE;
+    Console.WriteLine($"[{accountName}] Connecting to {serverIpAddress}:{serverPort}..");
+    await service.ConnectAsync(serverIpAddress, serverPort, login.AuthChainJson, lifeCycleCts.Token);
 
-    position.X += MathF.Sin(radY) * forward + MathF.Cos(radY) * strafe;
-    position.Z += MathF.Cos(radY) * forward - MathF.Sin(radY) * strafe;
-
-    // Build velocity in world space
-    var velocity = new Vector3(
-        MathF.Sin(radY) * dz + MathF.Cos(radY) * dx,
-        0f,
-        MathF.Cos(radY) * dz - MathF.Sin(radY) * dx);
-
-    uint stateFlags = (uint)PlayerAnimationFlags.Grounded;
-
-    int parcelIndex = parcelEncoder.EncodeGlobalPosition(position, out var relativePosition);
+    SubscribeToServerEvents(session, lifeCycleCts.Token);
 
     pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
     {
-        Input = new PlayerStateInput
+        ProfileAnnouncement = new ProfileVersionAnnouncement { Version = profile.Version },
+    }, ITransport.PacketMode.RELIABLE));
+
+    sessions.Add(session);
+    Console.WriteLine($"[{accountName}] Ready.");
+}
+
+Console.WriteLine(botCount == 1
+    ? "Starting simulation.. Press ESC to quit."
+    : $"Starting simulation with {botCount} bots.. Press q+Enter or Ctrl+C to quit.");
+
+if (botCount > 1)
+{
+    _ = Task.Run(() =>
+    {
+        while (!lifeCycleCts.Token.IsCancellationRequested)
         {
-            State = new PlayerState
+            string? line = Console.ReadLine();
+
+            if (line is "q" or "Q" or "quit")
             {
-                HeadPitch = 0f,
-                HeadYaw = rotationY,
-                GlideState = new GlideState(),
-                MovementBlend = moving ? 1f : 0f,
-                Position = new Decentraland.Common.Vector3
-                    { X = relativePosition.X, Y = relativePosition.Y, Z = relativePosition.Z },
-                RotationY = rotationY,
-                SlideBlend = 0f,
-                StateFlags = stateFlags,
-                ParcelIndex = parcelIndex,
-                Velocity = new Decentraland.Common.Vector3 { X = velocity.X, Y = velocity.Y, Z = velocity.Z }
+                Console.WriteLine("Quit requested, shutting down..");
+                lifeCycleCts.Cancel();
             }
         }
-    }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+    });
+}
 
-    if (inputCollector.EmoteId is { } emoteId)
+while (!lifeCycleCts.Token.IsCancellationRequested)
+{
+    var quit = false;
+
+    foreach (BotSession bot in sessions)
     {
-        pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+        float deltaTimeSecs = (timeProvider.TimeSinceStartupMs - bot.LastFrameTick) / 1000f;
+        bot.LastFrameTick = timeProvider.TimeSinceStartupMs;
+
+        bot.InputCollector.Reset();
+        bot.InputReader.Update(deltaTimeSecs, bot.InputCollector);
+
+        if (bot.InputCollector.Quit)
         {
-            EmoteStart = new EmoteStart
+            quit = true;
+            break;
+        }
+
+        float dx = bot.InputCollector.Velocity.X;
+        float dz = bot.InputCollector.Velocity.Z;
+        float dRot = bot.InputCollector.RotationDelta;
+        bool moving = dx != 0f || dz != 0f;
+
+        float rotationY = bot.RotationY;
+
+        if (moving)
+            rotationY = MathF.Atan2(dx, dz) * (180f / MathF.PI);
+        else
+            rotationY += dRot * rotateSpeed * TICK_RATE;
+
+        bot.RotationY = rotationY;
+
+        float radY = rotationY * MathF.PI / 180f;
+        float forward = dz * TICK_RATE;
+        float strafe = dx * TICK_RATE;
+
+        Vector3 pos = bot.Position;
+        pos.X += (MathF.Sin(radY) * forward) + (MathF.Cos(radY) * strafe);
+        pos.Z += (MathF.Cos(radY) * forward) - (MathF.Sin(radY) * strafe);
+        bot.Position = pos;
+
+        var velocity = new Vector3(
+            (MathF.Sin(radY) * dz) + (MathF.Cos(radY) * dx),
+            0f,
+            (MathF.Cos(radY) * dz) - (MathF.Sin(radY) * dx));
+
+        int parcelIndex = parcelEncoder.EncodeGlobalPosition(bot.Position, out Vector3 relativePosition);
+
+        bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+        {
+            Input = new PlayerStateInput
             {
-                EmoteId = emoteId
-            }
-        }, ITransport.PacketMode.RELIABLE));
+                State = new PlayerState
+                {
+                    HeadPitch = 0f,
+                    HeadYaw = rotationY,
+                    GlideState = new GlideState(),
+                    MovementBlend = moving ? 1f : 0f,
+                    Position = new Decentraland.Common.Vector3
+                        { X = relativePosition.X, Y = relativePosition.Y, Z = relativePosition.Z },
+                    RotationY = rotationY,
+                    SlideBlend = 0f,
+                    StateFlags = (uint)PlayerAnimationFlags.Grounded,
+                    ParcelIndex = parcelIndex,
+                    Velocity = new Decentraland.Common.Vector3 { X = velocity.X, Y = velocity.Y, Z = velocity.Z },
+                },
+            },
+        }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+
+        if (bot.InputCollector.EmoteId is { } emoteId)
+        {
+            bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+            {
+                EmoteStart = new EmoteStart { EmoteId = emoteId },
+            }, ITransport.PacketMode.RELIABLE));
+        }
     }
+
+    if (quit) break;
 
     await Task.Delay(TimeSpan.FromSeconds(TICK_RATE));
 }
 
 await lifeCycleCts.CancelAsync();
-service.Dispose();
+
+foreach (BotSession s in sessions)
+{
+    await s.Service.DisconnectAsync(ITransport.DisconnectReason.Graceful, CancellationToken.None);
+    s.Service.Dispose();
+}
+
+// Give ENet a moment to flush disconnect packets before tearing down the host
+await Task.Delay(200);
+sharedTransport.Dispose();
 return;
 
-async Task SubscribeToPeerDeltaState(CancellationToken ct)
+// --- Per-bot subscriptions ---
+
+void SubscribeToServerEvents(BotSession bot, CancellationToken ct)
 {
-    await foreach (PlayerStateDeltaTier0 playerStateDelta in service.SubscribeAsync<PlayerStateDeltaTier0>(
+    _ = Task.WhenAll(
+        SubscribeToPeerDeltaState(bot, ct),
+        SubscribeToPeerFullState(bot, ct),
+        SubscribeToPeerJoinedAsync(bot, ct),
+        SubscribeToPeerLeftAsync(bot, ct),
+        SubscribeToEmoteStartedAsync(bot, ct),
+        SubscribeToEmoteStopped(bot, ct),
+        SubscribeToProfileAnnouncementAsync(bot, ct));
+}
+
+async Task SubscribeToPeerDeltaState(BotSession bot, CancellationToken ct)
+{
+    await foreach (PlayerStateDeltaTier0 delta in bot.Service.SubscribeAsync<PlayerStateDeltaTier0>(
                        ServerMessage.MessageOneofCase.PlayerStateDelta, ct))
     {
-        // Web3Address peerAddress = peerAddresses[playerStateDelta.SubjectId];
-        // Console.WriteLine($"Player state delta: {peerAddress}");
+        uint subjectId = delta.SubjectId;
+
+        if (bot.KnownSeqBySubject.TryGetValue(subjectId, out uint lastSeq) && delta.BaselineSeq != lastSeq)
+        {
+            Console.WriteLine($"[{bot.AccountName}] Seq gap for subject {subjectId}: expected {lastSeq}, got {delta.BaselineSeq}. Requesting resync.");
+
+            bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+            {
+                Resync = new ResyncRequest { SubjectId = subjectId, KnownSeq = lastSeq },
+            }, ITransport.PacketMode.RELIABLE));
+
+            continue;
+        }
+
+        bot.KnownSeqBySubject[subjectId] = delta.NewSeq;
     }
 }
 
-async Task SubscribeToPeerFullState(CancellationToken ct)
+async Task SubscribeToPeerFullState(BotSession bot, CancellationToken ct)
 {
-    await foreach (PlayerStateFull playerStateFull in service.SubscribeAsync<PlayerStateFull>(
-                       ServerMessage.MessageOneofCase.PlayerStateDelta, ct))
+    await foreach (PlayerStateFull full in bot.Service.SubscribeAsync<PlayerStateFull>(
+                       ServerMessage.MessageOneofCase.PlayerStateFull, ct))
     {
-        // Web3Address peerAddress = peerAddresses[playerStateFull.SubjectId];
-        // Console.WriteLine($"Player state full: {peerAddress}");
+        bot.KnownSeqBySubject[full.SubjectId] = full.Sequence;
+        Console.WriteLine($"[{bot.AccountName}] Full state for subject {full.SubjectId}, seq={full.Sequence}");
     }
 }
 
-async Task SubscribeToPeerJoinedAsync(CancellationToken ct)
+async Task SubscribeToPeerJoinedAsync(BotSession bot, CancellationToken ct)
 {
-    await foreach (PlayerJoined playerJoined in service.SubscribeAsync<PlayerJoined>(
+    await foreach (PlayerJoined joined in bot.Service.SubscribeAsync<PlayerJoined>(
                        ServerMessage.MessageOneofCase.PlayerJoined, ct))
     {
-        peerAddresses[playerJoined.State.SubjectId] = new Web3Address(playerJoined.UserId);
-        Console.WriteLine($"Player joined: {playerJoined.UserId}");
+        bot.PeerAddresses[joined.State.SubjectId] = new Web3Address(joined.UserId);
+        bot.KnownSeqBySubject[joined.State.SubjectId] = joined.State.Sequence;
+        Console.WriteLine($"[{bot.AccountName}] Player joined: {joined.UserId}");
     }
 }
 
-async Task SubscribeToPeerLeftAsync(CancellationToken ct)
+async Task SubscribeToPeerLeftAsync(BotSession bot, CancellationToken ct)
 {
-    await foreach (PlayerLeft playerLeft in service.SubscribeAsync<PlayerLeft>(
+    await foreach (PlayerLeft left in bot.Service.SubscribeAsync<PlayerLeft>(
                        ServerMessage.MessageOneofCase.PlayerLeft, ct))
     {
-        Web3Address address = peerAddresses[playerLeft.SubjectId];
-        Console.WriteLine($"Player left: {address}");
+        bot.PeerAddresses.TryGetValue(left.SubjectId, out Web3Address address);
+        bot.KnownSeqBySubject.Remove(left.SubjectId);
+        bot.PeerAddresses.Remove(left.SubjectId);
+        Console.WriteLine($"[{bot.AccountName}] Player left: {address}");
     }
 }
 
-async Task SubscribeToEmoteStartedAsync(CancellationToken ct)
+async Task SubscribeToEmoteStartedAsync(BotSession bot, CancellationToken ct)
 {
-    await foreach (EmoteStarted emoteStarted in service.SubscribeAsync<EmoteStarted>(
+    await foreach (EmoteStarted emote in bot.Service.SubscribeAsync<EmoteStarted>(
                        ServerMessage.MessageOneofCase.EmoteStarted, ct))
     {
-        Web3Address address = peerAddresses[emoteStarted.SubjectId];
-        Console.WriteLine($"Emote started {emoteStarted.EmoteId} from {address}");
+        bot.PeerAddresses.TryGetValue(emote.SubjectId, out Web3Address address);
+        Console.WriteLine($"[{bot.AccountName}] Emote started {emote.EmoteId} from {address}");
     }
 }
 
-async Task SubscribeToEmoteStopped(CancellationToken ct)
+async Task SubscribeToEmoteStopped(BotSession bot, CancellationToken ct)
 {
-    await foreach (EmoteStopped emoteStopped in service.SubscribeAsync<EmoteStopped>(
+    await foreach (EmoteStopped emote in bot.Service.SubscribeAsync<EmoteStopped>(
                        ServerMessage.MessageOneofCase.EmoteStopped, ct))
     {
-        Web3Address address = peerAddresses[emoteStopped.SubjectId];
-        Console.WriteLine($"Emote stopped {emoteStopped.Reason} from {address}");
+        bot.PeerAddresses.TryGetValue(emote.SubjectId, out Web3Address address);
+        Console.WriteLine($"[{bot.AccountName}] Emote stopped {emote.Reason} from {address}");
     }
 }
 
-async Task SubscribeToProfileAnnouncementAsync(CancellationToken ct)
+async Task SubscribeToProfileAnnouncementAsync(BotSession bot, CancellationToken ct)
 {
     await foreach (PlayerProfileVersionsAnnounced announcement in
-                   service.SubscribeAsync<PlayerProfileVersionsAnnounced>(
+                   bot.Service.SubscribeAsync<PlayerProfileVersionsAnnounced>(
                        ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced, ct))
     {
-        peerAddresses.TryGetValue(announcement.SubjectId, out Web3Address address);
-        Console.WriteLine($"Profile announced: {announcement.Version} from {announcement.SubjectId} addr {address}");
+        bot.PeerAddresses.TryGetValue(announcement.SubjectId, out Web3Address address);
+        Console.WriteLine($"[{bot.AccountName}] Profile announced: v{announcement.Version} from {address}");
     }
 }

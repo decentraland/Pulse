@@ -1,6 +1,8 @@
 namespace PulseTestClient.Auth;
 
+public record LoginResult(string AuthChainJson, string WalletAddress);
+
 public interface IAuthenticator
 {
-    Task<string> LoginAsync(string account, CancellationToken ct);
+    public Task<LoginResult> LoginAsync(string account, CancellationToken ct);
 }

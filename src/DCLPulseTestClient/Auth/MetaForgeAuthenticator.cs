@@ -5,14 +5,17 @@ namespace PulseTestClient.Auth;
 
 public class MetaForgeAuthenticator : IAuthenticator
 {
-    public async Task<string> LoginAsync(string account, CancellationToken ct)
+    public async Task<LoginResult> LoginAsync(string account, CancellationToken ct)
     {
         await MetaForge.RunCommandAsync($"account create {account} --skip-update-check --skip-auto-login", ct);
 
         var output = await MetaForge.RunCommandAsync(
-            $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check --json", ct);
+            $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check", ct);
 
         AuthLink[] chain = JsonSerializer.Deserialize(output, AuthenticatorJsonContext.Default.AuthLinkArray)!;
+
+        string walletAddress = chain.First(l => l.type == AuthLinkType.SIGNER).payload;
+
         var result = new JsonObject();
 
         for (int i = 0; i < chain.Length; i++)
@@ -25,6 +28,6 @@ public class MetaForgeAuthenticator : IAuthenticator
         result["x-identity-timestamp"] = timestamp;
         result["x-identity-metadata"] = parts[^1];
 
-        return result.ToJsonString();
+        return new LoginResult(result.ToJsonString(), walletAddress);
     }
 }

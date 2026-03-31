@@ -42,6 +42,111 @@ To set `GenerateProto` from Rider:
 
 In practice the default (`true`) is correct for local development. The `false` value is used by Docker/CI builds that don't have the protocol repo available.
 
+## DCLPulseTestClient
+
+A headless test client that connects to the Pulse server as a bot player. Uses ENet over UDP with the same protocol as the Unity client. Supports running multiple bots from a single process for load testing. Useful for load testing, debugging server behavior, and verifying the protocol without launching the full Explorer.
+
+### Prerequisites
+
+- [MetaForge](https://github.com/decentraland/MetaForge) CLI installed and available on `PATH` (the client shells out to `metaforge` for account creation, auth chain signing, and profile fetching)
+- A running Pulse game server
+
+### Running
+
+```bash
+dotnet run --project src/DCLPulseTestClient
+```
+
+#### CLI arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `--account=<name>` | `enetclient-test` | MetaForge account name (or prefix when using multiple bots) |
+| `--bot-count=<N>` | `1` | Number of bots to spawn in the same process |
+| `--ip=<address>` | `127.0.0.1` | Server IP address |
+| `--port=<port>` | `7777` | Server UDP port |
+| `--pos-x=<float>` | `-104` | Spawn position X (Genesis Plaza) |
+| `--pos-y=<float>` | `0` | Spawn position Y |
+| `--pos-z=<float>` | `5` | Spawn position Z |
+| `--rotate-speed=<deg/s>` | `90` | Idle rotation speed in degrees per second |
+
+Example — single bot connecting to a remote server:
+
+```bash
+dotnet run --project src/DCLPulseTestClient -- --account=bot1 --ip=10.0.0.5 --pos-x=0 --pos-z=0
+```
+
+Example — 10 bots for load testing:
+
+```bash
+dotnet run --project src/DCLPulseTestClient -- --account=loadtest --bot-count=10 --ip=10.0.0.5
+```
+
+When `--bot-count=1`, the account name is used as-is. When `--bot-count` > 1, accounts are named `<account>-0`, `<account>-1`, ..., `<account>-N-1` and bots spawn in a circle around the initial position.
+
+### What the bot does
+
+On startup each bot authenticates via MetaForge, connects over ENet, completes the handshake, announces its profile, then enters a 30 fps simulation loop.
+
+**Autonomous behavior (default):**
+
+- **Wanders** using three Perlin noise generators (forward, strafe, rotation) producing smooth, organic movement at 5 units/s
+- **Plays a random emote** from the profile's emote list every 5 seconds, then stands still for a 5-second cooldown before resuming movement
+- **Handles resync** — detects sequence gaps in incoming state deltas and sends `RESYNC_REQUEST` to the server
+- Sends `PlayerStateInput` on the unreliable sequenced channel every tick with position, velocity, rotation, and state flags (`Grounded`)
+
+**Keyboard override** (single-bot mode only) — the bot accepts keyboard input in parallel:
+
+| Key | Action |
+|---|---|
+| W / A / S / D | Move forward / left / backward / right |
+| Q / E | Rotate left / right |
+| B then 0–9 | Play emote by index |
+| ESC | Quit |
+
+In multi-bot mode keyboard input is disabled; use Ctrl+C to stop all bots.
+
+### Multi-bot architecture
+
+All bots share a single ENet `Host` (one UDP socket, one service thread) with N peers. Each bot gets its own `MessagePipe` and `PulseMultiplayerService` for isolated message routing. The ENet transport multiplexes outgoing messages from all bots and routes incoming packets by peer ID.
+
+```
+ENetTransport (shared)              One Host, one thread, N peers
+├── BotSession 0                    Per-bot state + pipe + service
+│   ├── BotTransport                ITransport adapter → shared ENetTransport
+│   ├── MessagePipe                 Isolated incoming/outgoing channels
+│   ├── PulseMultiplayerService     Handshake, subscriptions
+│   └── Bot                         Perlin-noise input generator
+├── BotSession 1
+│   └── ...
+└── BotSession N-1
+    └── ...
+```
+
+### Architecture
+
+```
+Program.cs                          Entry point, N-bot orchestration, shared game loop
+BotSession.cs                       Per-bot state (position, rotation, seq tracking)
+├── Auth/
+│   ├── MetaForgeAuthenticator      Shells out to `metaforge account create/chain`
+│   └── IAuthenticator              Interface for swappable auth strategies
+├── Profiles/
+│   ├── MetaForgeProfileGateway     Shells out to `metaforge account info`
+│   └── IProfileGateway             Interface for swappable profile sources
+├── Inputs/
+│   ├── Bot                         Perlin-noise wandering + periodic emotes
+│   ├── ConsoleInputReader          WASD + emote keyboard input (single-bot only)
+│   ├── BotWithManualExitInput      Composite: keyboard (ESC check) → Bot
+│   └── PlayLoopEmote               One-shot: fires a single looping emote
+├── Networking/
+│   ├── ENetTransport               Shared ENet Host, multi-peer, single thread
+│   ├── BotTransport                Per-bot ITransport adapter
+│   ├── MessagePipe                 Thread-safe channel bridging transport ↔ game thread
+│   └── PulseMultiplayerService     Handshake, message routing, typed subscriptions
+└── ParcelEncoder                   Global ↔ parcel-relative position conversion
+```
+
 ## Docker debugging
 
 ### Start the debug container

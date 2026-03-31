@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 
 namespace PulseTestClient.Auth;
 
@@ -13,17 +12,11 @@ public class MetaForgeAuthenticator : IAuthenticator
         var output = await MetaForge.RunCommandAsync(
             $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check --json", ct);
 
-        var options = new JsonSerializerOptions
-        {
-            Converters = { new JsonStringEnumConverter() },
-            IncludeFields = true
-        };
-
-        var chain = JsonSerializer.Deserialize<AuthLink[]>(output, options)!;
+        AuthLink[] chain = JsonSerializer.Deserialize(output, AuthenticatorJsonContext.Default.AuthLinkArray)!;
         var result = new JsonObject();
 
         for (int i = 0; i < chain.Length; i++)
-            result[$"x-identity-auth-chain-{i}"] = JsonSerializer.Serialize(chain[i], options);
+            result[$"x-identity-auth-chain-{i}"] = JsonSerializer.Serialize(chain[i], AuthenticatorJsonContext.Default.AuthLink);
 
         var signedEntity = chain.First(l => l.type == AuthLinkType.ECDSA_SIGNED_ENTITY);
         var parts = signedEntity.payload.Split(':');

@@ -19,7 +19,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
     {
         HandshakeRequest handshakeRequest = message.Handshake;
         string authChainJson = handshakeRequest.AuthChain.ToStringUtf8();
-        Dictionary<string, string>? headers = JsonSerializer.Deserialize<Dictionary<string, string>>(authChainJson);
+        Dictionary<string, string>? headers = JsonSerializer.Deserialize(authChainJson, HandshakeJsonContext.Default.DictionaryStringString);
 
         if (headers == null)
         {

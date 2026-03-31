@@ -1,21 +1,15 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 
 namespace PulseTestClient.Profiles;
 
 public class MetaForgeProfileGateway : IProfileGateway
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     public async Task<Profile> GetAsync(string account, CancellationToken ct)
     {
         var json = await MetaForge.RunCommandAsync($"account info {account} --json", ct);
 
-        var response = JsonSerializer.Deserialize<ProfileResponse>(json, JsonOptions)!;
+        ProfileResponse response = JsonSerializer.Deserialize(json, ProfileJsonContext.Default.ProfileResponse)!;
         var avatar = response.Metadata.Avatars[0];
 
         var emotes = avatar.Avatar.Emotes
@@ -26,29 +20,33 @@ public class MetaForgeProfileGateway : IProfileGateway
     }
 }
 
-file class ProfileResponse
+internal class ProfileResponse
 {
     [JsonPropertyName("metadata")] public ProfileMetadata Metadata { get; set; } = null!;
 }
 
-file class ProfileMetadata
+internal class ProfileMetadata
 {
     [JsonPropertyName("avatars")] public List<AvatarEntry> Avatars { get; set; } = [];
 }
 
-file class AvatarEntry
+internal class AvatarEntry
 {
     [JsonPropertyName("ethAddress")] public string EthAddress { get; set; } = "";
     [JsonPropertyName("version")] public int Version { get; set; }
     [JsonPropertyName("avatar")] public AvatarData Avatar { get; set; } = null!;
 }
 
-file class AvatarData
+internal class AvatarData
 {
     [JsonPropertyName("emotes")] public List<EmoteEntry> Emotes { get; set; } = [];
 }
 
-file class EmoteEntry
+internal class EmoteEntry
 {
     [JsonPropertyName("urn")] public string Urn { get; set; } = "";
 }
+
+[JsonSerializable(typeof(ProfileResponse))]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+internal partial class ProfileJsonContext : JsonSerializerContext;

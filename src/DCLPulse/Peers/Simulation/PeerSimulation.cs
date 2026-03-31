@@ -260,6 +260,8 @@ public sealed class PeerSimulation : IPeerSimulation
                             State = CreatePlayerState(subjectSnapshot),
                         }
                     }, ITransport.PacketMode.RELIABLE));
+
+                    logger.LogInformation($"Broadcasting teleport from {entry.Subject} to {observerId} at {subjectSnapshot.GlobalPosition}");
                 }
                 else if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
                 {

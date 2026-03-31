@@ -247,6 +247,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
                 if (subjectSnapshot.IsTeleport && !view.LastSentSnapshot.IsTeleport)
                 {
+                    // Clear the resync since the teleport has the full player state and can fulfill it
                     resyncRequests?.Remove(entry.Subject);
 
                     messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage

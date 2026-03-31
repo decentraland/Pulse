@@ -17,6 +17,7 @@ public static class PeerViewDiff
         var delta = new PlayerStateDeltaTier0
         {
             SubjectId = subjectId,
+            BaselineSeq = from.Seq,
             NewSeq = to.Seq,
             ServerTick = to.ServerTick,
             StateFlags = (uint)to.AnimationFlags,

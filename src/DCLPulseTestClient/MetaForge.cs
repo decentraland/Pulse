@@ -6,30 +6,12 @@ public static class MetaForge
 {
     public static async Task<string> RunCommandAsync(string arguments, CancellationToken ct)
     {
-        string fileName;
-        string processArguments;
-
-        if (OperatingSystem.IsWindows())
-        {
-            string metaforgePath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Decentraland", "MetaForge", "bin", "metaforge.exe");
-
-            fileName = metaforgePath;
-            processArguments = arguments;
-        }
-        else
-        {
-            fileName = "/bin/zsh";
-            processArguments = $"-c \"source ~/.zshrc && metaforge {arguments}\"";
-        }
-
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = fileName,
-                Arguments = processArguments,
+                FileName = "metaforge",
+                Arguments = arguments,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 Environment = {["NO_COLOR"] = "1"}

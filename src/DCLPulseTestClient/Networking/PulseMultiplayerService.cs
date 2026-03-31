@@ -10,6 +10,12 @@ public partial class PulseMultiplayerService(
     private readonly Dictionary<ServerMessage.MessageOneofCase, ISubscriber> subscribers = new();
     private CancellationTokenSource? connectionLifeCycleCts;
 
+    public Task DisconnectAsync(ITransport.DisconnectReason reason, CancellationToken ct)
+    {
+        connectionLifeCycleCts.SafeCancelAndDispose();
+        return transport.DisconnectAsync(reason, ct);
+    }
+
     public void Dispose()
     {
         connectionLifeCycleCts.SafeCancelAndDispose();

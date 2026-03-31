@@ -33,6 +33,7 @@ bld/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+BenchmarkDotNet.Artifacts
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
@@ -58,3 +59,10 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# IDE — Rider / IntelliJ
+.idea/
+*.DotSettings.user
+
+# AI
+/.claude/settings.local.json

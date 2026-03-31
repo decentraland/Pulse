@@ -5,14 +5,9 @@ namespace DCL.Auth;
 
 public static class AuthChainParser
 {
-    private static readonly JsonSerializerOptions JSON_OPTS = new()
-    {
-        PropertyNameCaseInsensitive = true,
-    };
-
     public static IReadOnlyList<AuthLink> ParseJsonChain(string authChainJsonArray)
     {
-        var links = JsonSerializer.Deserialize<List<AuthLink>>(authChainJsonArray, JSON_OPTS);
+        List<AuthLink>? links = JsonSerializer.Deserialize(authChainJsonArray, AuthJsonContext.Default.ListAuthLink);
         if (links is null || links.Count == 0)
             throw new FormatException("authChain JSON must be a non-empty array.");
         return links;
@@ -35,7 +30,7 @@ public static class AuthChainParser
             if (!int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var idx))
                 continue;
 
-            var link = JsonSerializer.Deserialize<AuthLink>(kv.Value, JSON_OPTS)
+            var link = JsonSerializer.Deserialize(kv.Value, AuthJsonContext.Default.AuthLink)
                        ?? throw new FormatException($"Invalid authlink JSON in header {kv.Key}.");
 
             items.Add((idx, link));

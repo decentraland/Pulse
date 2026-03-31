@@ -10,8 +10,8 @@ public static class MetaForge
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "/bin/zsh",
-                Arguments = $"-c \"source ~/.zshrc && metaforge {arguments}\"",
+                FileName = "metaforge",
+                Arguments = arguments,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 Environment = {["NO_COLOR"] = "1"}
@@ -20,6 +20,9 @@ public static class MetaForge
         process.Start();
         var output = await process.StandardOutput.ReadToEndAsync(ct);
         await process.WaitForExitAsync(ct);
-        return output;
+
+        // Spectre.Console wraps long lines at terminal width, breaking JSON string
+        // values across multiple lines. Collapse to single-line JSON to fix parsing.
+        return output.Replace("\r", "").Replace("\n", "");
     }
 }

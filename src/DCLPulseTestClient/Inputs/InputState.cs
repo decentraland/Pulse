@@ -7,6 +7,7 @@ public class InputState
     public Vector3 Velocity;
     public float RotationDelta;
     public string? EmoteId;
+    public bool Jump;
     public bool Quit;
 
     public void Reset()
@@ -14,6 +15,7 @@ public class InputState
         Velocity = Vector3.Zero;
         RotationDelta = 0f;
         EmoteId = null;
+        Jump = false;
         Quit = false;
     }
 }

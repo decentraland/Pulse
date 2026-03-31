@@ -40,10 +40,4 @@ public struct PeerToPeerView
     ///     Compared against <see cref="Simulation.EmoteBoard" /> each tick to detect transitions.
     /// </summary>
     public string? LastSentEmoteId;
-
-    /// <summary>
-    ///     The server tick of the last teleport sent to the observer for this subject.
-    ///     Compared against <see cref="Simulation.TeleportBoard" /> each tick to avoid duplicate broadcasts.
-    /// </summary>
-    public uint? LastSentTeleportTick;
 }

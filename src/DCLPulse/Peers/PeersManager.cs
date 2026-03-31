@@ -47,7 +47,6 @@ public sealed class PeersManager : BackgroundService
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
     private readonly EmoteBoard emoteBoard;
-    private readonly TeleportBoard teleportBoard;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -63,8 +62,7 @@ public sealed class PeersManager : BackgroundService
         Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
         ITransport transport,
         ProfileBoard profileBoard,
-        EmoteBoard emoteBoard,
-        TeleportBoard teleportBoard)
+        EmoteBoard emoteBoard)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -74,7 +72,6 @@ public sealed class PeersManager : BackgroundService
         this.transport = transport;
         this.profileBoard = profileBoard;
         this.emoteBoard = emoteBoard;
-        this.teleportBoard = teleportBoard;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -109,7 +106,7 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, emoteBoard, teleportBoard, peerSimulationLogger,
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, emoteBoard, peerSimulationLogger,
                 peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier);
 
             tasks[i + 1] = WorkerAsync(i, messageChannels[i].Reader,

@@ -68,6 +68,8 @@ dotnet run --project src/DCLPulseTestClient
 | `--pos-x=<float>` | `-104` | Spawn position X (Genesis Plaza) |
 | `--pos-y=<float>` | `0` | Spawn position Y |
 | `--pos-z=<float>` | `5` | Spawn position Z |
+| `--spawn-radius=<float>` | `10` | Radius of the circle bots spawn on around the initial position |
+| `--dispersion-radius=<float>` | `20` | Max distance a bot can wander from the spawn origin |
 | `--rotate-speed=<deg/s>` | `90` | Idle rotation speed in degrees per second |
 
 Example — single bot connecting to a remote server:

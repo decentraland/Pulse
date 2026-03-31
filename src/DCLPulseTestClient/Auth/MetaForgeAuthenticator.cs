@@ -7,8 +7,6 @@ public class MetaForgeAuthenticator : IAuthenticator
 {
     public async Task<LoginResult> LoginAsync(string account, CancellationToken ct)
     {
-        await MetaForge.RunCommandAsync($"account create {account} --skip-update-check --skip-auto-login", ct);
-
         var output = await MetaForge.RunCommandAsync(
             $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check", ct);
 

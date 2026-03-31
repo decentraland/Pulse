@@ -34,21 +34,23 @@ public sealed class ENetTransport : IDisposable
         }
     }
 
+    public void Initialize()
+    {
+        if (initialized) return;
+
+        if (!Library.Initialize())
+            throw new InvalidOperationException("ENet library failed to initialize.");
+
+        client = new Host();
+        client.Create(peerLimit: options.PeerLimit, channelLimit: ENetChannel.COUNT);
+        initialized = true;
+
+        lifeCycleCts = new CancellationTokenSource();
+        RunENetThread(lifeCycleCts.Token);
+    }
+
     public Task<PeerId> ConnectPeerAsync(string ip, int port, MessagePipe pipe, CancellationToken ct)
     {
-        if (!initialized)
-        {
-            if (!Library.Initialize())
-                throw new InvalidOperationException("ENet library failed to initialize.");
-
-            client = new Host();
-            client.Create(peerLimit: options.PeerLimit, channelLimit: ENetChannel.COUNT);
-            initialized = true;
-
-            lifeCycleCts = new CancellationTokenSource();
-            RunENetThread(lifeCycleCts.Token);
-        }
-
         var tcs = new TaskCompletionSource<PeerId>(TaskCreationOptions.RunContinuationsAsynchronously);
         connectQueue.Enqueue(new ConnectRequest(ip, (ushort)port, pipe, tcs));
 

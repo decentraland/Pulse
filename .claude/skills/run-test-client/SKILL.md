@@ -35,6 +35,8 @@ If no arguments are provided, use the defaults (account `enetclient-test`, 1 bot
 | `--pos-x=<float>` | `-104` | Spawn X |
 | `--pos-y=<float>` | `0` | Spawn Y |
 | `--pos-z=<float>` | `5` | Spawn Z |
+| `--spawn-radius=<float>` | `10` | Radius of the circle bots spawn on |
+| `--dispersion-radius=<float>` | `20` | Max wander distance from spawn origin |
 | `--rotate-speed=<deg/s>` | `90` | Idle rotation speed |
 
 ## Multi-bot mode
@@ -52,6 +54,15 @@ When `--bot-count=1` (default): account name is used as-is, ESC key quits.
 Run the command in the foreground so the user can see the bot console output (peer joins/leaves, emote events, resync requests). Each log line is prefixed with `[accountName]`.
 
 If the user passes custom arguments via `$ARGUMENTS`, forward them as-is after `--`. If they describe what they want in natural language (e.g. "run 5 bots on 10.0.0.5"), translate to the appropriate CLI flags.
+
+## Spawn location shortcuts
+
+When the user mentions a location by name, translate to position flags:
+
+| Location | Flags |
+|---|---|
+| "genesis plaza" (default) | `--pos-x=-104 --pos-y=0 --pos-z=5` |
+| "world" or "realm" | `--pos-x=0 --pos-y=0 --pos-z=0` |
 
 ## Troubleshooting
 

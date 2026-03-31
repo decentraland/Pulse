@@ -11,11 +11,23 @@ public class Bot : IInputReader
     private readonly float noiseSpeed;
     private readonly float emoteInterval;
     private readonly float emoteCooldown;
+    private readonly bool jumpEnabled;
+    private readonly float jumpMinInterval;
+    private readonly float jumpMaxInterval;
     private float time;
     private float emoteElapsed;
     private float emoteCooldownRemaining;
+    private float jumpCountdown;
 
-    public Bot(string[] emotes, float moveSpeed = 5f, float noiseSpeed = 0.3f, float emoteInterval = 5f, float emoteCooldown = 5f)
+    public Bot(
+        string[] emotes,
+        float moveSpeed = 5f,
+        float noiseSpeed = 0.3f,
+        float emoteInterval = 5f,
+        float emoteCooldown = 5f,
+        bool jumpEnabled = true,
+        float jumpMinInterval = 3f,
+        float jumpMaxInterval = 10f)
     {
         noiseForward = CreateNoise(random.Next());
         noiseStrafe = CreateNoise(random.Next());
@@ -25,6 +37,10 @@ public class Bot : IInputReader
         this.noiseSpeed = noiseSpeed;
         this.emoteInterval = emoteInterval;
         this.emoteCooldown = emoteCooldown;
+        this.jumpEnabled = jumpEnabled;
+        this.jumpMinInterval = jumpMinInterval;
+        this.jumpMaxInterval = jumpMaxInterval;
+        jumpCountdown = NextJumpDelay();
     }
 
     public void Update(float deltaTime, InputState state)
@@ -47,11 +63,25 @@ public class Bot : IInputReader
         if (emoteCooldownRemaining > 0f)
             return;
 
+        if (jumpEnabled)
+        {
+            jumpCountdown -= deltaTime;
+
+            if (jumpCountdown <= 0f)
+            {
+                state.Jump = true;
+                jumpCountdown = NextJumpDelay();
+            }
+        }
+
         float t = time * noiseSpeed;
         state.Velocity.Z = noiseForward.GetNoise(t, 0) * moveSpeed;
         state.Velocity.X = noiseStrafe.GetNoise(t, 0) * moveSpeed;
         state.RotationDelta = noiseRotation.GetNoise(t, 0);
     }
+
+    private float NextJumpDelay() =>
+        jumpMinInterval + (random.NextSingle() * (jumpMaxInterval - jumpMinInterval));
 
     private static FastNoiseLite CreateNoise(int seed)
     {

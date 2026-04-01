@@ -62,8 +62,8 @@ public class PlayerStateInputHandler(
         && FloatEquals(current.RotationY, incoming.RotationY)
         && FloatEquals(current.MovementBlend, incoming.MovementBlend)
         && FloatEquals(current.SlideBlend, incoming.SlideBlend)
-        && FloatEquals(current.HeadYaw, incoming.GetHeadYaw())
-        && FloatEquals(current.HeadPitch, incoming.GetHeadPitch())
+        && FloatEquals(current.HeadYaw, incoming.GetHeadYaw(), 0.5f)
+        && FloatEquals(current.HeadPitch, incoming.GetHeadPitch(), 0.5f)
         && current.AnimationFlags == (PlayerAnimationFlags)incoming.StateFlags
         && current.GlideState == incoming.GlideState
         // Ensures that the first movement input after a teleport is always published,
@@ -73,6 +73,6 @@ public class PlayerStateInputHandler(
     private static bool FloatEquals(in float a, in float b) =>
         Math.Abs(a - b) < TOLERANCE;
 
-    private static bool FloatEquals(float? a, float? b) =>
-        (!a.HasValue && !b.HasValue) || (a.HasValue && b.HasValue && Math.Abs(a.Value - b.Value) < TOLERANCE);
+    private static bool FloatEquals(float? a, float? b, float tolerance = TOLERANCE) =>
+        (!a.HasValue && !b.HasValue) || (a.HasValue && b.HasValue && Math.Abs(a.Value - b.Value) < tolerance);
 }

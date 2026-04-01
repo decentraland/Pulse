@@ -245,7 +245,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 // Only announce on delta because PlayerJoined is considered as an announcement
                 TryAnnounceProfile();
 
-                if (subjectSnapshot.IsTeleport && !view.LastSentSnapshot.IsTeleport)
+                if (subjectSnapshot.IsTeleport && view.LastSentTeleportSeq != subjectSnapshot.Seq)
                 {
                     // Clear the resync since the teleport has the full player state and can fulfill it
                     resyncRequests?.Remove(entry.Subject);
@@ -260,6 +260,8 @@ public sealed class PeerSimulation : IPeerSimulation
                             State = CreatePlayerState(subjectSnapshot),
                         }
                     }, ITransport.PacketMode.RELIABLE));
+
+                    view.LastSentTeleportSeq = subjectSnapshot.Seq;
 
                     logger.LogInformation($"Broadcasting teleport from {entry.Subject} to {observerId} at {subjectSnapshot.GlobalPosition}");
                 }

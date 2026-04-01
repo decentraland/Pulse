@@ -62,7 +62,10 @@ public class PlayerStateInputHandler(
         && FloatEquals(current.HeadYaw, incoming.GetHeadYaw())
         && FloatEquals(current.HeadPitch, incoming.GetHeadPitch())
         && current.AnimationFlags == (PlayerAnimationFlags)incoming.StateFlags
-        && current.GlideState == incoming.GlideState;
+        && current.GlideState == incoming.GlideState
+        // Ensures that the first movement input after a teleport is always published,
+        // even if the position/state values happen to be identical
+        && !current.IsTeleport;
 
     private static bool FloatEquals(in float a, in float b) =>
         Math.Abs(a - b) < TOLERANCE;

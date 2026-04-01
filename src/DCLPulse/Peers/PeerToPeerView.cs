@@ -40,4 +40,10 @@ public struct PeerToPeerView
     ///     Compared against <see cref="Simulation.EmoteBoard" /> each tick to detect transitions.
     /// </summary>
     public string? LastSentEmoteId;
+
+    /// <summary>
+    ///     The sequence number of the last teleport snapshot sent to the observer for this subject.
+    ///     Prevents duplicate teleport broadcasts and supports consecutive teleports.
+    /// </summary>
+    public uint? LastSentTeleportSeq;
 }

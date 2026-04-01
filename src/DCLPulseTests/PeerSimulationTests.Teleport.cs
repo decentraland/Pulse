@@ -90,11 +90,33 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages();
 
-        // Next tick, snapshot still has IsTeleport=true but view.LastSentSnapshot also has it
+        // Next tick, same snapshot — seq hasn't changed, so teleport is not re-sent
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported), Is.False);
+    }
+
+    [Test]
+    public void Teleport_SentForConsecutiveTeleports()
+    {
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+
+        PublishTeleportSnapshot(subject, seq: 2, new Vector3(10, 20, 30));
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<OutgoingMessage> first = DrainAllMessages();
+        Assert.That(first.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported), Is.True);
+
+        // Second consecutive teleport without normal movement in between
+        PublishTeleportSnapshot(subject, seq: 3, new Vector3(50, 60, 70));
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        List<OutgoingMessage> second = DrainAllMessages();
+        OutgoingMessage teleportMsg = second.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
+        Assert.That(teleportMsg.Message.Teleported.State.Position.X, Is.EqualTo(50f));
     }
 
     [Test]

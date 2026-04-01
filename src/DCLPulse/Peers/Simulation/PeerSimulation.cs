@@ -29,7 +29,6 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly SpatialGrid spatialGrid;
     private readonly IdentityBoard identityBoard;
     private readonly MessagePipe messagePipe;
-    private readonly uint[] simulationSteps;
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
@@ -84,7 +83,6 @@ public sealed class PeerSimulation : IPeerSimulation
         this.spatialGrid = spatialGrid;
         this.identityBoard = identityBoard;
         this.messagePipe = messagePipe;
-        this.simulationSteps = simulationSteps;
         this.timeProvider = timeProvider;
         this.transport = transport;
         this.profileBoard = profileBoard;
@@ -244,7 +242,30 @@ public sealed class PeerSimulation : IPeerSimulation
             }
             else
             {
-                if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
+                // Only announce on delta because PlayerJoined is considered as an announcement
+                TryAnnounceProfile();
+
+                if (subjectSnapshot.IsTeleport && view.LastSentTeleportSeq != subjectSnapshot.Seq)
+                {
+                    // Clear the resync since the teleport has the full player state and can fulfill it
+                    resyncRequests?.Remove(entry.Subject);
+
+                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                    {
+                        Teleported = new TeleportPerformed
+                        {
+                            SubjectId = entry.Subject,
+                            Sequence = subjectSnapshot.Seq,
+                            ServerTick = subjectSnapshot.ServerTick,
+                            State = CreatePlayerState(subjectSnapshot),
+                        }
+                    }, ITransport.PacketMode.RELIABLE));
+
+                    view.LastSentTeleportSeq = subjectSnapshot.Seq;
+
+                    logger.LogInformation($"Broadcasting teleport from {entry.Subject} to {observerId} at {subjectSnapshot.GlobalPosition}");
+                }
+                else if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
                 {
                     // Try a targeted delta from the client's baseline; fall back to full state
                     // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
@@ -259,9 +280,6 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
                 else
                     SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
-
-                // Only announce on delta because PlayerJoined is considered as an announcement
-                TryAnnounceProfile();
             }
 
             SyncEmoteState();

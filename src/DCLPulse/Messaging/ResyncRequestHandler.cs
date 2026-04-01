@@ -11,5 +11,8 @@ public class ResyncRequestHandler(ILogger<ResyncRequestHandler> logger) : Runtim
 
         state.ResyncRequests ??= new Dictionary<PeerIndex, uint>();
         state.ResyncRequests[new PeerIndex(message.Resync.SubjectId)] = message.Resync.KnownSeq;
+
+        logger.LogWarning("Received resync request from {Peer} for subject {SubjectId} with known sequence {KnownSeq}",
+            from.Value, message.Resync.SubjectId, message.Resync.KnownSeq);
     }
 }

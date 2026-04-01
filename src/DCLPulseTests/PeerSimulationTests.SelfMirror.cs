@@ -224,7 +224,8 @@ public class SelfMirrorTests
     {
         var disabledSimulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
-            SimulationSteps, timeProvider, Substitute.For<ITransport>(),
+            SimulationSteps, timeProvider,
+            Substitute.For<ITransport>(),
             profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>());
 
         SetVisibleSubjects((observer, PeerViewSimulationTier.TIER_0));
@@ -240,7 +241,8 @@ public class SelfMirrorTests
         var tier1Simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>(),
+            profileBoard, emoteBoard,
+            Substitute.For<ILogger<PeerSimulation>>(),
             selfMirrorEnabled: true, selfMirrorTier: 1);
 
         SetVisibleSubjects();

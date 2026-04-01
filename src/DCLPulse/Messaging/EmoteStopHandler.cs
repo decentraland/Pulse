@@ -18,7 +18,7 @@ public class EmoteStopHandler(EmoteBoard emoteBoard, ITimeProvider timeProvider,
             return;
         }
 
-        logger.LogDebug("Peer {Peer} stopped emote", from.Value);
+        logger.LogInformation("Peer {Peer} stopped emote", from.Value);
 
         emoteBoard.Stop(from, timeProvider.MonotonicTime);
     }

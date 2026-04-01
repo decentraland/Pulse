@@ -18,6 +18,6 @@ public class EmoteStartHandler(EmoteBoard emoteBoard, ITimeProvider timeProvider
 
         emoteBoard.Start(from, emoteStart.EmoteId, timeProvider.MonotonicTime, durationMs);
 
-        logger.LogDebug("Peer {Peer} started emote {EmoteId}", from.Value, emoteStart.EmoteId);
+        logger.LogInformation("Peer {Peer} started emote {EmoteId}", from.Value, emoteStart.EmoteId);
     }
 }

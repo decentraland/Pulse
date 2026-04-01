@@ -44,6 +44,6 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
 
         snapshotBoard.Publish(from, snapshot);
 
-        logger.LogInformation("Teleport requested by {Peer} at {Position}", from, localPosition);
+        logger.LogInformation("Teleport requested by {Peer} at {Position}", from, globalPosition);
     }
 }

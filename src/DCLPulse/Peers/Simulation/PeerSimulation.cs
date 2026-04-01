@@ -238,6 +238,8 @@ public sealed class PeerSimulation : IPeerSimulation
                     },
                 }, ITransport.PacketMode.RELIABLE));
 
+                logger.LogInformation("Sending PlayerJoined for subject {Subject} to observer {Observer}", entry.Subject, observerId);
+
                 view.LastSentProfileVersion = profileVersion;
             }
             else
@@ -263,7 +265,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
                     view.LastSentTeleportSeq = subjectSnapshot.Seq;
 
-                    logger.LogInformation($"Broadcasting teleport from {entry.Subject} to {observerId} at {subjectSnapshot.GlobalPosition}");
+                    logger.LogInformation("Broadcasting teleport from {Subject} to {ObserverId} at {Position}",
+                        entry.Subject, observerId, subjectSnapshot.GlobalPosition);
                 }
                 else if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
                 {
@@ -276,6 +279,14 @@ public sealed class PeerSimulation : IPeerSimulation
                         {
                             PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
                         }, ITransport.PacketMode.RELIABLE));
+
+                        logger.LogInformation("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
+                            entry.Subject, observerId, lastKnownSeq);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Resync fulfilled with targeted delta for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
+                            entry.Subject, observerId, lastKnownSeq);
                     }
                 }
                 else
@@ -306,6 +317,9 @@ public sealed class PeerSimulation : IPeerSimulation
                         },
                     }, ITransport.PacketMode.RELIABLE));
 
+                    logger.LogDebug("Profile version announced for subject {Subject} to observer {Observer} (v{PrevVersion} -> v{Version})",
+                        entry.Subject, observerId, view.LastSentProfileVersion, currentVersion);
+
                     view.LastSentProfileVersion = currentVersion;
                 }
             }
@@ -333,6 +347,9 @@ public sealed class PeerSimulation : IPeerSimulation
                             PlayerState = CreatePlayerState(subjectSnapshot),
                         },
                     }, ITransport.PacketMode.RELIABLE));
+
+                    logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
+                        currentEmote, entry.Subject, observerId);
                 }
                 else if (emoteState is { StopTick: not null, StopReason: not null })
                 {
@@ -345,6 +362,9 @@ public sealed class PeerSimulation : IPeerSimulation
                             Reason = emoteState.StopReason.Value,
                         },
                     }, ITransport.PacketMode.RELIABLE));
+
+                    logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
+                        entry.Subject, observerId, emoteState.StopReason.Value);
                 }
 
                 view.LastSentEmoteId = currentEmote;
@@ -393,6 +413,8 @@ public sealed class PeerSimulation : IPeerSimulation
             {
                 PlayerLeft = new PlayerLeft { SubjectId = id },
             }, ITransport.PacketMode.RELIABLE));
+
+            logger.LogInformation("Sending PlayerLeft for subject {Subject} to observer {Observer} (stale view swept)", id, observerId);
 
             views.Remove(id);
         }

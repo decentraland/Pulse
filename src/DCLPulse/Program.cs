@@ -7,8 +7,12 @@ using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using ZLogger;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+
+builder.Logging.ClearProviders();
+builder.Logging.AddZLoggerConsole();
 
 builder.Services.Configure<ENetTransportOptions>(
     builder.Configuration.GetSection(ENetTransportOptions.SECTION_NAME));

@@ -13,21 +13,37 @@ public class SimulationLoop(
     ITimeProvider timeProvider)
 {
     private const float TICK_RATE = 1 / 30f;
+    private const int TICK_RATE_MS = (int)(TICK_RATE * 1000);
 
     public async Task RunAsync(CancellationToken ct)
     {
+        // Stagger bots evenly across one tick interval so they don't all fire at once
+        uint now = timeProvider.TimeSinceStartupMs;
+
+        for (var i = 0; i < sessions.Count; i++)
+            sessions[i].NextTickMs = now + (uint)(TICK_RATE_MS * i / sessions.Count);
+
         while (!ct.IsCancellationRequested)
         {
+            now = timeProvider.TimeSinceStartupMs;
+            var anyUpdated = false;
+
             foreach (BotSession bot in sessions)
             {
+                if (now < bot.NextTickMs)
+                    continue;
+
+                bot.NextTickMs = now + TICK_RATE_MS;
+                anyUpdated = true;
+
                 UpdateBot(bot);
 
                 if (bot.InputCollector.Quit)
                     return;
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(TICK_RATE), ct)
-                      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (!anyUpdated)
+                await Task.Delay(1, ct).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 

@@ -26,5 +26,8 @@ public record struct PeerSnapshot(
     float? HeadYaw,
     float? HeadPitch,
     PlayerAnimationFlags AnimationFlags,
-    GlideState GlideState
+    GlideState GlideState,
+
+    // Flags
+    bool IsTeleport = false
 );

@@ -33,6 +33,7 @@ builder.Services.AddSingleton<HandshakeHandler>();
 builder.Services.AddSingleton<ProfileAnnouncementHandler>();
 builder.Services.AddSingleton<EmoteStartHandler>();
 builder.Services.AddSingleton<EmoteStopHandler>();
+builder.Services.AddSingleton<TeleportHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new NethereumPersonalSignVerifier()));
 
 builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
@@ -43,6 +44,7 @@ builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCas
     { ClientMessage.MessageOneofCase.ProfileAnnouncement, sp.GetRequiredService<ProfileAnnouncementHandler>() },
     { ClientMessage.MessageOneofCase.EmoteStart, sp.GetRequiredService<EmoteStartHandler>() },
     { ClientMessage.MessageOneofCase.EmoteStop, sp.GetRequiredService<EmoteStopHandler>() },
+    {ClientMessage.MessageOneofCase.Teleport, sp.GetRequiredService<TeleportHandler>() },
 });
 
 builder.Services.AddSingleton<ProfileBoard>(sp =>

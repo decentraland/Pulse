@@ -8,7 +8,7 @@ public class MetaForgeAuthenticator : IAuthenticator
     public async Task<LoginResult> LoginAsync(string account, CancellationToken ct)
     {
         var output = await MetaForge.RunCommandAsync(
-            $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check", ct);
+            $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check --json", ct);
 
         AuthLink[] chain = JsonSerializer.Deserialize(output, AuthenticatorJsonContext.Default.AuthLinkArray)!;
 

@@ -9,6 +9,27 @@ using PulseTestClient.Timing;
 
 var options = ClientOptions.FromArgs(args);
 var behaviorSettings = BotBehaviorSettings.Load();
+int botsPerProcess = BotBehaviorSettings.LoadBotsPerProcess();
+
+// If bot count exceeds per-process limit and we're not already a child worker, orchestrate
+bool isWorker = options.BotOffset > 0 || options.TotalBotCount > 0;
+
+if (!isWorker && options.BotCount > botsPerProcess)
+{
+    using var orchestratorCts = new CancellationTokenSource();
+
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        orchestratorCts.Cancel();
+    };
+
+    return await ProcessOrchestrator.RunAsync(options, botsPerProcess, orchestratorCts.Token);
+}
+
+// --- Worker mode: run bots in this process ---
+
+int totalBotCount = options.TotalBotCount > 0 ? options.TotalBotCount : options.BotCount;
 
 IAuthenticator authenticator = new MetaForgeAuthenticator();
 using var profileGateway = new CatalystProfileGateway();
@@ -28,18 +49,28 @@ WatchForStopFile(lifeCycleCts);
 var sharedTransport = new ENetTransport(new ENetTransportOptions { PeerLimit = options.BotCount });
 sharedTransport.Initialize();
 
-// Account creation must be sequential — MetaForge's account store isn't safe for concurrent writes
+// When running as a worker child, accounts are pre-created by the orchestrator
 var accountNames = new string[options.BotCount];
 
-for (var i = 0; i < options.BotCount; i++)
+if (!isWorker)
 {
-    accountNames[i] = options.BotCount == 1 ? options.AccountPrefix : $"{options.AccountPrefix}-{i}";
-    Console.WriteLine($"[{accountNames[i]}] Ensuring account exists..");
-    await MetaForge.RunCommandAsync($"account create {accountNames[i]} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+    for (var i = 0; i < options.BotCount; i++)
+    {
+        accountNames[i] = options.BotCount == 1 ? options.AccountPrefix : $"{options.AccountPrefix}-{i}";
+        Console.WriteLine($"[{accountNames[i]}] Ensuring account exists..");
+        await MetaForge.RunCommandAsync($"account create {accountNames[i]} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+    }
+}
+else
+{
+    for (var i = 0; i < options.BotCount; i++)
+        accountNames[i] = $"{options.AccountPrefix}-{options.BotOffset + i}";
 }
 
 // Auth, profile fetch, and connect can run in parallel
-Task<BotSession>[] sessionTasks = Enumerable.Range(0, options.BotCount).Select(i => CreateBotSessionAsync(i, accountNames[i])).ToArray();
+Task<BotSession>[] sessionTasks = Enumerable.Range(0, options.BotCount)
+                                            .Select(i => CreateBotSessionAsync(i, options.BotOffset + i, totalBotCount, accountNames[i]))
+                                            .ToArray();
 var sessions = (await Task.WhenAll(sessionTasks)).ToList();
 
 Console.WriteLine(options.BotCount == 1
@@ -62,11 +93,11 @@ foreach (BotSession s in sessions)
 
 await Task.Delay(200);
 sharedTransport.Dispose();
-return;
+return 0;
 
 // --- Bot session factory ---
 
-async Task<BotSession> CreateBotSessionAsync(int index, string accountName)
+async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, int total, string accountName)
 {
     Console.WriteLine($"[{accountName}] Signing auth chain..");
     LoginResult login = await authenticator.LoginAsync(accountName, lifeCycleCts.Token);
@@ -78,8 +109,8 @@ async Task<BotSession> CreateBotSessionAsync(int index, string accountName)
     var botTransport = new BotTransport(sharedTransport, pipe);
     var service = new PulseMultiplayerService(botTransport, pipe);
 
-    float angle = options.BotCount > 1 ? 2f * MathF.PI * index / options.BotCount : 0f;
-    float botSpawnOffset = options.BotCount > 1 ? options.SpawnRadius : 0f;
+    float angle = total > 1 ? 2f * MathF.PI * globalIndex / total : 0f;
+    float botSpawnOffset = total > 1 ? options.SpawnRadius : 0f;
 
     var spawnOrigin = new Vector3(options.PositionX, options.PositionY, options.PositionZ);
     var position = new Vector3(
@@ -127,7 +158,10 @@ async Task<BotSession> CreateBotSessionAsync(int index, string accountName)
 void WatchForStopFile(CancellationTokenSource cts)
 {
     string stopFile = Path.Combine(Path.GetTempPath(), "dcl-pulse-test-client.stop");
-    File.Delete(stopFile);
+
+    // Only the top-level process (not a worker child) cleans up the stop file on startup
+    if (!isWorker)
+        File.Delete(stopFile);
 
     _ = Task.Run(async () =>
     {
@@ -135,7 +169,6 @@ void WatchForStopFile(CancellationTokenSource cts)
         {
             if (File.Exists(stopFile))
             {
-                File.Delete(stopFile);
                 Console.WriteLine("Stop file detected, shutting down..");
                 await cts.CancelAsync();
                 break;

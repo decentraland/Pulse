@@ -12,6 +12,8 @@ public class ClientOptions
     public float PositionZ { get; init; } = 5f;
     public float SpawnRadius { get; init; } = 10f;
     public float DispersionRadius { get; init; } = 20f;
+    public int BotOffset { get; init; }
+    public int TotalBotCount { get; init; }
 
     public static ClientOptions FromArgs(string[] args)
     {
@@ -30,6 +32,8 @@ public class ClientOptions
             PositionZ = float.Parse(Arg("pos-z", "5")),
             SpawnRadius = float.Parse(Arg("spawn-radius", "10")),
             DispersionRadius = float.Parse(Arg("dispersion-radius", "20")),
+            BotOffset = int.Parse(Arg("bot-offset", "0")),
+            TotalBotCount = int.Parse(Arg("total-bot-count", "0")),
         };
     }
 }

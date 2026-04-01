@@ -22,5 +22,6 @@ public class BotSession
     public int JumpCount { get; set; }
     public uint LastFrameTick { get; set; }
     public Dictionary<uint, uint> KnownSeqBySubject { get; } = new ();
+    public HashSet<uint> PendingResyncs { get; } = new ();
     public Dictionary<uint, Web3Address> PeerAddresses { get; } = new ();
 }

@@ -24,9 +24,15 @@ public static class ServerEventHandler
         {
             uint subjectId = delta.SubjectId;
 
+            // Already waiting for a full state — drop silently
+            if (bot.PendingResyncs.Contains(subjectId))
+                continue;
+
             if (bot.KnownSeqBySubject.TryGetValue(subjectId, out uint lastSeq) && delta.BaselineSeq != lastSeq)
             {
                 Console.WriteLine($"[{bot.AccountName}] Seq gap for subject {subjectId}: expected {lastSeq}, got {delta.BaselineSeq}. Requesting resync.");
+
+                bot.PendingResyncs.Add(subjectId);
 
                 bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
                 {
@@ -46,6 +52,7 @@ public static class ServerEventHandler
                            ServerMessage.MessageOneofCase.PlayerStateFull, ct))
         {
             bot.KnownSeqBySubject[full.SubjectId] = full.Sequence;
+            bot.PendingResyncs.Remove(full.SubjectId);
             Console.WriteLine($"[{bot.AccountName}] Full state for subject {full.SubjectId}, seq={full.Sequence}");
         }
     }
@@ -68,6 +75,7 @@ public static class ServerEventHandler
         {
             bot.PeerAddresses.TryGetValue(left.SubjectId, out Web3Address address);
             bot.KnownSeqBySubject.Remove(left.SubjectId);
+            bot.PendingResyncs.Remove(left.SubjectId);
             bot.PeerAddresses.Remove(left.SubjectId);
             Console.WriteLine($"[{bot.AccountName}] Player left: {address}");
         }

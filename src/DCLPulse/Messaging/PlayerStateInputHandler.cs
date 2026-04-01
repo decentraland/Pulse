@@ -50,6 +50,9 @@ public class PlayerStateInputHandler(
 
         snapshotBoard.Publish(from, in snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);
+
+        logger.LogDebug("Received input from {Peer} with position {GlobalPosition}, rotation {RotationY}, velocity {Velocity}, movement blend {MovementBlend}, anim state {AnimationFlags}",
+            from.Value, snapshot.GlobalPosition, snapshot.RotationY, snapshot.Velocity, snapshot.MovementBlend, snapshot.AnimationFlags);
     }
 
     private static bool IsSameState(in PeerSnapshot current, PlayerState incoming) =>

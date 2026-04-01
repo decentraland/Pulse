@@ -1,4 +1,4 @@
-﻿using Decentraland.Pulse;
+using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse;
@@ -18,6 +18,7 @@ public class WorkerAsyncTests
     private Channel<MessagePipe.IncomingMessage> messageChannel;
     private Channel<MessagePipe.PeerLifeCycleEvent> lifeCycleChannel;
     private ITimeProvider timeProvider;
+    private ManualResetEventSlim signal;
 
     [SetUp]
     public void SetUp()
@@ -45,16 +46,18 @@ public class WorkerAsyncTests
 
         messageChannel = Channel.CreateUnbounded<MessagePipe.IncomingMessage>();
         lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();
+        signal = new ManualResetEventSlim();
     }
 
     [TearDown]
     public void TearDown()
     {
+        signal.Dispose();
         manager.Dispose();
     }
 
     [Test]
-    public async Task DrainsLifeCycleEvents_BeforeExiting()
+    public void DrainsLifeCycleEvents_BeforeExiting()
     {
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(50u);
@@ -68,9 +71,9 @@ public class WorkerAsyncTests
         // Pre-cancelled token: the while-loop body never executes,
         // but the post-loop drain still processes buffered events.
         using var cts = new CancellationTokenSource();
-        await cts.CancelAsync();
+        cts.Cancel();
 
-        await manager.WorkerAsync(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, cts.Token);
+        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
 
         Dictionary<PeerIndex, PeerState> peers = manager.peerStates[0];
         Assert.That(peers, Has.Count.EqualTo(2));
@@ -79,7 +82,7 @@ public class WorkerAsyncTests
     }
 
     [Test]
-    public async Task SimulationTickFires_WhenTimeAdvancesPastDeadline()
+    public void SimulationTickFires_WhenTimeAdvancesPastDeadline()
     {
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(50u);
@@ -89,21 +92,24 @@ public class WorkerAsyncTests
 
         // MonotonicTime call sequence:
         // call 0: init → nextTickTime = 0 + 50 = 50
-        // call 1: loop check → now = 100 >= 50 → tick fires, nextTickTime = 100 + 50 = 150
-        // call 2: WaitForMessagesOrTick → remaining = 150 - 200 = -50 → returns immediately
-        // call 3: loop check → now = 300 >= 150 → tick fires again, then cancel
+        // call 1: loop check → now = 100 >= 50 → tick fires, nextTickTime = 150, remaining = 50
+        //         signal.Wait(50) blocks, but MonotonicTime callback sets signal to skip waits
+        // call 2: loop check → now = 200 >= 150 → tick fires, then cancel
         timeProvider.MonotonicTime.Returns(_ =>
         {
             var value = (uint)(callIndex * 100);
             callIndex++;
 
-            if (callIndex >= 4)
+            if (callIndex >= 3)
                 cts.Cancel();
+
+            // Wake the worker so it doesn't block in signal.Wait
+            signal.Set();
 
             return value;
         });
 
-        await manager.WorkerAsync(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, cts.Token);
+        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
 
         simulation.Received()
                   .SimulateTick(
@@ -112,7 +118,7 @@ public class WorkerAsyncTests
     }
 
     [Test]
-    public async Task SimulationTickDoesNotFire_BeforeDeadline()
+    public void SimulationTickDoesNotFire_BeforeDeadline()
     {
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(50u);
@@ -123,7 +129,7 @@ public class WorkerAsyncTests
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(200);
 
-        await manager.WorkerAsync(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, cts.Token);
+        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
 
         simulation.DidNotReceive()
                   .SimulateTick(

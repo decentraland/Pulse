@@ -71,22 +71,16 @@ public sealed class ENetTransport : IDisposable
             {
                 ProcessConnectRequests();
 
-                var polled = false;
+                if (client == null) continue;
 
-                while (!polled)
-                {
-                    if (client == null) continue;
-
-                    if (client.CheckEvents(out Event netEvent) <= 0)
-                    {
-                        if (client.Service(options.ServiceTimeoutMs, out netEvent) <= 0)
-                            break;
-
-                        polled = true;
-                    }
-
+                // Service does socket I/O + returns one event. Short timeout so we never block outgoing flushes.
+                if (client.Service(1, out Event netEvent) > 0)
                     HandleEvent(ref netEvent);
-                }
+
+                // Service only returns one event per call. If multiple packets arrived in that I/O pass,
+                // the rest are queued internally. CheckEvents drains them without redundant socket I/O.
+                while (client.CheckEvents(out netEvent) > 0)
+                    HandleEvent(ref netEvent);
 
                 SendOutgoingMessages();
             }

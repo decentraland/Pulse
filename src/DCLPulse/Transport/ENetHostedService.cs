@@ -57,20 +57,14 @@ public sealed class ENetHostedService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var polled = false;
-
-            while (!polled)
-            {
-                if (host.CheckEvents(out Event netEvent) <= 0)
-                {
-                    if (host.Service(options.ServiceTimeoutMs, out netEvent) <= 0)
-                        break;
-
-                    polled = true;
-                }
-
+            // Service does socket I/O + returns one event. Short timeout so we never block outgoing flushes.
+            if (host.Service(1, out Event netEvent) > 0)
                 HandleEvent(ref netEvent);
-            }
+
+            // Service only returns one event per call. If multiple packets arrived in that I/O pass,
+            // the rest are queued internally. CheckEvents drains them without redundant socket I/O.
+            while (host.CheckEvents(out netEvent) > 0)
+                HandleEvent(ref netEvent);
 
             FlushOutgoing();
         }
@@ -145,6 +139,7 @@ public sealed class ENetHostedService(
                 using Packet _ = netEvent.Packet;
                 netEvent.Packet.CopyTo(receiveBuffer);
 
+                // logger.LogDebug("Received {PacketSize} from id={ID}.", netEvent.Packet.Length, netEvent.Peer.ID);
                 messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length), peerIndex));
 
                 break;

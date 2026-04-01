@@ -9,6 +9,12 @@ public sealed class PeerOptions
     public int SnapshotHistoryCapacity { get; set; } = 10;
 
     /// <summary>
+    ///     Maximum number of worker threads. Defaults to <see cref="Environment.ProcessorCount" />.
+    ///     Useful for limiting thread count on machines with many cores.
+    /// </summary>
+    public int MaxWorkerThreads { get; set; }
+
+    /// <summary>
     ///     Simulation steps in milliseconds for tiers
     /// </summary>
     public uint[] SimulationSteps { get; set; } = new[] { 50u, 100u, 200u };

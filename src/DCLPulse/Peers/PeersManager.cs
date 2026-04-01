@@ -79,7 +79,11 @@ public sealed class PeersManager : BackgroundService
         this.spatialGrid = spatialGrid;
         this.identityBoard = identityBoard;
         this.peerOptions = peerOptions;
-        workerCount = Environment.ProcessorCount;
+        int processorCount = Environment.ProcessorCount;
+
+        workerCount = peerOptions.MaxWorkerThreads > 0
+            ? Math.Min(peerOptions.MaxWorkerThreads, processorCount)
+            : processorCount;
 
         messageChannels = new Channel<IncomingMessage>[workerCount];
         peerLifeCycleChannels = new Channel<PeerLifeCycleEvent>[workerCount];
@@ -181,6 +185,8 @@ public sealed class PeersManager : BackgroundService
         ManualResetEventSlim signal,
         CancellationToken ct)
     {
+        Thread.CurrentThread.Name ??= $"PeerWorker-{workerIndex}";
+
         Dictionary<PeerIndex, PeerState> peers = peerStates[workerIndex];
 
         uint tickCounter = 0;

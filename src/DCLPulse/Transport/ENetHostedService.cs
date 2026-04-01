@@ -44,6 +44,8 @@ public sealed class ENetHostedService(
 
     private void RunLoop(CancellationToken stoppingToken)
     {
+        Thread.CurrentThread.Name ??= "ENet";
+
         using var host = new Host();
 
         var address = new Address();

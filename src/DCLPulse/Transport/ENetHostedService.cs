@@ -2,6 +2,7 @@ using ENet;
 using Google.Protobuf;
 using Microsoft.Extensions.Options;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Peers;
 using Host = ENet.Host;
 
@@ -103,6 +104,9 @@ public sealed class ENetHostedService(
         var packet = default(Packet);
         packet.Create(span, channel.PacketMode);
         peer.Send(channel.ChannelId, ref packet);
+
+        PulseMetrics.Transport.PACKETS_SENT.Add(1);
+        PulseMetrics.Transport.BYTES_SENT.Add(size);
     }
 
     private void HandleEvent(ref Event netEvent)
@@ -117,6 +121,9 @@ public sealed class ENetHostedService(
 
                 messagePipe.OnPeerConnected(peerIndex);
 
+                PulseMetrics.Transport.PEERS_CONNECTED.Add(1);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(1);
+
                 logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
 
@@ -125,6 +132,10 @@ public sealed class ENetHostedService(
             case EventType.Disconnect:
                 connectedPeers.Remove(peerIndex);
                 messagePipe.OnPeerDisconnected(peerIndex);
+
+                PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+
                 logger.LogDebug("Peer disconnected: id={ID} data={Data}.",
                     netEvent.Peer.ID, netEvent.Data);
 
@@ -133,16 +144,23 @@ public sealed class ENetHostedService(
             case EventType.Timeout:
                 connectedPeers.Remove(peerIndex);
                 messagePipe.OnPeerDisconnected(peerIndex);
+
+                PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+
                 logger.LogDebug("Peer timed out: id={ID}.", netEvent.Peer.ID);
                 break;
 
             case EventType.Receive:
             {
                 using Packet _ = netEvent.Packet;
+                int packetLength = netEvent.Packet.Length;
                 netEvent.Packet.CopyTo(receiveBuffer);
 
-                // logger.LogDebug("Received {PacketSize} from id={ID}.", netEvent.Packet.Length, netEvent.Peer.ID);
-                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length), peerIndex));
+                PulseMetrics.Transport.PACKETS_RECEIVED.Add(1);
+                PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength);
+
+                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, packetLength), peerIndex));
 
                 break;
             }

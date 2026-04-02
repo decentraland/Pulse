@@ -1,4 +1,5 @@
 ﻿using Decentraland.Pulse;
+using Pulse.Metrics;
 using Pulse.Peers;
 using System.Diagnostics.CodeAnalysis;
 
@@ -17,9 +18,7 @@ public class RuntimePacketHandlerBase<T> where T: RuntimePacketHandlerBase<T>
     {
         if (!peers.TryGetValue(from, out state) || state.ConnectionState != PeerConnectionState.AUTHENTICATED)
         {
-            // Skip messages from unauthenticated peer
-            // TODO add analytics to understand if there is a problem
-
+            PulseMetrics.Transport.UNAUTH_MESSAGES_SKIPPED.Add(1);
             logger.LogWarning("A unauthenticated peer {Peer} sent a message {MessageCase}, skipped processing", from.Value, message.MessageCase);
             return true;
         }

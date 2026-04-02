@@ -241,13 +241,15 @@ public sealed class PeerSimulation : IPeerSimulation
                 logger.LogInformation("Sending PlayerJoined for subject {Subject} to observer {Observer}", entry.Subject, observerId);
 
                 view.LastSentProfileVersion = profileVersion;
+                // Player joined message replaces the teleport message
+                view.LastSentTeleportSeq = subjectSnapshot.Seq;
             }
             else
             {
                 // Only announce on delta because PlayerJoined is considered as an announcement
                 TryAnnounceProfile();
 
-                if (subjectSnapshot.IsTeleport && view.LastSentTeleportSeq != subjectSnapshot.Seq)
+                if (subjectSnapshot.IsTeleport && view.LastSentTeleportSeq < subjectSnapshot.Seq)
                 {
                     // Clear the resync since the teleport has the full player state and can fulfill it
                     resyncRequests?.Remove(entry.Subject);

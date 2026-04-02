@@ -1,6 +1,7 @@
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using System.Threading.Channels;
@@ -37,8 +38,7 @@ public sealed class PeersManager : BackgroundService
     private readonly int workerCount;
 
     // One channel per worker. Router is the sole writer (SingleWriter=true).
-    private readonly Channel<IncomingMessage>[] messageChannels;
-    private readonly Channel<PeerLifeCycleEvent>[] peerLifeCycleChannels;
+    private readonly Channel<IncomingEvent>[] workerChannels;
     private readonly ManualResetEventSlim[] workerSignals;
 
     // Per-worker peer state — indexed by [workerIndex][peerIndex].
@@ -48,6 +48,7 @@ public sealed class PeersManager : BackgroundService
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
     private readonly EmoteBoard emoteBoard;
+    private readonly ClientMessageCounters incomingMessageCounters;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -63,7 +64,8 @@ public sealed class PeersManager : BackgroundService
         Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
         ITransport transport,
         ProfileBoard profileBoard,
-        EmoteBoard emoteBoard)
+        EmoteBoard emoteBoard,
+        ClientMessageCounters incomingMessageCounters)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -73,6 +75,7 @@ public sealed class PeersManager : BackgroundService
         this.transport = transport;
         this.profileBoard = profileBoard;
         this.emoteBoard = emoteBoard;
+        this.incomingMessageCounters = incomingMessageCounters;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -85,17 +88,13 @@ public sealed class PeersManager : BackgroundService
             ? Math.Min(peerOptions.MaxWorkerThreads, processorCount)
             : processorCount;
 
-        messageChannels = new Channel<IncomingMessage>[workerCount];
-        peerLifeCycleChannels = new Channel<PeerLifeCycleEvent>[workerCount];
+        workerChannels = new Channel<IncomingEvent>[workerCount];
         workerSignals = new ManualResetEventSlim[workerCount];
         peerStates = new Dictionary<PeerIndex, PeerState>[workerCount];
 
         for (var i = 0; i < workerCount; i++)
         {
-            messageChannels[i] = Channel.CreateUnbounded<IncomingMessage>(
-                new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
-
-            peerLifeCycleChannels[i] = Channel.CreateUnbounded<PeerLifeCycleEvent>(
+            workerChannels[i] = Channel.CreateUnbounded<IncomingEvent>(
                 new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
 
             workerSignals[i] = new ManualResetEventSlim();
@@ -107,7 +106,7 @@ public sealed class PeersManager : BackgroundService
     {
         var tasks = new Task[workerCount + 1];
 
-        tasks[0] = Task.WhenAll(RouteAsync(stoppingToken), RoutePeerLifeCycleEventsAsync(stoppingToken));
+        tasks[0] = RouteAsync(stoppingToken);
 
         for (var i = 0; i < workerCount; i++)
         {
@@ -119,8 +118,7 @@ public sealed class PeersManager : BackgroundService
             int idx = i;
 
             tasks[i + 1] = Task.Factory.StartNew(
-                () => RunWorker(idx, messageChannels[idx].Reader,
-                    peerLifeCycleChannels[idx].Reader, simulation, workerSignals[idx], stoppingToken),
+                () => RunWorker(idx, workerChannels[idx].Reader, simulation, workerSignals[idx], stoppingToken),
                 stoppingToken,
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
@@ -130,43 +128,27 @@ public sealed class PeersManager : BackgroundService
     }
 
     /// <summary>
-    ///     Reads the flat message stream and fans out to per-peer-stripe worker channels.
-    ///     Completes all worker channels (causing workers to drain and exit) when done.
+    ///     Single router reads the unified event stream (lifecycle + messages) and fans out
+    ///     to per-worker channels. ENet writes Connect before the first Receive for a peer,
+    ///     and the single channel preserves that ordering end-to-end.
     /// </summary>
     private async Task RouteAsync(CancellationToken ct)
     {
         try
         {
-            await foreach (IncomingMessage msg in messagePipe.ReadIncomingMessagesAsync(ct))
+            await foreach (IncomingEvent evt in messagePipe.ReadIncomingEventsAsync(ct))
             {
-                var index = (int)(msg.From.Value % (uint)workerCount);
-                messageChannels[index].Writer.TryWrite(msg);
+                if (!evt.IsLifeCycle)
+                    messagePipe.AckIncomingRead();
+
+                var index = (int)(evt.From.Value % (uint)workerCount);
+                workerChannels[index].Writer.TryWrite(evt);
                 workerSignals[index].Set();
             }
         }
         finally
         {
-            // Signal every worker to drain and exit — runs even on cancellation.
-            foreach (Channel<IncomingMessage> ch in messageChannels)
-                ch.Writer.TryComplete();
-        }
-    }
-
-    private async Task RoutePeerLifeCycleEventsAsync(CancellationToken ct)
-    {
-        try
-        {
-            await foreach (PeerLifeCycleEvent evt in messagePipe.ReadPeerLifeCycleAsync(ct))
-            {
-                var workerIndex = (int)(evt.From.Value % (uint)workerCount);
-                peerLifeCycleChannels[workerIndex].Writer.TryWrite(evt);
-                workerSignals[workerIndex].Set();
-            }
-        }
-        finally
-        {
-            // Signal every worker to drain and exit — runs even on cancellation.
-            foreach (Channel<IncomingMessage> ch in messageChannels)
+            foreach (Channel<IncomingEvent> ch in workerChannels)
                 ch.Writer.TryComplete();
         }
     }
@@ -179,8 +161,7 @@ public sealed class PeersManager : BackgroundService
     ///     The signal is set by both routers when they write to any of the worker's channels.
     /// </summary>
     internal void RunWorker(int workerIndex,
-        ChannelReader<IncomingMessage> messageReader,
-        ChannelReader<PeerLifeCycleEvent> peerLifeCycleReader,
+        ChannelReader<IncomingEvent> reader,
         IPeerSimulation simulation,
         ManualResetEventSlim signal,
         CancellationToken ct)
@@ -196,8 +177,7 @@ public sealed class PeersManager : BackgroundService
         {
             signal.Reset();
 
-            DrainPeerLifeCycleEvents(peerLifeCycleReader, peers, workerIndex);
-            DrainMessages(messageReader, peers, workerIndex);
+            DrainEvents(reader, peers, workerIndex);
 
             long now = timeProvider.MonotonicTime;
 
@@ -213,69 +193,69 @@ public sealed class PeersManager : BackgroundService
             }
         }
 
-        DrainPeerLifeCycleEvents(peerLifeCycleReader, peers, workerIndex);
-        DrainMessages(messageReader, peers, workerIndex);
+        DrainEvents(reader, peers, workerIndex);
     }
 
-    internal void DrainPeerLifeCycleEvents(ChannelReader<PeerLifeCycleEvent> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
+    internal void DrainEvents(ChannelReader<IncomingEvent> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
     {
-        while (reader.TryRead(out PeerLifeCycleEvent evt))
-        {
-            PeerIndex from = evt.From;
-
-            try
-            {
-                if (evt.Type == PeerEventType.Connected)
-                {
-                    PeerState peerState = peerStateFactory.Create();
-                    peerState.ConnectionState = PeerConnectionState.PENDING_AUTH;
-                    peerState.TransportState = peerState.TransportState with { ConnectionTime = timeProvider.MonotonicTime };
-                    peers[from] = peerState;
-
-                    logger.LogInformation("Peer connected {Peer}", from);
-                }
-                else if (evt.Type == PeerEventType.Disconnected)
-                {
-                    if (!peers.TryGetValue(from, out PeerState? peerState))
-                        peerState = peerStateFactory.Create();
-
-                    peerState.ConnectionState = PeerConnectionState.DISCONNECTING;
-
-                    peerState.TransportState = peerState.TransportState with
-                    {
-                        DisconnectionTime = timeProvider.MonotonicTime,
-                    };
-
-                    peers[from] = peerState;
-
-                    logger.LogInformation("Peer disconnected {Peer}", from);
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling {LifeCycleType} from peer {PeerIndex} on worker {Worker}.",
-                    evt.Type, from.Value, workerIndex);
-            }
-        }
-    }
-
-    private void DrainMessages(ChannelReader<IncomingMessage> reader, Dictionary<PeerIndex, PeerState> peers, int workerIndex)
-    {
-        while (reader.TryRead(out IncomingMessage item))
+        while (reader.TryRead(out IncomingEvent evt))
         {
             try
             {
-                if (messageHandlers.TryGetValue(item.Message.MessageCase, out var handler))
-                    handler.Handle(peers, item.From, item.Message);
+                if (evt.IsLifeCycle)
+                    HandleLifeCycleEvent(evt, peers);
                 else
-                    logger.LogWarning("No handler found for message {MessageCase}, skipped processing", item.Message.MessageCase);
+                    HandleMessage(evt, peers);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error handling message from peer {PeerIndex} on worker {Worker}.",
-                    item.From.Value, workerIndex);
+                logger.LogError(ex, "Error handling event from peer {PeerIndex} on worker {Worker}.",
+                    evt.From.Value, workerIndex);
             }
         }
+    }
+
+    private void HandleLifeCycleEvent(IncomingEvent evt, Dictionary<PeerIndex, PeerState> peers)
+    {
+        PeerIndex from = evt.From;
+
+        if (evt.LifeCycle == PeerEventType.Connected)
+        {
+            PeerState peerState = peerStateFactory.Create();
+            peerState.ConnectionState = PeerConnectionState.PENDING_AUTH;
+            peerState.TransportState = peerState.TransportState with { ConnectionTime = timeProvider.MonotonicTime };
+            peers[from] = peerState;
+
+            logger.LogInformation("Peer connected {Peer}", from);
+        }
+        else if (evt.LifeCycle == PeerEventType.Disconnected)
+        {
+            if (!peers.TryGetValue(from, out PeerState? peerState))
+                peerState = peerStateFactory.Create();
+
+            peerState.ConnectionState = PeerConnectionState.DISCONNECTING;
+
+            peerState.TransportState = peerState.TransportState with
+            {
+                DisconnectionTime = timeProvider.MonotonicTime,
+            };
+
+            peers[from] = peerState;
+
+            logger.LogInformation("Peer disconnected {Peer}", from);
+        }
+    }
+
+    private void HandleMessage(IncomingEvent evt, Dictionary<PeerIndex, PeerState> peers)
+    {
+        ClientMessage message = evt.Message!;
+
+        incomingMessageCounters.Increment(message.MessageCase);
+
+        if (messageHandlers.TryGetValue(message.MessageCase, out IMessageHandler? handler))
+            handler.Handle(peers, evt.From, message);
+        else
+            logger.LogWarning("No handler found for message {MessageCase}, skipped processing", message.MessageCase);
     }
 
     private long RunSimulationTick(

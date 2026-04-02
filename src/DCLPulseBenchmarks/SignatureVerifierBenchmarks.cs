@@ -23,7 +23,7 @@ public class SignatureVerifierBenchmarks
         if (!nethereum.Verify(SIGNER_ADDRESS, PAYLOAD, SIGNATURE))
             throw new InvalidOperationException("NethereumPersonalSignVerifier.Verify returned false — check test data");
         if (!rustEth.Verify(SIGNER_ADDRESS, PAYLOAD, SIGNATURE))
-            throw new InvalidOperationException("LowLevelNethereumPersonalSignVerifier.Verify returned false — check test data");
+            throw new InvalidOperationException("RustEthereum.Verify returned false — check test data");
     }
 
     [Benchmark(Baseline = true)]

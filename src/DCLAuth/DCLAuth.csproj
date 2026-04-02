@@ -9,7 +9,11 @@
 
     <ItemGroup>
       <PackageReference Include="Nethereum.Signer" Version="5.8.0" />
-      <PackageReference Include="Nethereum.Util" Version="5.8.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\DCLPulse\RustEthereum\RustEthereum.csproj" />
+      <ProjectReference Include="..\RustEthereum\RustEthereum.csproj" />
     </ItemGroup>
 
 </Project>

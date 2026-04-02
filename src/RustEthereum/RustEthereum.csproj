@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RootNamespace>DCL.RustEthereum</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Update="Libraries\Mac\rust-eth.dylib">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+          <TargetPath>rust-eth.dylib</TargetPath>
+      </None>
+      <None Update="Libraries\Linux\rust-eth.so">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+          <TargetPath>rust-eth.so</TargetPath>
+      </None>
+      <None Update="Libraries\Windows\rust-eth.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+          <TargetPath>rust-eth.dll</TargetPath>
+      </None>
+    </ItemGroup>
+
+</Project>

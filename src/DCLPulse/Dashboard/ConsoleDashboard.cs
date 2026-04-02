@@ -23,11 +23,17 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
 {
     private const int SPARKLINE_MAX_SAMPLES = 120; // 60 seconds at 500ms interval
 
+    // Fixed column widths — consistent across all tables.
+    private const int COL_LABEL = 20;
+    private const int COL_VALUE = 12;
+    private const int COL_PERCENTILE = 12;
+
     // Color groups — inbound (receiving) vs outbound (sending) vs peers vs backpressure
     private static readonly Color COLOR_PEERS = Colors.MediumPurple;
     private static readonly Color COLOR_INBOUND = Colors.DodgerBlue;
     private static readonly Color COLOR_OUTBOUND = Colors.Coral;
     private static readonly Color COLOR_BACKPRESSURE = Colors.Yellow;
+    private static readonly Color COLOR_ERROR = Colors.Red;
 
     private static readonly SparklineStyle STYLE_PEERS = SparklineStyle.Default with
     {
@@ -47,6 +53,11 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
     private static readonly SparklineStyle STYLE_BACKPRESSURE = SparklineStyle.Default with
     {
         Style = Style.None.WithForeground(COLOR_BACKPRESSURE),
+    };
+
+    private static readonly SparklineStyle STYLE_ERROR = SparklineStyle.Default with
+    {
+        Style = Style.None.WithForeground(COLOR_ERROR),
     };
 
     // Per-message-type display config — single source of truth for labels and colors.
@@ -85,6 +96,7 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
     private readonly RateStatsView packetsIn = new ();
     private readonly RateStatsView packetsOut = new ();
     private readonly RateStatsView unauthSkipped = new ();
+    private readonly RateStatsView sendFailures = new ();
     private readonly RateStatsView incomingQueue = new ();
     private readonly RateStatsView outgoingQueue = new ();
 
@@ -99,6 +111,7 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
     private readonly Sparkline packetsInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline packetsOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline unauthSkippedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sendFailuresSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline incomingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline outgoingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
@@ -172,6 +185,7 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
         packetsIn.Apply(snap.Transport.PacketsReceived, v => v.ToString("N0"));
         packetsOut.Apply(snap.Transport.PacketsSent, v => v.ToString("N0"));
         unauthSkipped.Apply(snap.Transport.UnauthMessagesSkipped, v => v.ToString("N0"));
+        sendFailures.Apply(snap.Transport.SendFailures, v => v.ToString("N0"));
         incomingQueue.Apply(snap.Transport.IncomingQueueDepth, v => v.ToString("N0"));
         outgoingQueue.Apply(snap.Transport.OutgoingQueueDepth, v => v.ToString("N0"));
 
@@ -181,6 +195,7 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
         ShiftSample(packetsInSparkline.Values, snap.Transport.PacketsReceived.PerSec);
         ShiftSample(packetsOutSparkline.Values, snap.Transport.PacketsSent.PerSec);
         ShiftSample(unauthSkippedSparkline.Values, snap.Transport.UnauthMessagesSkipped.PerSec);
+        ShiftSample(sendFailuresSparkline.Values, snap.Transport.SendFailures.PerSec);
         ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth.PerSec);
         ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth.PerSec);
 
@@ -191,16 +206,17 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
     private Visual BuildVisualTree()
     {
         var metricsTable = new Table(
-            ["Metric", "Value", "P50", "P95", "P99", "Last 60s"],
+            TableHeaders(),
             [
-                [new TextBlock("Active Peers"), new TextBlock(() => activePeers.Value), "", "", "", activePeersChart.Style(STYLE_PEERS)],
+                [new TextBlock("Active Peers").MinWidth(COL_LABEL), new TextBlock(() => activePeers.Value).MinWidth(COL_VALUE), "", "", "", activePeersChart.Style(STYLE_PEERS)],
                 [new TextBlock("Total Connected"), new TextBlock(() => totalConnected.Value), "", "", "", ""],
                 [new TextBlock("Total Disconnected"), new TextBlock(() => totalDisconnected.Value), "", "", "", ""],
-                RateStatsRow("Bytes In/s", bytesIn, bytesInSparkline.Style(STYLE_INBOUND)),
-                RateStatsRow("Bytes Out/s", bytesOut, bytesOutSparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Bytes In/s", bytesIn, bytesInSparkline.Style(STYLE_INBOUND), stacked: true),
+                RateStatsRow("Bytes Out/s", bytesOut, bytesOutSparkline.Style(STYLE_OUTBOUND), stacked: true),
                 RateStatsRow("Packets In/s", packetsIn, packetsInSparkline.Style(STYLE_INBOUND)),
                 RateStatsRow("Packets Out/s", packetsOut, packetsOutSparkline.Style(STYLE_OUTBOUND)),
                 RateStatsRow("Unauth Skipped", unauthSkipped, unauthSkippedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Send Failures", sendFailures, sendFailuresSparkline.Style(STYLE_ERROR)),
                 RateStatsRow("Incoming Queue", incomingQueue, incomingQueueSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Outgoing Queue", outgoingQueue, outgoingQueueSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
@@ -222,21 +238,39 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
         return new VStack(metricsArea, logs).Spacing(1);
     }
 
-    private static Visual[] RateStatsRow(string label, RateStatsView view, Visual sparkline) =>
+    /// <summary>
+    ///     Shared table header row with fixed column widths — reused by all tables.
+    /// </summary>
+    private static Visual[] TableHeaders() =>
     [
-        new TextBlock(label),
-        new TextBlock(() => view.PerSec.Value),
-        PercentileCell(view.P50Window, view.P50Lifetime),
-        PercentileCell(view.P95Window, view.P95Lifetime),
-        PercentileCell(view.P99Window, view.P99Lifetime),
+        new TextBlock("Metric").MinWidth(COL_LABEL),
+        new TextBlock("Value").MinWidth(COL_VALUE),
+        new TextBlock("P50").MinWidth(COL_PERCENTILE),
+        new TextBlock("P95").MinWidth(COL_PERCENTILE),
+        new TextBlock("P99").MinWidth(COL_PERCENTILE),
+        new TextBlock("Last 60s"),
+    ];
+
+    private static Visual[] RateStatsRow(string label, RateStatsView view, Visual sparkline, bool stacked = false) =>
+    [
+        new TextBlock(label).MinWidth(COL_LABEL),
+        new TextBlock(() => view.PerSec.Value).MinWidth(COL_VALUE),
+        PercentileCell(view.P50Window, view.P50Lifetime, stacked).MinWidth(COL_PERCENTILE),
+        PercentileCell(view.P95Window, view.P95Lifetime, stacked).MinWidth(COL_PERCENTILE),
+        PercentileCell(view.P99Window, view.P99Lifetime, stacked).MinWidth(COL_PERCENTILE),
         sparkline,
     ];
 
     /// <summary>
-    ///     Renders a percentile cell with rolling window value in white and lifetime value in gray.
+    ///     Renders a percentile cell. When <paramref name="stacked"/> is true (byte-formatted rows),
+    ///     the lifetime value is on a second line to avoid overflow. Otherwise both are inline.
     /// </summary>
-    private static Markup PercentileCell(State<string> window, State<string> lifetime) =>
-        new (() => $"{window.Value} [gray]({lifetime.Value})[/]");
+    private static Visual PercentileCell(State<string> window, State<string> lifetime, bool stacked) =>
+        stacked
+            ? new VStack(
+                new Markup(() => $"{window.Value}"),
+                new Markup(() => $"[gray]({lifetime.Value})[/]"))
+            : new Markup(() => $"{window.Value} [gray]({lifetime.Value})[/]");
 
     private static void ShiftSample(BindableList<double> values, double value)
     {
@@ -325,8 +359,7 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
                                     .Select(e => RateStatsRow(e.Label, views[e.Type].Rate, views[e.Type].Chart.Style(e.Style)))
                                     .ToArray();
 
-            return new Group(config.Title,
-                new Table(["Message", "Msg/s", "P50", "P95", "P99", "Last 60s"], rows));
+            return new Group(config.Title, new Table(TableHeaders(), rows));
         }
     }
 }

@@ -29,5 +29,8 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> UNAUTH_MESSAGES_SKIPPED =
             METER.CreateCounter<long>("pulse.transport.unauth_messages_skipped");
+
+        public static readonly Counter<long> SEND_FAILURES =
+            METER.CreateCounter<long>("pulse.transport.send_failures");
     }
 }

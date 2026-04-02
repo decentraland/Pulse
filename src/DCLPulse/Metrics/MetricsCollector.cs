@@ -34,6 +34,7 @@ public sealed class MetricsCollector : IHostedService, IDisposable
     private long packetsReceived;
     private long packetsSent;
     private long unauthMessagesSkipped;
+    private long sendFailures;
 
     // Rate trackers — only touched by the timer callback.
     private readonly RateTracker bytesReceivedTracker = new (PERCENTILE_WINDOW);
@@ -41,6 +42,7 @@ public sealed class MetricsCollector : IHostedService, IDisposable
     private readonly RateTracker packetsReceivedTracker = new (PERCENTILE_WINDOW);
     private readonly RateTracker packetsSentTracker = new (PERCENTILE_WINDOW);
     private readonly RateTracker unauthSkippedTracker = new (PERCENTILE_WINDOW);
+    private readonly RateTracker sendFailuresTracker = new (PERCENTILE_WINDOW);
     private readonly GaugeTracker incomingQueueDepthTracker = new (PERCENTILE_WINDOW);
     private readonly GaugeTracker outgoingQueueDepthTracker = new (PERCENTILE_WINDOW);
 
@@ -124,6 +126,9 @@ public sealed class MetricsCollector : IHostedService, IDisposable
             case "pulse.transport.unauth_messages_skipped":
                 Interlocked.Add(ref unauthMessagesSkipped, value);
                 break;
+            case "pulse.transport.send_failures":
+                Interlocked.Add(ref sendFailures, value);
+                break;
         }
     }
 
@@ -172,6 +177,7 @@ public sealed class MetricsCollector : IHostedService, IDisposable
                 PacketsReceived = packetsReceivedTracker.Update(Interlocked.Read(ref packetsReceived), elapsedSec),
                 PacketsSent = packetsSentTracker.Update(Interlocked.Read(ref packetsSent), elapsedSec),
                 UnauthMessagesSkipped = unauthSkippedTracker.Update(Interlocked.Read(ref unauthMessagesSkipped), elapsedSec),
+                SendFailures = sendFailuresTracker.Update(Interlocked.Read(ref sendFailures), elapsedSec),
                 IncomingQueueDepth = incomingQueueDepthTracker.Record(incomingDepth),
                 OutgoingQueueDepth = outgoingQueueDepthTracker.Record(outgoingDepth),
             },

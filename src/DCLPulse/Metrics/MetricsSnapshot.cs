@@ -37,6 +37,12 @@ public readonly record struct MetricsSnapshot
         public RateStats UnauthMessagesSkipped { get; init; }
 
         /// <summary>
+        ///     Packets rejected by ENet's peer.Send() — internal queue full or throttled.
+        ///     Non-zero means ENet is dropping outgoing packets before they reach the wire.
+        /// </summary>
+        public RateStats SendFailures { get; init; }
+
+        /// <summary>
         ///     Pending messages in the incoming channel waiting for workers to process.
         ///     If this grows, workers cannot keep up with inbound message volume.
         /// </summary>

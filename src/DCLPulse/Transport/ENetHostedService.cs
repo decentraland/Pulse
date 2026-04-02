@@ -103,7 +103,10 @@ public sealed class ENetHostedService(
         message.WriteTo(span);
         var packet = default(Packet);
         packet.Create(span, channel.PacketMode);
-        peer.Send(channel.ChannelId, ref packet);
+        int result = peer.Send(channel.ChannelId, ref packet);
+
+        if (result < 0)
+            PulseMetrics.Transport.SEND_FAILURES.Add(1);
 
         PulseMetrics.Transport.PACKETS_SENT.Add(1);
         PulseMetrics.Transport.BYTES_SENT.Add(size);

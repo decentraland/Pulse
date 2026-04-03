@@ -8,4 +8,8 @@
         <RootNamespace>Pulse.Transport</RootNamespace>
     </PropertyGroup>
 
+    <ItemGroup>
+        <None Remove="**/*.meta" />
+    </ItemGroup>
+
 </Project>

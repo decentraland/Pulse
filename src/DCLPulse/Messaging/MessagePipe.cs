@@ -112,7 +112,7 @@ public sealed class MessagePipe(
         public bool IsLifeCycle => LifeCycle.HasValue;
     }
 
-    public readonly record struct OutgoingMessage(PeerIndex To, ServerMessage Message, ITransport.PacketMode PacketMode);
+    public readonly record struct OutgoingMessage(PeerIndex To, ServerMessage Message, PacketMode PacketMode);
 
     public enum PeerEventType { Connected, Disconnected }
 }

@@ -1,0 +1,16 @@
+{
+    "name": "com.decentraland.pulse.transport",
+    "version": "1.0.0",
+    "displayName": "DCLPulse Transport Shared",
+    "description": "Shared ENet transport layer for Decentraland Pulse (managed C# ENet wrapper, channel definitions, packet modes).",
+    "unity": "6000.3",
+    "keywords": [
+        "enet",
+        "transport",
+        "networking",
+        "udp"
+    ],
+    "author": {
+        "name": "Decentraland"
+    }
+}

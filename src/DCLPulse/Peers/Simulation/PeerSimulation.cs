@@ -110,7 +110,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (timeProvider.MonotonicTime - observerState.TransportState.ConnectionTime >= PEER_PENDING_AUTH_CLEAN_TIMEOUT)
                 {
                     // Trigger disconnection flow which will mark the peer as DISCONNECTING and eventually removed
-                    transport.Disconnect(observerId, ITransport.DisconnectReason.AuthTimeout);
+                    transport.Disconnect(observerId, DisconnectReason.AUTH_TIMEOUT);
                     logger.LogInformation("Peer {Peer} disconnected due to authentication timed out", observerId);
                     continue;
                 }
@@ -236,7 +236,7 @@ public sealed class PeerSimulation : IPeerSimulation
                         ProfileVersion = profileVersion,
                         State = CreateFullState(entry.Subject, subjectSnapshot),
                     },
-                }, ITransport.PacketMode.RELIABLE));
+                }, PacketMode.RELIABLE));
 
                 logger.LogInformation("Sending PlayerJoined for subject {Subject} to observer {Observer}", entry.Subject, observerId);
 
@@ -263,7 +263,7 @@ public sealed class PeerSimulation : IPeerSimulation
                             ServerTick = subjectSnapshot.ServerTick,
                             State = CreatePlayerState(subjectSnapshot),
                         }
-                    }, ITransport.PacketMode.RELIABLE));
+                    }, PacketMode.RELIABLE));
 
                     view.LastSentTeleportSeq = subjectSnapshot.Seq;
 
@@ -275,12 +275,12 @@ public sealed class PeerSimulation : IPeerSimulation
                     // Try a targeted delta from the client's baseline; fall back to full state
                     // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
                     if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
-                        || !SendDelta(knownSnapshot, ITransport.PacketMode.RELIABLE))
+                        || !SendDelta(knownSnapshot, PacketMode.RELIABLE))
                     {
                         messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                         {
                             PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
-                        }, ITransport.PacketMode.RELIABLE));
+                        }, PacketMode.RELIABLE));
 
                         logger.LogInformation("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
                             entry.Subject, observerId, lastKnownSeq);
@@ -292,7 +292,7 @@ public sealed class PeerSimulation : IPeerSimulation
                     }
                 }
                 else
-                    SendDelta(view.LastSentSnapshot, ITransport.PacketMode.UNRELIABLE_SEQUENCED);
+                    SendDelta(view.LastSentSnapshot, PacketMode.UNRELIABLE_SEQUENCED);
             }
 
             SyncEmoteState();
@@ -317,7 +317,7 @@ public sealed class PeerSimulation : IPeerSimulation
                             Version = currentVersion,
                             SubjectId = entry.Subject,
                         },
-                    }, ITransport.PacketMode.RELIABLE));
+                    }, PacketMode.RELIABLE));
 
                     logger.LogDebug("Profile version announced for subject {Subject} to observer {Observer} (v{PrevVersion} -> v{Version})",
                         entry.Subject, observerId, view.LastSentProfileVersion, currentVersion);
@@ -348,7 +348,7 @@ public sealed class PeerSimulation : IPeerSimulation
                             EmoteId = currentEmote,
                             PlayerState = CreatePlayerState(subjectSnapshot),
                         },
-                    }, ITransport.PacketMode.RELIABLE));
+                    }, PacketMode.RELIABLE));
 
                     logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
                         currentEmote, entry.Subject, observerId);
@@ -363,7 +363,7 @@ public sealed class PeerSimulation : IPeerSimulation
                             ServerTick = emoteState.StopTick.Value,
                             Reason = emoteState.StopReason.Value,
                         },
-                    }, ITransport.PacketMode.RELIABLE));
+                    }, PacketMode.RELIABLE));
 
                     logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
                         entry.Subject, observerId, emoteState.StopReason.Value);
@@ -372,7 +372,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 view.LastSentEmoteId = currentEmote;
             }
 
-            bool SendDelta(PeerSnapshot baseline, ITransport.PacketMode packetMode)
+            bool SendDelta(PeerSnapshot baseline, PacketMode packetMode)
             {
                 if (baseline.Seq == subjectSnapshot.Seq)
                     return false;
@@ -411,7 +411,7 @@ public sealed class PeerSimulation : IPeerSimulation
             messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
             {
                 PlayerLeft = new PlayerLeft { SubjectId = id },
-            }, ITransport.PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE));
 
             logger.LogInformation("Sending PlayerLeft for subject {Subject} to observer {Observer} (stale view swept)", id, observerId);
 

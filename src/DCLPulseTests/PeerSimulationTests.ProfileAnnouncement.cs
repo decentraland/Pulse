@@ -27,7 +27,7 @@ public partial class PeerSimulationTests
             m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced);
 
         Assert.That(announcement.To, Is.EqualTo(observer));
-        Assert.That(announcement.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(announcement.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(announcement.Message.PlayerProfileVersionAnnounced.SubjectId, Is.EqualTo(subject.Value));
         Assert.That(announcement.Message.PlayerProfileVersionAnnounced.Version, Is.EqualTo(5));
     }

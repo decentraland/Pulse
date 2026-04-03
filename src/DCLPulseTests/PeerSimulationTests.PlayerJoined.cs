@@ -18,7 +18,7 @@ public partial class PeerSimulationTests
 
         OutgoingMessage msg = DrainSingleMessage();
         Assert.That(msg.To, Is.EqualTo(observer));
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
         Assert.That(msg.Message.PlayerJoined.UserId, Is.EqualTo("0xSUBJECT_WALLET"));
         Assert.That(msg.Message.PlayerJoined.State.SubjectId, Is.EqualTo(subject.Value));

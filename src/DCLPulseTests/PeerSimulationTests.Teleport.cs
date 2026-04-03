@@ -37,7 +37,7 @@ public partial class PeerSimulationTests
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage teleportMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
-        Assert.That(teleportMsg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(teleportMsg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(teleportMsg.Message.Teleported.SubjectId, Is.EqualTo(subject.Value));
         Assert.That(teleportMsg.Message.Teleported.Sequence, Is.EqualTo(2u));
         Assert.That(teleportMsg.Message.Teleported.ServerTick, Is.EqualTo(20u));

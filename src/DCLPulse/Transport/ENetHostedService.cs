@@ -87,8 +87,8 @@ public sealed class ENetHostedService(
 
             ENetChannel channel = msg.PacketMode switch
                                   {
-                                      ITransport.PacketMode.RELIABLE => ENetChannel.RELIABLE,
-                                      ITransport.PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
+                                      PacketMode.RELIABLE => ENetChannel.RELIABLE,
+                                      PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
                                       _ => ENetChannel.UNRELIABLE_UNSEQUENCED,
                                   };
 
@@ -177,7 +177,7 @@ public sealed class ENetHostedService(
         logger.LogInformation("ENet deinitialized.");
     }
 
-    public void Disconnect(PeerIndex pi, ITransport.DisconnectReason reason)
+    public void Disconnect(PeerIndex pi, DisconnectReason reason)
     {
         if (!connectedPeers.TryGetValue(pi, out Peer peer)) return;
 

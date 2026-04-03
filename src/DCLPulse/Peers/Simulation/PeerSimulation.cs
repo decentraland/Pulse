@@ -377,10 +377,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (baseline.Seq == subjectSnapshot.Seq)
                     return false;
 
-                PlayerStateDeltaTier0? delta = PeerViewDiff.CreateMessage(entry.Subject, baseline, subjectSnapshot, entry.Tier);
-
-                if (delta == null)
-                    return false;
+                PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(entry.Subject, baseline, subjectSnapshot, entry.Tier);
 
                 messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                 {

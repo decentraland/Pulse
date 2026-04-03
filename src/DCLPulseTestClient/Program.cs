@@ -13,8 +13,9 @@ int botsPerProcess = BotBehaviorSettings.LoadBotsPerProcess();
 
 // If bot count exceeds per-process limit and we're not already a child worker, orchestrate
 bool isWorker = options.BotOffset > 0 || options.TotalBotCount > 0;
+int processCount = (options.BotCount + botsPerProcess - 1) / botsPerProcess;
 
-if (!isWorker && options.BotCount > botsPerProcess)
+if (!isWorker && processCount > 1)
 {
     using var orchestratorCts = new CancellationTokenSource();
 
@@ -142,7 +143,7 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     Console.WriteLine($"[{accountName}] Connecting to {options.ServerIp}:{options.ServerPort}..");
     await service.ConnectAsync(options.ServerIp, options.ServerPort, login.AuthChainJson, lifeCycleCts.Token);
 
-    ServerEventHandler.SubscribeAll(session, lifeCycleCts.Token);
+    _ = ServerEventHandler.ProcessAll(session, lifeCycleCts.Token);
 
     pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
     {

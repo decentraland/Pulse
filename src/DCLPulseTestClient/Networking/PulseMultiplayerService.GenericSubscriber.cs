@@ -42,4 +42,16 @@ public partial class PulseMultiplayerService
             };
         }
     }
+
+    /// <summary>
+    ///     Routes all message types into a single channel preserving global arrival order.
+    /// </summary>
+    private class BroadcastSubscriber : ISubscriber
+    {
+        public Channel<ServerMessage> Channel { get; } = System.Threading.Channels.Channel.CreateUnbounded<ServerMessage>(
+            new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
+
+        public bool TryNotify(ServerMessage message) =>
+            Channel.Writer.TryWrite(message);
+    }
 }

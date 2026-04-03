@@ -12,7 +12,6 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\DCLPulse\RustEthereum\RustEthereum.csproj" />
       <ProjectReference Include="..\RustEthereum\RustEthereum.csproj" />
     </ItemGroup>
 

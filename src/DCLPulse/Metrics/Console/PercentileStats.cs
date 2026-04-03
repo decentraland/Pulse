@@ -1,4 +1,4 @@
-namespace Pulse.Metrics;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     P50/P95/P99 percentile triplet for a single time window.

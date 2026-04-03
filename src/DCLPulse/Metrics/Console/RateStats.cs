@@ -1,4 +1,4 @@
-namespace Pulse.Metrics;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Bundles current rate with rolling-window and lifetime percentiles for a single metric.

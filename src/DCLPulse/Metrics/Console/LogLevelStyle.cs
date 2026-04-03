@@ -1,4 +1,4 @@
-namespace Pulse.Dashboard;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Log level prefixes and colors matching Microsoft's default SimpleConsoleFormatter.

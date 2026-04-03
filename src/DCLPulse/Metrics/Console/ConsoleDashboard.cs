@@ -1,27 +1,29 @@
 using Decentraland.Pulse;
-using Pulse.Formatting;
-using Pulse.Metrics;
+using System.Diagnostics;
 using XenoAtom.Terminal;
 using XenoAtom.Terminal.UI;
 using XenoAtom.Terminal.UI.Collections;
 using XenoAtom.Terminal.UI.Controls;
 using XenoAtom.Terminal.UI.Styling;
 
-namespace Pulse.Dashboard;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Fullscreen terminal dashboard powered by XenoAtom.Terminal.UI.
 ///     Runs <see cref="TerminalExtensions.Run" /> on a dedicated background thread.
-///     <see cref="MetricsCollector" /> pushes snapshots via <see cref="Update" />
-///     (called from a ThreadPool timer); the onUpdate callback (running on the UI thread
-///     at ~66 Hz) copies new data into reactive <see cref="State{T}" /> objects and sparkline
-///     buffers only when a new snapshot is available.
+///     Pulls raw <see cref="MetricsSnapshot" /> from <see cref="IMetricsCollector" /> every ~500ms,
+///     computes rates and percentiles locally, and renders into reactive <see cref="State{T}" />
+///     objects and sparkline buffers.
 ///     Logs are captured by <see cref="DashboardLoggerProvider" /> and displayed in an
 ///     embedded <see cref="LogControl" /> panel.
 /// </summary>
-public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvider loggerProvider) : IDashboard, IHostedService
+public sealed class ConsoleDashboard(
+    LogControl logControl,
+    DashboardLoggerProvider loggerProvider,
+    IMetricsCollector metricsCollector) : IHostedService
 {
     private const int SPARKLINE_MAX_SAMPLES = 120; // 60 seconds at 500ms interval
+    private const long SNAPSHOT_INTERVAL_MS = 500;
 
     // Fixed column widths — consistent across all tables.
     private const int COL_LABEL = 20;
@@ -85,7 +87,22 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
         (ServerMessage.MessageOneofCase.Teleported, "Teleported", STYLE_OUTBOUND),
     ]);
 
-    private readonly object snapshotLock = new ();
+    // Rate trackers — compute rates and percentiles from raw totals.
+    private readonly RateTracker bytesReceivedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker bytesSentTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker packetsReceivedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker packetsSentTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker unauthSkippedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker sendFailuresTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker incomingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker outgoingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
+
+    // Per-message-type rate trackers
+    private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
+        INCOMING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
+
+    private readonly Dictionary<ServerMessage.MessageOneofCase, RateTracker> outgoingRateTrackers =
+        OUTGOING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
 
     // Reactive state — written on UI thread inside onUpdate callback.
     private readonly State<string> activePeers = new ("0");
@@ -115,23 +132,14 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
     private readonly Sparkline incomingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline outgoingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
-    private MetricsSnapshot pendingSnapshot;
-    private bool hasNewSnapshot;
+    private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
     private Thread? uiThread;
     private volatile bool stopping;
 
-    public void Update(MetricsSnapshot snapshot)
-    {
-        lock (snapshotLock)
-        {
-            pendingSnapshot = snapshot;
-            hasNewSnapshot = true;
-        }
-    }
-
     public Task StartAsync(CancellationToken cancellationToken)
     {
+
         uiThread = new Thread(RunUi)
         {
             Name = "Dashboard",
@@ -158,49 +166,69 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
             if (stopping)
                 return TerminalLoopResult.Stop;
 
-            ConsumeSnapshot();
+            TryConsumeSnapshot();
             loggerProvider.DrainTo(logControl);
             return TerminalLoopResult.Continue;
         });
     }
 
-    private void ConsumeSnapshot()
+    private void TryConsumeSnapshot()
     {
-        MetricsSnapshot snap;
+        long now = Stopwatch.GetTimestamp();
 
-        lock (snapshotLock)
-        {
-            if (!hasNewSnapshot)
-                return;
+        if (Stopwatch.GetElapsedTime(lastSnapshotTimestamp, now).TotalMilliseconds < SNAPSHOT_INTERVAL_MS)
+            return;
 
-            snap = pendingSnapshot;
-            hasNewSnapshot = false;
-        }
+        double elapsed = Stopwatch.GetElapsedTime(lastSnapshotTimestamp, now).TotalSeconds;
+        lastSnapshotTimestamp = now;
+
+        if (elapsed <= 0)
+            return;
+
+        MetricsSnapshot snap = metricsCollector.TakeSnapshot();
 
         activePeers.Value = snap.Transport.ActivePeers.ToString("N0");
         totalConnected.Value = snap.Transport.TotalPeersConnected.ToString("N0");
         totalDisconnected.Value = snap.Transport.TotalPeersDisconnected.ToString("N0");
-        bytesIn.Apply(snap.Transport.BytesReceived, ByteFormat.FormatRate);
-        bytesOut.Apply(snap.Transport.BytesSent, ByteFormat.FormatRate);
-        packetsIn.Apply(snap.Transport.PacketsReceived, v => v.ToString("N0"));
-        packetsOut.Apply(snap.Transport.PacketsSent, v => v.ToString("N0"));
-        unauthSkipped.Apply(snap.Transport.UnauthMessagesSkipped, v => v.ToString("N0"));
-        sendFailures.Apply(snap.Transport.SendFailures, v => v.ToString("N0"));
-        incomingQueue.Apply(snap.Transport.IncomingQueueDepth, v => v.ToString("N0"));
-        outgoingQueue.Apply(snap.Transport.OutgoingQueueDepth, v => v.ToString("N0"));
+
+        RateStats bytesReceivedRate = bytesReceivedTracker.Update(snap.Transport.TotalBytesReceived, elapsed);
+        RateStats bytesSentRate = bytesSentTracker.Update(snap.Transport.TotalBytesSent, elapsed);
+        RateStats packetsReceivedRate = packetsReceivedTracker.Update(snap.Transport.TotalPacketsReceived, elapsed);
+        RateStats packetsSentRate = packetsSentTracker.Update(snap.Transport.TotalPacketsSent, elapsed);
+        RateStats unauthRate = unauthSkippedTracker.Update(snap.Transport.TotalUnauthMessagesSkipped, elapsed);
+        RateStats failuresRate = sendFailuresTracker.Update(snap.Transport.TotalSendFailures, elapsed);
+        RateStats inQueueRate = incomingQueueDepthTracker.Record(snap.Transport.IncomingQueueDepth);
+        RateStats outQueueRate = outgoingQueueDepthTracker.Record(snap.Transport.OutgoingQueueDepth);
+
+        bytesIn.Apply(bytesReceivedRate, ByteFormat.FormatRate);
+        bytesOut.Apply(bytesSentRate, ByteFormat.FormatRate);
+        packetsIn.Apply(packetsReceivedRate, v => v.ToString("N0"));
+        packetsOut.Apply(packetsSentRate, v => v.ToString("N0"));
+        unauthSkipped.Apply(unauthRate, v => v.ToString("N0"));
+        sendFailures.Apply(failuresRate, v => v.ToString("N0"));
+        incomingQueue.Apply(inQueueRate, v => v.ToString("N0"));
+        outgoingQueue.Apply(outQueueRate, v => v.ToString("N0"));
 
         ShiftSample(activePeersChart.Values, snap.Transport.ActivePeers);
-        ShiftSample(bytesInSparkline.Values, snap.Transport.BytesReceived.PerSec);
-        ShiftSample(bytesOutSparkline.Values, snap.Transport.BytesSent.PerSec);
-        ShiftSample(packetsInSparkline.Values, snap.Transport.PacketsReceived.PerSec);
-        ShiftSample(packetsOutSparkline.Values, snap.Transport.PacketsSent.PerSec);
-        ShiftSample(unauthSkippedSparkline.Values, snap.Transport.UnauthMessagesSkipped.PerSec);
-        ShiftSample(sendFailuresSparkline.Values, snap.Transport.SendFailures.PerSec);
-        ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth.PerSec);
-        ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth.PerSec);
+        ShiftSample(bytesInSparkline.Values, bytesReceivedRate.PerSec);
+        ShiftSample(bytesOutSparkline.Values, bytesSentRate.PerSec);
+        ShiftSample(packetsInSparkline.Values, packetsReceivedRate.PerSec);
+        ShiftSample(packetsOutSparkline.Values, packetsSentRate.PerSec);
+        ShiftSample(unauthSkippedSparkline.Values, unauthRate.PerSec);
+        ShiftSample(sendFailuresSparkline.Values, failuresRate.PerSec);
+        ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth);
+        ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth);
 
-        incomingMessagesState.Apply(snap.IncomingMessages);
-        outgoingMessagesState.Apply(snap.OutgoingMessages);
+        // Per-message-type rates
+        var incomingRates = new Dictionary<ClientMessage.MessageOneofCase, RateStats>(incomingRateTrackers.Count);
+        foreach ((var type, var tracker) in incomingRateTrackers)
+            incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
+        incomingMessagesState.Apply(incomingRates);
+
+        var outgoingRates = new Dictionary<ServerMessage.MessageOneofCase, RateStats>(outgoingRateTrackers.Count);
+        foreach ((var type, var tracker) in outgoingRateTrackers)
+            outgoingRates[type] = tracker.Update(snap.OutgoingMessages.Read(type), elapsed);
+        outgoingMessagesState.Apply(outgoingRates);
     }
 
     private Visual BuildVisualTree()
@@ -225,7 +253,7 @@ public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvi
 
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
-            ).MaxHeight(() => Math.Max(5, Console.WindowHeight * 30 / 100))
+            ).MaxHeight(() => Math.Max(5, System.Console.WindowHeight * 30 / 100))
              .HorizontalAlignment(Align.Stretch);
 
         ScrollViewer metricsArea = new VStack(

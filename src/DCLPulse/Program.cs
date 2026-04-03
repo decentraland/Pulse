@@ -2,10 +2,10 @@ using DCL.Auth;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using Pulse;
-using Pulse.Dashboard;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
+using Pulse.Metrics.Console;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
@@ -95,24 +95,26 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
 
-bool dashboardEnabled = builder.Configuration.GetSection(DashboardOptions.SECTION_NAME)
-                               .GetValue<bool>(nameof(DashboardOptions.Enabled));
+var dashboardType = builder.Configuration.GetSection(MetricsOptions.SECTION_NAME)
+                          .GetValue<DashboardType>(nameof(MetricsOptions.Type));
 
-if (dashboardEnabled)
+builder.Services.Configure<MetricsOptions>(
+    builder.Configuration.GetSection(MetricsOptions.SECTION_NAME));
+
+builder.Services.AddSingleton<IMetricsCollector, MeterListenerMetricsCollector>();
+builder.Services.AddHostedService(sp => (MeterListenerMetricsCollector)sp.GetRequiredService<IMetricsCollector>());
+
+if (dashboardType == DashboardType.Console)
 {
     var logControl = new LogControl();
     var dashboardLoggerProvider = new DashboardLoggerProvider();
     builder.Services.AddSingleton(logControl);
     builder.Services.AddSingleton(dashboardLoggerProvider);
-    builder.Services.AddSingleton<ConsoleDashboard>();
-    builder.Services.AddSingleton<IDashboard>(sp => sp.GetRequiredService<ConsoleDashboard>());
-    builder.Services.AddHostedService(sp => sp.GetRequiredService<ConsoleDashboard>());
+    builder.Services.AddHostedService<ConsoleDashboard>();
     builder.Logging.AddProvider(dashboardLoggerProvider);
 }
 else
 {
-    builder.Services.AddSingleton<IDashboard, NullDashboard>();
-
     builder.Logging.AddZLoggerConsole(options =>
     {
         options.UsePlainTextFormatter(formatter =>
@@ -127,11 +129,9 @@ else
     });
 }
 
-builder.Services.AddHostedService<MetricsCollector>();
-
 builder.Services.Configure<HealthCheckOptions>(
     builder.Configuration.GetSection(HealthCheckOptions.SECTION_NAME));
-builder.Services.AddHostedService<HealthCheckService>();
+builder.Services.AddHostedService<HttpService>();
 
 builder.Services.Configure<ParcelEncoderOptions>(
     builder.Configuration.GetSection(ParcelEncoderOptions.SECTION_NAME));

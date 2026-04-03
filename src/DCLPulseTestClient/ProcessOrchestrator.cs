@@ -9,6 +9,10 @@ public static class ProcessOrchestrator
         int totalBots = options.BotCount;
         int processCount = (totalBots + botsPerProcess - 1) / botsPerProcess;
 
+        if (processCount <= 1)
+            throw new InvalidOperationException(
+                $"ProcessOrchestrator should not be used for {totalBots} bots with {botsPerProcess} per process (single process is sufficient).");
+
         Console.WriteLine($"Spawning {totalBots} bots across {processCount} processes ({botsPerProcess} per process)..");
 
         // Account creation must be sequential across all bots

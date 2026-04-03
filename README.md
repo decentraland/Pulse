@@ -42,6 +42,12 @@ To set `GenerateProto` from Rider:
 
 In practice the default (`true`) is correct for local development. The `false` value is used by Docker/CI builds that don't have the protocol repo available.
 
+## Metrics & Dashboard
+
+Pulse includes a real-time terminal dashboard for monitoring transport throughput, queue backpressure, and per-message-type rates during development. Enable it with `"Dashboard": { "Enabled": true }` in `appsettings.json`.
+
+See [docs/metrics.md](docs/metrics.md) for a full reference of all tracked metrics, how to interpret them, and how to add new ones.
+
 ## DCLPulseTestClient
 
 A headless test client that connects to the Pulse server as a bot player. Uses ENet over UDP with the same protocol as the Unity client. Supports running multiple bots from a single process for load testing. Useful for load testing, debugging server behavior, and verifying the protocol without launching the full Explorer.

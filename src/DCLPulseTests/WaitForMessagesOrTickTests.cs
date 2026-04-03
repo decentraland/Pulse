@@ -15,14 +15,12 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     Tests for the sync worker loop's signal-based wake behavior.
-///     Replaces the old WaitForMessagesOrTick tests — that method no longer exists.
 /// </summary>
 [TestFixture]
 public class WorkerSignalTests
 {
     private PeersManager manager;
-    private Channel<IncomingMessage> messageChannel;
-    private Channel<PeerLifeCycleEvent> lifeCycleChannel;
+    private Channel<IncomingEvent> eventChannel;
     private ITimeProvider timeProvider;
     private ManualResetEventSlim signal;
 
@@ -33,7 +31,7 @@ public class WorkerSignalTests
         timeProvider.MonotonicTime.Returns(0u);
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>()),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             new SnapshotBoard(100, 10),
@@ -46,10 +44,10 @@ public class WorkerSignalTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100));
+            new EmoteBoard(100),
+            new ClientMessageCounters(8));
 
-        messageChannel = Channel.CreateUnbounded<IncomingMessage>();
-        lifeCycleChannel = Channel.CreateUnbounded<PeerLifeCycleEvent>();
+        eventChannel = Channel.CreateUnbounded<IncomingEvent>();
         signal = new ManualResetEventSlim();
     }
 
@@ -64,29 +62,25 @@ public class WorkerSignalTests
     public void WakesOnSignal_WhenMessageArrives()
     {
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
-        simulation.BaseTickMs.Returns(5000u); // Very long tick so the worker would block
+        simulation.BaseTickMs.Returns(5000u);
 
         using var cts = new CancellationTokenSource();
         var sw = Stopwatch.StartNew();
 
-        // Start worker on background thread
         Task workerTask = Task.Factory.StartNew(
-            () => manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token),
+            () => manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token),
             TaskCreationOptions.LongRunning);
 
-        // Wait for worker to enter signal.Wait, then wake it with a message + signal
         Thread.Sleep(50);
-        messageChannel.Writer.TryWrite(new IncomingMessage(new PeerIndex(0), new ClientMessage()));
+        eventChannel.Writer.TryWrite(new IncomingEvent(new PeerIndex(0), new ClientMessage()));
         signal.Set();
 
-        // Let it process, then cancel
         Thread.Sleep(50);
         cts.Cancel();
-        signal.Set(); // Wake so it sees cancellation
+        signal.Set();
         workerTask.Wait(TimeSpan.FromSeconds(2));
         sw.Stop();
 
-        // Should have completed well before the 5-second tick deadline
         Assert.That(sw.ElapsedMilliseconds, Is.LessThan(1000));
     }
 
@@ -100,12 +94,11 @@ public class WorkerSignalTests
         var sw = Stopwatch.StartNew();
 
         Task workerTask = Task.Factory.StartNew(
-            () => manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token),
+            () => manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token),
             TaskCreationOptions.LongRunning);
 
-        // Send a lifecycle event and signal — worker should wake and process it
         Thread.Sleep(50);
-        lifeCycleChannel.Writer.TryWrite(new PeerLifeCycleEvent(new PeerIndex(0), PeerEventType.Connected));
+        eventChannel.Writer.TryWrite(IncomingEvent.Connected(new PeerIndex(0)));
         signal.Set();
 
         Thread.Sleep(50);
@@ -127,7 +120,6 @@ public class WorkerSignalTests
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(150u);
 
-        // MonotonicTime returns 0 on init, then real time for subsequent calls
         var initDone = false;
 
         timeProvider.MonotonicTime.Returns(_ =>
@@ -145,10 +137,9 @@ public class WorkerSignalTests
         cts.CancelAfter(500);
 
         var sw = Stopwatch.StartNew();
-        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
+        manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token);
         sw.Stop();
 
-        // Should have waited at least one tick period
         Assert.That(sw.ElapsedMilliseconds, Is.GreaterThanOrEqualTo(80));
     }
 
@@ -161,7 +152,7 @@ public class WorkerSignalTests
         using var cts = new CancellationTokenSource();
 
         Task workerTask = Task.Factory.StartNew(
-            () => manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token),
+            () => manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token),
             TaskCreationOptions.LongRunning);
 
         Thread.Sleep(50);
@@ -175,7 +166,7 @@ public class WorkerSignalTests
     }
 
     [Test]
-    public void DrainsBothChannels_WhenBothHaveData()
+    public void DrainsBothEventTypes_WhenBothInSameChannel()
     {
         IMessageHandler? handler = Substitute.For<IMessageHandler>();
 
@@ -185,7 +176,7 @@ public class WorkerSignalTests
         };
 
         var managerWithHandler = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>()),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             new SnapshotBoard(100, 10),
@@ -198,7 +189,8 @@ public class WorkerSignalTests
             handlers,
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100));
+            new EmoteBoard(100),
+            new ClientMessageCounters(8));
 
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(5000u);
@@ -208,28 +200,23 @@ public class WorkerSignalTests
 
         var peer = new PeerIndex(0);
 
-        // Lifecycle event arrives first (peer connects), then a message from that peer
-        lifeCycleChannel.Writer.TryWrite(new PeerLifeCycleEvent(peer, PeerEventType.Connected));
-
-        var msg = new ClientMessage { Input = new PlayerStateInput() };
-        messageChannel.Writer.TryWrite(new IncomingMessage(peer, msg));
+        // Connect arrives before message — ordering preserved in single channel
+        eventChannel.Writer.TryWrite(IncomingEvent.Connected(peer));
+        eventChannel.Writer.TryWrite(new IncomingEvent(peer, new ClientMessage { Input = new PlayerStateInput() }));
 
         Task workerTask = Task.Factory.StartNew(
-            () => managerWithHandler.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, localSignal, cts.Token),
+            () => managerWithHandler.RunWorker(0, eventChannel.Reader, simulation, localSignal, cts.Token),
             TaskCreationOptions.LongRunning);
 
-        // Give the worker time to drain both channels in the first iteration
         Thread.Sleep(100);
         cts.Cancel();
         localSignal.Set();
         workerTask.Wait(TimeSpan.FromSeconds(2));
 
-        // Lifecycle event created the peer state
         Dictionary<PeerIndex, PeerState> peers = managerWithHandler.peerStates[0];
         Assert.That(peers, Has.Count.EqualTo(1));
         Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_AUTH));
 
-        // Message was processed by the handler (peer existed because lifecycle ran first)
         handler.Received(1)
                .Handle(
                     Arg.Any<Dictionary<PeerIndex, PeerState>>(),

@@ -2,17 +2,19 @@ using DCL.Auth;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using Pulse;
+using Pulse.Dashboard;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using XenoAtom.Terminal.UI.Controls;
 using ZLogger;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 builder.Logging.ClearProviders();
-builder.Logging.AddZLoggerConsole();
 
 builder.Services.Configure<ENetTransportOptions>(
     builder.Configuration.GetSection(ENetTransportOptions.SECTION_NAME));
@@ -30,6 +32,8 @@ builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService
 builder.Services.AddSingleton<ITransport>(sp => sp.GetRequiredService<ENetHostedService>());
 builder.Services.AddHostedService<PeersManager>();
 builder.Services.AddSingleton<MessagePipe>();
+builder.Services.AddSingleton(new ClientMessageCounters(8));
+builder.Services.AddSingleton(new ServerMessageCounters(10));
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();
 builder.Services.AddSingleton<ResyncRequestHandler>();
@@ -90,6 +94,41 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
+
+bool dashboardEnabled = builder.Configuration.GetSection(DashboardOptions.SECTION_NAME)
+                               .GetValue<bool>(nameof(DashboardOptions.Enabled));
+
+if (dashboardEnabled)
+{
+    var logControl = new LogControl();
+    var dashboardLoggerProvider = new DashboardLoggerProvider();
+    builder.Services.AddSingleton(logControl);
+    builder.Services.AddSingleton(dashboardLoggerProvider);
+    builder.Services.AddSingleton<ConsoleDashboard>();
+    builder.Services.AddSingleton<IDashboard>(sp => sp.GetRequiredService<ConsoleDashboard>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ConsoleDashboard>());
+    builder.Logging.AddProvider(dashboardLoggerProvider);
+}
+else
+{
+    builder.Services.AddSingleton<IDashboard, NullDashboard>();
+
+    builder.Logging.AddZLoggerConsole(options =>
+    {
+        options.UsePlainTextFormatter(formatter =>
+        {
+            formatter.SetPrefixFormatter($"{0}{1}{2}: {3}\n      ",
+                (in template, in info) =>
+                {
+                    (string open, string close) = LogLevelStyle.GetAnsiEscape(info.LogLevel);
+                    template.Format(open, LogLevelStyle.GetPrefix(info.LogLevel), close, info.Category);
+                });
+        });
+    });
+}
+
+builder.Services.AddHostedService<MetricsCollector>();
+
 builder.Services.Configure<HealthCheckOptions>(
     builder.Configuration.GetSection(HealthCheckOptions.SECTION_NAME));
 builder.Services.AddHostedService<HealthCheckService>();

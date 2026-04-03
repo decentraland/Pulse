@@ -23,7 +23,7 @@ public partial class PeerSimulationTests
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage emoteMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
-        Assert.That(emoteMsg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(emoteMsg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(emoteMsg.Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
         Assert.That(emoteMsg.Message.EmoteStarted.ServerTick, Is.EqualTo(4200u));
         Assert.That(emoteMsg.Message.EmoteStarted.SubjectId, Is.EqualTo(subject.Value));
@@ -47,7 +47,7 @@ public partial class PeerSimulationTests
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage stopMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStopped);
-        Assert.That(stopMsg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(stopMsg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(stopMsg.Message.EmoteStopped.ServerTick, Is.EqualTo(5500u));
         Assert.That(stopMsg.Message.EmoteStopped.Reason, Is.EqualTo(EmoteStopReason.Cancelled));
     }

@@ -30,7 +30,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Success = false,
                     Error = "Invalid auth chain JSON",
                 },
-            }, ITransport.PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE));
 
             logger.LogInformation("Handshake validation failed: cannot parse auth-chain");
 
@@ -66,7 +66,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
             {
                 if (duplicatedPeer != from)
                 {
-                    transport.Disconnect(duplicatedPeer, ITransport.DisconnectReason.DuplicateSession);
+                    transport.Disconnect(duplicatedPeer, DisconnectReason.DUPLICATE_SESSION);
                     logger.LogInformation("Duplicated peer found {Wallet}, disconnecting peer {Peer}", result.UserAddress, duplicatedPeer);
                 }
             }
@@ -80,7 +80,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
                 {
                     Success = true,
                 },
-            }, ITransport.PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE));
 
             logger.LogInformation("Peer handshake accepted with wallet {Wallet} - peerId {Peer}", result.UserAddress, from);
         }
@@ -93,7 +93,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
                     Success = false,
                     Error = e.Message,
                 },
-            }, ITransport.PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE));
 
             logger.LogInformation("Handshake validation failed: {Error}", e.Message);
         }

@@ -1,4 +1,4 @@
-﻿using Decentraland.Pulse;
+using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse;
@@ -17,7 +17,7 @@ public class DrainPeerLifeCycleEventsTests
     private const uint MONOTONIC_TIME = 5000;
 
     private PeersManager manager;
-    private Channel<MessagePipe.PeerLifeCycleEvent> lifeCycleChannel;
+    private Channel<MessagePipe.IncomingEvent> eventChannel;
     private Dictionary<PeerIndex, PeerState> peers;
 
     [SetUp]
@@ -29,7 +29,7 @@ public class DrainPeerLifeCycleEventsTests
         var snapshotBoard = new SnapshotBoard(100, 10);
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>()),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
@@ -42,9 +42,10 @@ public class DrainPeerLifeCycleEventsTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100));
+            new EmoteBoard(100),
+            new ClientMessageCounters(8));
 
-        lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();
+        eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();
     }
 
@@ -58,9 +59,9 @@ public class DrainPeerLifeCycleEventsTests
     public void ConnectedEvent_AddsPeerAsPendingAuth()
     {
         var peerIndex = new PeerIndex(1);
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Connected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peerIndex));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers.ContainsKey(peerIndex), Is.True);
         Assert.That(peers[peerIndex].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_AUTH));
@@ -70,9 +71,9 @@ public class DrainPeerLifeCycleEventsTests
     public void ConnectedEvent_SetsTransportStateWithCurrentTime()
     {
         var peerIndex = new PeerIndex(1);
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Connected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peerIndex));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         PeerTransportState transport = peers[peerIndex].TransportState;
         Assert.That(transport.ConnectionTime, Is.EqualTo(MONOTONIC_TIME));
@@ -82,9 +83,9 @@ public class DrainPeerLifeCycleEventsTests
     public void DisconnectedEvent_SetsTransportStateWithCurrentTime()
     {
         var peerIndex = new PeerIndex(1);
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Disconnected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(peerIndex));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         PeerTransportState transport = peers[peerIndex].TransportState;
         Assert.That(transport.DisconnectionTime, Is.EqualTo(MONOTONIC_TIME));
@@ -99,9 +100,9 @@ public class DrainPeerLifeCycleEventsTests
         var existingState = new PeerState(PeerConnectionState.AUTHENTICATED);
         peers[peerIndex] = existingState;
 
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Disconnected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(peerIndex));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers[peerIndex].ConnectionState, Is.EqualTo(PeerConnectionState.DISCONNECTING));
         Assert.That(peers[peerIndex].TransportState.DisconnectionTime, Is.EqualTo(MONOTONIC_TIME));
@@ -112,9 +113,9 @@ public class DrainPeerLifeCycleEventsTests
     {
         var peerIndex = new PeerIndex(99);
 
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Disconnected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(peerIndex));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers.ContainsKey(peerIndex), Is.True);
         Assert.That(peers[peerIndex].ConnectionState, Is.EqualTo(PeerConnectionState.DISCONNECTING));
@@ -126,10 +127,10 @@ public class DrainPeerLifeCycleEventsTests
     {
         var peerIndex = new PeerIndex(1);
 
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Connected));
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peerIndex, MessagePipe.PeerEventType.Disconnected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peerIndex));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(peerIndex));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers[peerIndex].ConnectionState, Is.EqualTo(PeerConnectionState.DISCONNECTING));
         Assert.That(peers[peerIndex].TransportState.DisconnectionTime, Is.EqualTo(MONOTONIC_TIME));
@@ -142,11 +143,11 @@ public class DrainPeerLifeCycleEventsTests
         var peer1 = new PeerIndex(1);
         var peer2 = new PeerIndex(2);
 
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peer0, MessagePipe.PeerEventType.Connected));
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peer1, MessagePipe.PeerEventType.Connected));
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peer2, MessagePipe.PeerEventType.Connected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peer0));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peer1));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peer2));
 
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers, Has.Count.EqualTo(3));
         Assert.That(peers[peer0].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_AUTH));
@@ -157,7 +158,7 @@ public class DrainPeerLifeCycleEventsTests
     [Test]
     public void EmptyChannel_NoPeersModified()
     {
-        manager.DrainPeerLifeCycleEvents(lifeCycleChannel.Reader, peers, workerIndex: 0);
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers, Is.Empty);
     }

@@ -27,7 +27,7 @@ public partial class PeerSimulationTests
 
         OutgoingMessage msg = DrainSingleMessage();
         Assert.That(msg.To, Is.EqualTo(observer));
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateFull));
         Assert.That(msg.Message.PlayerStateFull.SubjectId, Is.EqualTo(subject.Value));
         Assert.That(msg.Message.PlayerStateFull.Sequence, Is.EqualTo(RING_CAPACITY + 5));
@@ -51,7 +51,7 @@ public partial class PeerSimulationTests
 
         OutgoingMessage msg = DrainSingleMessage();
         Assert.That(msg.To, Is.EqualTo(observer));
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
         Assert.That(msg.Message.PlayerStateDelta.NewSeq, Is.EqualTo(3u));
         Assert.That(msg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(5f));
@@ -104,7 +104,7 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 2);
 
         OutgoingMessage msg = DrainSingleMessage();
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.UNRELIABLE_SEQUENCED));
         Assert.That(msg.Message.PlayerStateDelta.NewSeq, Is.EqualTo(3u));
 
         // Only Y changed from seq 2 to seq 3
@@ -214,7 +214,7 @@ public partial class PeerSimulationTests
             m.Message.MessageCase is ServerMessage.MessageOneofCase.PlayerStateDelta
                 or ServerMessage.MessageOneofCase.PlayerStateFull);
 
-        Assert.That(resyncMsg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(resyncMsg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
     }
 
     [Test]
@@ -245,7 +245,7 @@ public partial class PeerSimulationTests
             m.Message.MessageCase is ServerMessage.MessageOneofCase.PlayerStateDelta
                 or ServerMessage.MessageOneofCase.PlayerStateFull);
 
-        Assert.That(resyncMsg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(resyncMsg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
     }
 
     [Test]
@@ -268,6 +268,6 @@ public partial class PeerSimulationTests
         Assert.That(messagePipe.TryReadOutgoingMessage(out OutgoingMessage msg), Is.True,
             "No response sent — client is stuck in resync-pending mode because the targeted delta was null");
 
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
     }
 }

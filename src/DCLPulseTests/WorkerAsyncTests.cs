@@ -15,8 +15,7 @@ namespace DCLPulseTests;
 public class WorkerAsyncTests
 {
     private PeersManager manager;
-    private Channel<MessagePipe.IncomingMessage> messageChannel;
-    private Channel<MessagePipe.PeerLifeCycleEvent> lifeCycleChannel;
+    private Channel<MessagePipe.IncomingEvent> eventChannel;
     private ITimeProvider timeProvider;
     private ManualResetEventSlim signal;
 
@@ -29,7 +28,7 @@ public class WorkerAsyncTests
         var snapshotBoard = new SnapshotBoard(100, 10);
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>()),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
@@ -42,10 +41,10 @@ public class WorkerAsyncTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100));
+            new EmoteBoard(100),
+            new ClientMessageCounters(8));
 
-        messageChannel = Channel.CreateUnbounded<MessagePipe.IncomingMessage>();
-        lifeCycleChannel = Channel.CreateUnbounded<MessagePipe.PeerLifeCycleEvent>();
+        eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         signal = new ManualResetEventSlim();
     }
 
@@ -65,15 +64,15 @@ public class WorkerAsyncTests
         var peer0 = new PeerIndex(0);
         var peer1 = new PeerIndex(1);
 
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peer0, MessagePipe.PeerEventType.Connected));
-        lifeCycleChannel.Writer.TryWrite(new MessagePipe.PeerLifeCycleEvent(peer1, MessagePipe.PeerEventType.Connected));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peer0));
+        eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peer1));
 
         // Pre-cancelled token: the while-loop body never executes,
         // but the post-loop drain still processes buffered events.
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
+        manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token);
 
         Dictionary<PeerIndex, PeerState> peers = manager.peerStates[0];
         Assert.That(peers, Has.Count.EqualTo(2));
@@ -90,11 +89,6 @@ public class WorkerAsyncTests
         using var cts = new CancellationTokenSource();
         var callIndex = 0;
 
-        // MonotonicTime call sequence:
-        // call 0: init → nextTickTime = 0 + 50 = 50
-        // call 1: loop check → now = 100 >= 50 → tick fires, nextTickTime = 150, remaining = 50
-        //         signal.Wait(50) blocks, but MonotonicTime callback sets signal to skip waits
-        // call 2: loop check → now = 200 >= 150 → tick fires, then cancel
         timeProvider.MonotonicTime.Returns(_ =>
         {
             var value = (uint)(callIndex * 100);
@@ -103,13 +97,12 @@ public class WorkerAsyncTests
             if (callIndex >= 3)
                 cts.Cancel();
 
-            // Wake the worker so it doesn't block in signal.Wait
             signal.Set();
 
             return value;
         });
 
-        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
+        manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token);
 
         simulation.Received()
                   .SimulateTick(
@@ -123,13 +116,12 @@ public class WorkerAsyncTests
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(50u);
 
-        // MonotonicTime always returns 0 → now (0) never reaches nextTickTime (50)
         timeProvider.MonotonicTime.Returns(0u);
 
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(200);
 
-        manager.RunWorker(0, messageChannel.Reader, lifeCycleChannel.Reader, simulation, signal, cts.Token);
+        manager.RunWorker(0, eventChannel.Reader, simulation, signal, cts.Token);
 
         simulation.DidNotReceive()
                   .SimulateTick(

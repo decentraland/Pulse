@@ -44,7 +44,7 @@ public class SelfMirrorTests
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
         spatialGrid = new SpatialGrid(50, MAX_PEERS);
-        messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>());
+        messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
         areaOfInterest = Substitute.For<IAreaOfInterest>();
         visibleSubjects = new List<(PeerIndex, PeerViewSimulationTier)>();
 
@@ -125,7 +125,7 @@ public class SelfMirrorTests
 
         OutgoingMessage msg = messages[0];
         Assert.That(msg.To, Is.EqualTo(observer));
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.RELIABLE));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
         Assert.That(msg.Message.PlayerJoined.UserId, Is.EqualTo(PeerSimulation.SELF_MIRROR_WALLET_ID));
         Assert.That(msg.Message.PlayerJoined.State.SubjectId, Is.EqualTo(observer.Value));
@@ -146,7 +146,7 @@ public class SelfMirrorTests
 
         OutgoingMessage msg = messages[0];
         Assert.That(msg.To, Is.EqualTo(observer));
-        Assert.That(msg.PacketMode, Is.EqualTo(ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.UNRELIABLE_SEQUENCED));
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
     }
 

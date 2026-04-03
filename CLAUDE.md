@@ -181,6 +181,21 @@ ENet maintains `peer->roundTripTime` automatically on both client and server sid
 
 ---
 
+## Code Convention
+
+Authoritative source: `DCLPulse.sln.DotSettings` (Rider code style settings checked into the repo).
+
+Key rules:
+- **Instance fields:** camelCase, no prefix — `messagePipe`, `workerCount`
+- **Constants and static readonly fields:** UPPER_SNAKE_CASE — `SECTION_NAME`, `COUNT`, `RELIABLE`, `TIER_0`
+- **Types:** PascalCase — `PeersManager`, `ENetChannel`
+- **Local variables and parameters:** camelCase — `peerIndex`, `stoppingToken`
+- **Primary constructors** for DI when constructor body is trivial; regular constructors when initialization is complex
+- **File-scoped namespaces** — `namespace Pulse.X;`
+- **`var`** when type is clear from context
+
+When in doubt, check 1–2 nearby files in the same directory.
+
 ## Tests Approach
 
 - Use NSubstitute instead of Fake/Null implementations

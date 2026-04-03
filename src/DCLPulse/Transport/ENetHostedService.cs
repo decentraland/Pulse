@@ -2,6 +2,7 @@ using ENet;
 using Google.Protobuf;
 using Microsoft.Extensions.Options;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Peers;
 using Host = ENet.Host;
 
@@ -86,8 +87,8 @@ public sealed class ENetHostedService(
 
             ENetChannel channel = msg.PacketMode switch
                                   {
-                                      ITransport.PacketMode.RELIABLE => ENetChannel.RELIABLE,
-                                      ITransport.PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
+                                      PacketMode.RELIABLE => ENetChannel.RELIABLE,
+                                      PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
                                       _ => ENetChannel.UNRELIABLE_UNSEQUENCED,
                                   };
 
@@ -102,7 +103,13 @@ public sealed class ENetHostedService(
         message.WriteTo(span);
         var packet = default(Packet);
         packet.Create(span, channel.PacketMode);
-        peer.Send(channel.ChannelId, ref packet);
+        int result = peer.Send(channel.ChannelId, ref packet);
+
+        if (result < 0)
+            PulseMetrics.Transport.SEND_FAILURES.Add(1);
+
+        PulseMetrics.Transport.PACKETS_SENT.Add(1);
+        PulseMetrics.Transport.BYTES_SENT.Add(size);
     }
 
     private void HandleEvent(ref Event netEvent)
@@ -117,6 +124,9 @@ public sealed class ENetHostedService(
 
                 messagePipe.OnPeerConnected(peerIndex);
 
+                PulseMetrics.Transport.PEERS_CONNECTED.Add(1);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(1);
+
                 logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
 
@@ -125,6 +135,10 @@ public sealed class ENetHostedService(
             case EventType.Disconnect:
                 connectedPeers.Remove(peerIndex);
                 messagePipe.OnPeerDisconnected(peerIndex);
+
+                PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+
                 logger.LogDebug("Peer disconnected: id={ID} data={Data}.",
                     netEvent.Peer.ID, netEvent.Data);
 
@@ -133,16 +147,23 @@ public sealed class ENetHostedService(
             case EventType.Timeout:
                 connectedPeers.Remove(peerIndex);
                 messagePipe.OnPeerDisconnected(peerIndex);
+
+                PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+
                 logger.LogDebug("Peer timed out: id={ID}.", netEvent.Peer.ID);
                 break;
 
             case EventType.Receive:
             {
                 using Packet _ = netEvent.Packet;
+                int packetLength = netEvent.Packet.Length;
                 netEvent.Packet.CopyTo(receiveBuffer);
 
-                // logger.LogDebug("Received {PacketSize} from id={ID}.", netEvent.Packet.Length, netEvent.Peer.ID);
-                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, netEvent.Packet.Length), peerIndex));
+                PulseMetrics.Transport.PACKETS_RECEIVED.Add(1);
+                PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength);
+
+                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, packetLength), peerIndex));
 
                 break;
             }
@@ -156,7 +177,7 @@ public sealed class ENetHostedService(
         logger.LogInformation("ENet deinitialized.");
     }
 
-    public void Disconnect(PeerIndex pi, ITransport.DisconnectReason reason)
+    public void Disconnect(PeerIndex pi, DisconnectReason reason)
     {
         if (!connectedPeers.TryGetValue(pi, out Peer peer)) return;
 

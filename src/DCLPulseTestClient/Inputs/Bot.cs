@@ -41,6 +41,9 @@ public class Bot : IInputReader
         this.jumpMinInterval = jumpMinInterval;
         this.jumpMaxInterval = jumpMaxInterval;
         jumpCountdown = NextJumpDelay();
+
+        // Stagger initial offsets so bots don't all emote on the same frame
+        emoteElapsed = random.NextSingle() * emoteInterval;
     }
 
     public void Update(float deltaTime, InputState state)
@@ -54,7 +57,7 @@ public class Bot : IInputReader
         if (emoteElapsed >= emoteInterval)
         {
             emoteElapsed = 0f;
-            emoteCooldownRemaining = emoteCooldown;
+            emoteCooldownRemaining = emoteCooldown * (0.5f + random.NextSingle());
             if (emotes.Length > 0)
                 state.EmoteId = emotes[random.Next(emotes.Length)];
             return;

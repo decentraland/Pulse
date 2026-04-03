@@ -29,7 +29,8 @@ using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 
-namespace ENet;
+namespace ENet
+{
 
 [Flags]
 public enum PacketFlags
@@ -151,7 +152,7 @@ public struct Address
     {
         var ip = new StringBuilder(1025);
 
-        if (Native.enet_address_get_ip(ref nativeAddress, ip, ip.Capacity) != 0)
+        if (Native.enet_address_get_ip(ref nativeAddress, ip, (IntPtr)ip.Capacity) != 0)
             return string.Empty;
 
         return ip.ToString();
@@ -169,7 +170,7 @@ public struct Address
     {
         var hostName = new StringBuilder(1025);
 
-        if (Native.enet_address_get_hostname(ref nativeAddress, hostName, hostName.Capacity) != 0)
+        if (Native.enet_address_get_hostname(ref nativeAddress, hostName, (IntPtr)hostName.Capacity) != 0)
             return string.Empty;
 
         return hostName.ToString();
@@ -343,12 +344,12 @@ public struct Packet : IDisposable
         if (length < 0 || length > data.Length)
             throw new ArgumentOutOfRangeException("length");
 
-        NativeData = Native.enet_packet_create(data, length, flags);
+        NativeData = Native.enet_packet_create(data, (IntPtr)length, flags);
     }
 
     public unsafe void Create(Span<byte> data, PacketFlags flags)
     {
-        fixed (byte* ptr = data) { NativeData = Native.enet_packet_create((IntPtr)ptr, data.Length, flags); }
+        fixed (byte* ptr = data) { NativeData = Native.enet_packet_create((IntPtr)ptr, (IntPtr)data.Length, flags); }
     }
 
     public void Create(IntPtr data, int length, PacketFlags flags)
@@ -359,7 +360,7 @@ public struct Packet : IDisposable
         if (length < 0)
             throw new ArgumentOutOfRangeException("length");
 
-        NativeData = Native.enet_packet_create(data, length, flags);
+        NativeData = Native.enet_packet_create(data, (IntPtr)length, flags);
     }
 
     public void Create(byte[] data, int offset, int length, PacketFlags flags)
@@ -373,7 +374,7 @@ public struct Packet : IDisposable
         if (length < 0 || length > data.Length)
             throw new ArgumentOutOfRangeException(nameof(length));
 
-        NativeData = Native.enet_packet_create_offset(data, length, offset, flags);
+        NativeData = Native.enet_packet_create_offset(data, (IntPtr)length, (IntPtr)offset, flags);
     }
 
     public void Create(IntPtr data, int offset, int length, PacketFlags flags)
@@ -387,7 +388,7 @@ public struct Packet : IDisposable
         if (length < 0)
             throw new ArgumentOutOfRangeException("length");
 
-        NativeData = Native.enet_packet_create_offset(data, length, offset, flags);
+        NativeData = Native.enet_packet_create_offset(data, (IntPtr)length, (IntPtr)offset, flags);
     }
 
     public void CopyTo(byte[] destination, int startPos = 0)
@@ -541,9 +542,9 @@ public class Host : IDisposable
         {
             ENetAddress nativeAddress = address.Value.NativeData;
 
-            NativeData = Native.enet_host_create(ref nativeAddress, peerLimit, channelLimit, incomingBandwidth, outgoingBandwidth, bufferSize);
+            NativeData = Native.enet_host_create(ref nativeAddress, (IntPtr)peerLimit, (IntPtr)channelLimit, incomingBandwidth, outgoingBandwidth, bufferSize);
         }
-        else { NativeData = Native.enet_host_create(IntPtr.Zero, peerLimit, channelLimit, incomingBandwidth, outgoingBandwidth, bufferSize); }
+        else { NativeData = Native.enet_host_create(IntPtr.Zero, (IntPtr)peerLimit, (IntPtr)channelLimit, incomingBandwidth, outgoingBandwidth, bufferSize); }
 
         if (NativeData == IntPtr.Zero)
             throw new InvalidOperationException("Host creation call failed");
@@ -597,7 +598,7 @@ public class Host : IDisposable
                 }
             }
 
-            Native.enet_host_broadcast_selective(NativeData, channelID, packet.NativeData, nativePeers, nativeCount);
+            Native.enet_host_broadcast_selective(NativeData, channelID, packet.NativeData, nativePeers, (IntPtr)nativeCount);
         }
 
         packet.NativeData = IntPtr.Zero;
@@ -635,7 +636,7 @@ public class Host : IDisposable
         ThrowIfChannelsExceeded(channelLimit);
 
         ENetAddress nativeAddress = address.NativeData;
-        var peer = new Peer(Native.enet_host_connect(NativeData, ref nativeAddress, channelLimit, data));
+        var peer = new Peer(Native.enet_host_connect(NativeData, ref nativeAddress, (IntPtr)channelLimit, data));
 
         if (peer.NativeData == IntPtr.Zero)
             throw new InvalidOperationException("Host connect call failed");
@@ -678,7 +679,7 @@ public class Host : IDisposable
         ThrowIfNotCreated();
         ThrowIfChannelsExceeded(channelLimit);
 
-        Native.enet_host_channel_limit(NativeData, channelLimit);
+        Native.enet_host_channel_limit(NativeData, (IntPtr)channelLimit);
     }
 
     public void SetMaxDuplicatePeers(ushort number)
@@ -746,7 +747,7 @@ public struct Peer
 
             byte[] ip = ArrayPool.GetByteBuffer();
 
-            if (Native.enet_peer_get_ip(NativeData, ip, ip.Length) == 0)
+            if (Native.enet_peer_get_ip(NativeData, ip, (IntPtr)ip.Length) == 0)
                 return Encoding.ASCII.GetString(ip, 0, ip.StringLength());
 
             return string.Empty;
@@ -1270,4 +1271,5 @@ internal static class Native
 
     [DllImport(nativeLibrary, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void enet_peer_reset(IntPtr peer);
+}
 }

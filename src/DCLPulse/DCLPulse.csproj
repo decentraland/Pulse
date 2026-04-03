@@ -20,16 +20,18 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <InternalsVisibleTo Include="DCLPulseTests"/>
+        <InternalsVisibleTo Include="DCLPulseTests" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3"/>
-        <PackageReference Include="ZLogger" Version="2.5.10"/>
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
+        <PackageReference Include="XenoAtom.Terminal.UI" Version="2.0.2" />
+        <PackageReference Include="ZLogger" Version="2.5.10" />
     </ItemGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\DCLAuth\DCLAuth.csproj" />
+        <ProjectReference Include="..\DCLPulse.Transport.Shared\DCLPulse.Transport.Shared.csproj" />
         <ProjectReference Include="..\Protocol\Protocol.csproj" />
     </ItemGroup>
 

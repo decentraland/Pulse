@@ -64,6 +64,17 @@ public partial class PulseMultiplayerService(
         return subscriber.Channel.Reader.ReadAllAsync(ct);
     }
 
+    public IAsyncEnumerable<ServerMessage> SubscribeAllAsync(CancellationToken ct,
+        params ServerMessage.MessageOneofCase[] types)
+    {
+        var subscriber = new BroadcastSubscriber();
+
+        foreach (ServerMessage.MessageOneofCase type in types)
+            subscribers.Add(type, subscriber);
+
+        return subscriber.Channel.Reader.ReadAllAsync(ct);
+    }
+
     private async Task RouteIncomingMessagesAsync(CancellationToken ct)
     {
         await foreach (MessagePipe.IncomingMessage message in pipe.ReadIncomingMessagesAsync(ct))

@@ -3,6 +3,7 @@ using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Numerics;
+using static Pulse.Peers.DiffComparison;
 
 namespace Pulse.Messaging;
 
@@ -14,8 +15,6 @@ public class PlayerStateInputHandler(
     ParcelEncoder parcelEncoder)
     : RuntimePacketHandlerBase<PlayerStateInputHandler>(logger), IMessageHandler
 {
-    private const float TOLERANCE = 0.001f;
-
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
         if (SkipFromUnauthorizedPeer(peers, from, message, out _))
@@ -69,10 +68,4 @@ public class PlayerStateInputHandler(
         // Ensures that the first movement input after a teleport is always published,
         // even if the position/state values happen to be identical
         && !current.IsTeleport;
-
-    private static bool FloatEquals(in float a, in float b) =>
-        Math.Abs(a - b) < TOLERANCE;
-
-    private static bool FloatEquals(float? a, float? b, float tolerance = TOLERANCE) =>
-        (!a.HasValue && !b.HasValue) || (a.HasValue && b.HasValue && Math.Abs(a.Value - b.Value) < tolerance);
 }

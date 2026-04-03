@@ -1,0 +1,365 @@
+using Decentraland.Pulse;
+using Pulse.Formatting;
+using Pulse.Metrics;
+using XenoAtom.Terminal;
+using XenoAtom.Terminal.UI;
+using XenoAtom.Terminal.UI.Collections;
+using XenoAtom.Terminal.UI.Controls;
+using XenoAtom.Terminal.UI.Styling;
+
+namespace Pulse.Dashboard;
+
+/// <summary>
+///     Fullscreen terminal dashboard powered by XenoAtom.Terminal.UI.
+///     Runs <see cref="TerminalExtensions.Run" /> on a dedicated background thread.
+///     <see cref="MetricsCollector" /> pushes snapshots via <see cref="Update" />
+///     (called from a ThreadPool timer); the onUpdate callback (running on the UI thread
+///     at ~66 Hz) copies new data into reactive <see cref="State{T}" /> objects and sparkline
+///     buffers only when a new snapshot is available.
+///     Logs are captured by <see cref="DashboardLoggerProvider" /> and displayed in an
+///     embedded <see cref="LogControl" /> panel.
+/// </summary>
+public sealed class ConsoleDashboard(LogControl logControl, DashboardLoggerProvider loggerProvider) : IDashboard, IHostedService
+{
+    private const int SPARKLINE_MAX_SAMPLES = 120; // 60 seconds at 500ms interval
+
+    // Fixed column widths — consistent across all tables.
+    private const int COL_LABEL = 20;
+    private const int COL_VALUE = 12;
+    private const int COL_PERCENTILE = 12;
+
+    // Color groups — inbound (receiving) vs outbound (sending) vs peers vs backpressure
+    private static readonly Color COLOR_PEERS = Colors.MediumPurple;
+    private static readonly Color COLOR_INBOUND = Colors.DodgerBlue;
+    private static readonly Color COLOR_OUTBOUND = Colors.Coral;
+    private static readonly Color COLOR_BACKPRESSURE = Colors.Yellow;
+    private static readonly Color COLOR_ERROR = Colors.Red;
+
+    private static readonly SparklineStyle STYLE_PEERS = SparklineStyle.Default with
+    {
+        Style = Style.None.WithForeground(COLOR_PEERS),
+    };
+
+    private static readonly SparklineStyle STYLE_INBOUND = SparklineStyle.Default with
+    {
+        Style = Style.None.WithForeground(COLOR_INBOUND),
+    };
+
+    private static readonly SparklineStyle STYLE_OUTBOUND = SparklineStyle.Default with
+    {
+        Style = Style.None.WithForeground(COLOR_OUTBOUND),
+    };
+
+    private static readonly SparklineStyle STYLE_BACKPRESSURE = SparklineStyle.Default with
+    {
+        Style = Style.None.WithForeground(COLOR_BACKPRESSURE),
+    };
+
+    private static readonly SparklineStyle STYLE_ERROR = SparklineStyle.Default with
+    {
+        Style = Style.None.WithForeground(COLOR_ERROR),
+    };
+
+    // Per-message-type display config — single source of truth for labels and colors.
+    private static readonly MessageTableConfig<ClientMessage.MessageOneofCase> INCOMING_MESSAGES_CONFIG = new ("Incoming Messages",
+    [
+        (ClientMessage.MessageOneofCase.Handshake, "Handshake", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.Input, "Input", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.Resync, "Resync", STYLE_BACKPRESSURE),
+        (ClientMessage.MessageOneofCase.ProfileAnnouncement, "ProfileAnnouncement", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.EmoteStart, "EmoteStart", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.EmoteStop, "EmoteStop", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.Teleport, "Teleport", STYLE_INBOUND),
+    ]);
+
+    private static readonly MessageTableConfig<ServerMessage.MessageOneofCase> OUTGOING_MESSAGES_CONFIG = new ("Outgoing Messages",
+    [
+        (ServerMessage.MessageOneofCase.Handshake, "Handshake", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.PlayerStateFull, "PlayerStateFull", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.PlayerStateDelta, "PlayerStateDelta", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.PlayerJoined, "PlayerJoined", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.PlayerLeft, "PlayerLeft", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced, "ProfileVersion", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.EmoteStarted, "EmoteStarted", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.EmoteStopped, "EmoteStopped", STYLE_OUTBOUND),
+        (ServerMessage.MessageOneofCase.Teleported, "Teleported", STYLE_OUTBOUND),
+    ]);
+
+    private readonly object snapshotLock = new ();
+
+    // Reactive state — written on UI thread inside onUpdate callback.
+    private readonly State<string> activePeers = new ("0");
+    private readonly State<string> totalConnected = new ("0");
+    private readonly State<string> totalDisconnected = new ("0");
+    private readonly RateStatsView bytesIn = new ();
+    private readonly RateStatsView bytesOut = new ();
+    private readonly RateStatsView packetsIn = new ();
+    private readonly RateStatsView packetsOut = new ();
+    private readonly RateStatsView unauthSkipped = new ();
+    private readonly RateStatsView sendFailures = new ();
+    private readonly RateStatsView incomingQueue = new ();
+    private readonly RateStatsView outgoingQueue = new ();
+
+    // Per-message-type views
+    private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
+    private readonly MessageTableState<ServerMessage.MessageOneofCase> outgoingMessagesState = new (OUTGOING_MESSAGES_CONFIG);
+
+    // Charts — pre-filled to SPARKLINE_MAX_SAMPLES so the layout size is constant from the start.
+    private readonly Sparkline activePeersChart = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline bytesInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline bytesOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline packetsInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline packetsOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline unauthSkippedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sendFailuresSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline incomingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline outgoingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+
+    private MetricsSnapshot pendingSnapshot;
+    private bool hasNewSnapshot;
+
+    private Thread? uiThread;
+    private volatile bool stopping;
+
+    public void Update(MetricsSnapshot snapshot)
+    {
+        lock (snapshotLock)
+        {
+            pendingSnapshot = snapshot;
+            hasNewSnapshot = true;
+        }
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        uiThread = new Thread(RunUi)
+        {
+            Name = "Dashboard",
+            IsBackground = true,
+        };
+
+        uiThread.Start();
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        stopping = true;
+        uiThread?.Join(TimeSpan.FromSeconds(2));
+        return Task.CompletedTask;
+    }
+
+    private void RunUi()
+    {
+        Visual visual = BuildVisualTree();
+
+        Terminal.Run(visual, () =>
+        {
+            if (stopping)
+                return TerminalLoopResult.Stop;
+
+            ConsumeSnapshot();
+            loggerProvider.DrainTo(logControl);
+            return TerminalLoopResult.Continue;
+        });
+    }
+
+    private void ConsumeSnapshot()
+    {
+        MetricsSnapshot snap;
+
+        lock (snapshotLock)
+        {
+            if (!hasNewSnapshot)
+                return;
+
+            snap = pendingSnapshot;
+            hasNewSnapshot = false;
+        }
+
+        activePeers.Value = snap.Transport.ActivePeers.ToString("N0");
+        totalConnected.Value = snap.Transport.TotalPeersConnected.ToString("N0");
+        totalDisconnected.Value = snap.Transport.TotalPeersDisconnected.ToString("N0");
+        bytesIn.Apply(snap.Transport.BytesReceived, ByteFormat.FormatRate);
+        bytesOut.Apply(snap.Transport.BytesSent, ByteFormat.FormatRate);
+        packetsIn.Apply(snap.Transport.PacketsReceived, v => v.ToString("N0"));
+        packetsOut.Apply(snap.Transport.PacketsSent, v => v.ToString("N0"));
+        unauthSkipped.Apply(snap.Transport.UnauthMessagesSkipped, v => v.ToString("N0"));
+        sendFailures.Apply(snap.Transport.SendFailures, v => v.ToString("N0"));
+        incomingQueue.Apply(snap.Transport.IncomingQueueDepth, v => v.ToString("N0"));
+        outgoingQueue.Apply(snap.Transport.OutgoingQueueDepth, v => v.ToString("N0"));
+
+        ShiftSample(activePeersChart.Values, snap.Transport.ActivePeers);
+        ShiftSample(bytesInSparkline.Values, snap.Transport.BytesReceived.PerSec);
+        ShiftSample(bytesOutSparkline.Values, snap.Transport.BytesSent.PerSec);
+        ShiftSample(packetsInSparkline.Values, snap.Transport.PacketsReceived.PerSec);
+        ShiftSample(packetsOutSparkline.Values, snap.Transport.PacketsSent.PerSec);
+        ShiftSample(unauthSkippedSparkline.Values, snap.Transport.UnauthMessagesSkipped.PerSec);
+        ShiftSample(sendFailuresSparkline.Values, snap.Transport.SendFailures.PerSec);
+        ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth.PerSec);
+        ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth.PerSec);
+
+        incomingMessagesState.Apply(snap.IncomingMessages);
+        outgoingMessagesState.Apply(snap.OutgoingMessages);
+    }
+
+    private Visual BuildVisualTree()
+    {
+        var metricsTable = new Table(
+            TableHeaders(),
+            [
+                [new TextBlock("Active Peers").MinWidth(COL_LABEL), new TextBlock(() => activePeers.Value).MinWidth(COL_VALUE), "", "", "", activePeersChart.Style(STYLE_PEERS)],
+                [new TextBlock("Total Connected"), new TextBlock(() => totalConnected.Value), "", "", "", ""],
+                [new TextBlock("Total Disconnected"), new TextBlock(() => totalDisconnected.Value), "", "", "", ""],
+                RateStatsRow("Bytes In/s", bytesIn, bytesInSparkline.Style(STYLE_INBOUND), stacked: true),
+                RateStatsRow("Bytes Out/s", bytesOut, bytesOutSparkline.Style(STYLE_OUTBOUND), stacked: true),
+                RateStatsRow("Packets In/s", packetsIn, packetsInSparkline.Style(STYLE_INBOUND)),
+                RateStatsRow("Packets Out/s", packetsOut, packetsOutSparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Unauth Skipped", unauthSkipped, unauthSkippedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Send Failures", sendFailures, sendFailuresSparkline.Style(STYLE_ERROR)),
+                RateStatsRow("Incoming Queue", incomingQueue, incomingQueueSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Outgoing Queue", outgoingQueue, outgoingQueueSparkline.Style(STYLE_BACKPRESSURE)),
+            ]);
+
+        var transport = new Group("Transport", metricsTable);
+
+        Group logs = new Group("Logs",
+                logControl.FollowTail(true).MaxCapacity(1000).Stretch()
+            ).MaxHeight(() => Math.Max(5, Console.WindowHeight * 30 / 100))
+             .HorizontalAlignment(Align.Stretch);
+
+        ScrollViewer metricsArea = new VStack(
+                transport,
+                incomingMessagesState.BuildGroup(),
+                outgoingMessagesState.BuildGroup()
+            ).Spacing(1)
+             .Scrollable();
+
+        return new VStack(metricsArea, logs).Spacing(1);
+    }
+
+    /// <summary>
+    ///     Shared table header row with fixed column widths — reused by all tables.
+    /// </summary>
+    private static Visual[] TableHeaders() =>
+    [
+        new TextBlock("Metric").MinWidth(COL_LABEL),
+        new TextBlock("Value").MinWidth(COL_VALUE),
+        new TextBlock("P50").MinWidth(COL_PERCENTILE),
+        new TextBlock("P95").MinWidth(COL_PERCENTILE),
+        new TextBlock("P99").MinWidth(COL_PERCENTILE),
+        new TextBlock("Last 60s"),
+    ];
+
+    private static Visual[] RateStatsRow(string label, RateStatsView view, Visual sparkline, bool stacked = false) =>
+    [
+        new TextBlock(label).MinWidth(COL_LABEL),
+        new TextBlock(() => view.PerSec.Value).MinWidth(COL_VALUE),
+        PercentileCell(view.P50Window, view.P50Lifetime, stacked).MinWidth(COL_PERCENTILE),
+        PercentileCell(view.P95Window, view.P95Lifetime, stacked).MinWidth(COL_PERCENTILE),
+        PercentileCell(view.P99Window, view.P99Lifetime, stacked).MinWidth(COL_PERCENTILE),
+        sparkline,
+    ];
+
+    /// <summary>
+    ///     Renders a percentile cell. When <paramref name="stacked"/> is true (byte-formatted rows),
+    ///     the lifetime value is on a second line to avoid overflow. Otherwise both are inline.
+    /// </summary>
+    private static Visual PercentileCell(State<string> window, State<string> lifetime, bool stacked) =>
+        stacked
+            ? new VStack(
+                new Markup(() => $"{window.Value}"),
+                new Markup(() => $"[gray]({lifetime.Value})[/]"))
+            : new Markup(() => $"{window.Value} [gray]({lifetime.Value})[/]");
+
+    private static void ShiftSample(BindableList<double> values, double value)
+    {
+        values.RemoveAt(0);
+        values.Add(value);
+    }
+
+    /// <summary>
+    ///     Groups the reactive state strings for a single <see cref="RateStats" /> metric.
+    ///     Each percentile level has a rolling window and lifetime value.
+    /// </summary>
+    private sealed class RateStatsView
+    {
+        public readonly State<string> PerSec = new ("-");
+        public readonly State<string> P50Window = new ("-");
+        public readonly State<string> P50Lifetime = new ("-");
+        public readonly State<string> P95Window = new ("-");
+        public readonly State<string> P95Lifetime = new ("-");
+        public readonly State<string> P99Window = new ("-");
+        public readonly State<string> P99Lifetime = new ("-");
+
+        public void Apply(RateStats stats, Func<double, string> format)
+        {
+            PerSec.Value = format(stats.PerSec);
+            P50Window.Value = format(stats.Window.P50);
+            P50Lifetime.Value = format(stats.Lifetime.P50);
+            P95Window.Value = format(stats.Window.P95);
+            P95Lifetime.Value = format(stats.Lifetime.P95);
+            P99Window.Value = format(stats.Window.P99);
+            P99Lifetime.Value = format(stats.Lifetime.P99);
+        }
+    }
+
+    /// <summary>
+    ///     Bundles <see cref="RateStatsView" /> and <see cref="Sparkline" /> for a single message type.
+    /// </summary>
+    private sealed class MessageTypeView(int sparklineSamples)
+    {
+        public readonly RateStatsView Rate = new ();
+        public readonly Sparkline Chart = new (Enumerable.Repeat(0.0, sparklineSamples));
+
+        public void Apply(RateStats stats)
+        {
+            Rate.Apply(stats, v => v.ToString("N0"));
+            ShiftSample(Chart.Values, stats.PerSec);
+        }
+    }
+
+    /// <summary>
+    ///     Display config for a per-enum-value message table. Defines title, labels, and colors.
+    /// </summary>
+    private sealed record MessageTableConfig<TEnum>(
+        string Title,
+        (TEnum Type, string Label, SparklineStyle Style)[] Entries) where TEnum: Enum;
+
+    /// <summary>
+    ///     Runtime state for a per-enum-value message table. Creates views from config,
+    ///     applies snapshots, and builds the visual tree.
+    /// </summary>
+    private sealed class MessageTableState<TEnum> where TEnum: Enum
+    {
+        private readonly MessageTableConfig<TEnum> config;
+        private readonly Dictionary<TEnum, MessageTypeView> views;
+
+        public MessageTableState(MessageTableConfig<TEnum> config)
+        {
+            this.config = config;
+            views = config.Entries.ToDictionary(e => e.Type, _ => new MessageTypeView(SPARKLINE_MAX_SAMPLES));
+        }
+
+        public void Apply(Dictionary<TEnum, RateStats>? stats)
+        {
+            if (stats is null)
+                return;
+
+            foreach ((TEnum type, MessageTypeView view) in views)
+            {
+                if (stats.TryGetValue(type, out RateStats s))
+                    view.Apply(s);
+            }
+        }
+
+        public Group BuildGroup()
+        {
+            Visual[][] rows = config.Entries
+                                    .Select(e => RateStatsRow(e.Label, views[e.Type].Rate, views[e.Type].Chart.Style(e.Style)))
+                                    .ToArray();
+
+            return new Group(config.Title, new Table(TableHeaders(), rows));
+        }
+    }
+}

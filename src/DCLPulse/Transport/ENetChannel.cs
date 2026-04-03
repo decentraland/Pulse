@@ -17,6 +17,23 @@ public readonly struct ENetChannel(byte channelId, PacketFlags packetMode)
     public const int COUNT = 3;
 
     public static readonly ENetChannel RELIABLE = new (0, PacketFlags.Reliable);
-    public static readonly ENetChannel UNRELIABLE_SEQUENCED = new (1, PacketFlags.None);
+
+    /// <summary>
+    ///     Unreliable sequenced channel used for high-frequency STATE_DELTA fan-out.
+    ///     <para />
+    ///     The <see cref="PacketFlags.Unthrottled" /> flag disables ENet's send-side throttle
+    ///     (<c>packetThrottleCounter</c> check in <c>enet_protocol_send_outgoing_commands</c>).
+    ///     Without it, ENet silently destroys unreliable packets before they reach the wire
+    ///     when <c>packetThrottle</c> drops below 32 — which happens when measured RTT exceeds
+    ///     <c>lastRTT + 40 ms + 2 * variance</c>. With many peers, even localhost can trigger
+    ///     this if the service loop stalls, and recovery is slow (+2 per 5-second interval).
+    ///     <para />
+    ///     Dropping a STATE_DELTA is strictly worse than sending it: the client detects a
+    ///     sequence gap and issues a RESYNC_REQUEST, which costs a full reliable round-trip.
+    ///     Application-level rate control (tier divisors) already governs send frequency,
+    ///     making the ENet throttle redundant for this channel.
+    /// </summary>
+    public static readonly ENetChannel UNRELIABLE_SEQUENCED = new (1, PacketFlags.Unthrottled);
+
     public static readonly ENetChannel UNRELIABLE_UNSEQUENCED = new (2, PacketFlags.Unsequenced);
 }

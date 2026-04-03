@@ -6,7 +6,7 @@ namespace Pulse;
 
 public sealed class HttpService(
     ILogger<HttpService> logger,
-    IOptions<HealthCheckOptions> options,
+    IOptions<HttpServiceOptions> options,
     IMetricsCollector metricsCollector) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

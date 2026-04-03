@@ -104,6 +104,13 @@ public sealed class ConsoleDashboard(
     private readonly Dictionary<ServerMessage.MessageOneofCase, RateTracker> outgoingRateTrackers =
         OUTGOING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
 
+    // Pre-allocated rate dictionaries — reused every tick, only values change.
+    private readonly Dictionary<ClientMessage.MessageOneofCase, RateStats> incomingRates =
+        INCOMING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => default(RateStats));
+
+    private readonly Dictionary<ServerMessage.MessageOneofCase, RateStats> outgoingRates =
+        OUTGOING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => default(RateStats));
+
     // Reactive state — written on UI thread inside onUpdate callback.
     private readonly State<string> activePeers = new ("0");
     private readonly State<string> totalConnected = new ("0");
@@ -220,12 +227,10 @@ public sealed class ConsoleDashboard(
         ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth);
 
         // Per-message-type rates
-        var incomingRates = new Dictionary<ClientMessage.MessageOneofCase, RateStats>(incomingRateTrackers.Count);
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
         incomingMessagesState.Apply(incomingRates);
 
-        var outgoingRates = new Dictionary<ServerMessage.MessageOneofCase, RateStats>(outgoingRateTrackers.Count);
         foreach ((var type, var tracker) in outgoingRateTrackers)
             outgoingRates[type] = tracker.Update(snap.OutgoingMessages.Read(type), elapsed);
         outgoingMessagesState.Apply(outgoingRates);

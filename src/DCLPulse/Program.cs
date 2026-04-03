@@ -129,8 +129,8 @@ else
     });
 }
 
-builder.Services.Configure<HealthCheckOptions>(
-    builder.Configuration.GetSection(HealthCheckOptions.SECTION_NAME));
+builder.Services.Configure<HttpServiceOptions>(
+    builder.Configuration.GetSection(HttpServiceOptions.SECTION_NAME));
 builder.Services.AddHostedService<HttpService>();
 
 builder.Services.Configure<ParcelEncoderOptions>(

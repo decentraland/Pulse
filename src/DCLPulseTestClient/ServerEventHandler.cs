@@ -47,14 +47,24 @@ public static class ServerEventHandler
     {
         uint subjectId = delta.SubjectId;
 
-        if (bot.PendingResyncs.Contains(subjectId))
+        if (bot.PendingResyncs.TryGetValue(subjectId, out uint resyncKnownSeq))
+        {
+            // The server can fulfill a resync with a targeted delta from our known seq.
+            // Accept it if the baseline matches; ignore stale deltas from before the resync.
+            if (delta.BaselineSeq != resyncKnownSeq)
+                return;
+
+            bot.PendingResyncs.Remove(subjectId);
+            bot.KnownSeqBySubject[subjectId] = delta.NewSeq;
+            Console.WriteLine($"[{bot.AccountName}] Resync fulfilled with delta for subject {subjectId}, seq={delta.NewSeq}");
             return;
+        }
 
         if (bot.KnownSeqBySubject.TryGetValue(subjectId, out uint lastSeq) && delta.BaselineSeq != lastSeq)
         {
             Console.WriteLine($"[{bot.AccountName}] Seq gap for subject {subjectId}: expected {lastSeq}, got {delta.BaselineSeq}. Requesting resync.");
 
-            bot.PendingResyncs.Add(subjectId);
+            bot.PendingResyncs[subjectId] = lastSeq;
 
             bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
             {

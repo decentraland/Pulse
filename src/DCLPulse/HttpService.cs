@@ -7,8 +7,10 @@ namespace Pulse;
 public sealed class HttpService(
     ILogger<HttpService> logger,
     IOptions<HttpServiceOptions> options,
-    IMetricsCollector metricsCollector) : BackgroundService
+    IMetricsCollector metricsCollector,
+    MetricsBearerToken metricsBearerToken) : BackgroundService
 {
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         string host = OperatingSystem.IsWindows() ? "localhost" : "+";
@@ -32,6 +34,12 @@ public sealed class HttpService(
                         ctx.Response.StatusCode = 200;
                         break;
                     case "/metrics":
+                        if (!AuthorizeMetrics(ctx.Request))
+                        {
+                            ctx.Response.StatusCode = 401;
+                            break;
+                        }
+
                         ctx.Response.StatusCode = 200;
                         ctx.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
                         await using (var writer = new StreamWriter(ctx.Response.OutputStream))
@@ -51,5 +59,17 @@ public sealed class HttpService(
             listener.Stop();
             listener.Close();
         }
+    }
+
+    private bool AuthorizeMetrics(HttpListenerRequest request)
+    {
+        if (string.IsNullOrEmpty(metricsBearerToken.Value))
+            return true;
+
+        string? header = request.Headers["Authorization"];
+
+        return header is not null
+               && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+               && header.AsSpan(7).Equals(metricsBearerToken.Value, StringComparison.Ordinal);
     }
 }

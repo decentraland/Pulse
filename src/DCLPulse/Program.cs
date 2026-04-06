@@ -131,6 +131,7 @@ else
 
 builder.Services.Configure<HttpServiceOptions>(
     builder.Configuration.GetSection(HttpServiceOptions.SECTION_NAME));
+builder.Services.AddSingleton(new MetricsBearerToken(Environment.GetEnvironmentVariable(MetricsBearerToken.ENV_VAR)));
 builder.Services.AddHostedService<HttpService>();
 
 builder.Services.Configure<ParcelEncoderOptions>(

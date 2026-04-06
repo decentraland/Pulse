@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
 
@@ -31,6 +32,7 @@ internal static class PrometheusFormatter
         ServerMessage.MessageOneofCase.EmoteStopped,
         ServerMessage.MessageOneofCase.Teleported,
     ];
+
     public static void Write(StreamWriter writer, MetricsSnapshot snap)
     {
         WriteCounter(writer, "dcl_pulse_peers_connected_total", "Total peer connections since startup", snap.Transport.TotalPeersConnected);
@@ -49,6 +51,55 @@ internal static class PrometheusFormatter
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);
         WriteEnumCounters(writer, "dcl_pulse_outgoing_messages_total", "Total outgoing messages by type",
             snap.OutgoingMessages, OUTGOING_MESSAGE_TYPES);
+
+        WriteProcessMetrics(writer);
+    }
+
+    private static void WriteProcessMetrics(StreamWriter writer)
+    {
+        using var process = Process.GetCurrentProcess();
+
+        // GC
+        WriteGauge(writer, "dotnet_gc_collections_total", "Total GC collections by generation",
+            GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2));
+        WriteGauge(writer, "dotnet_gc_heap_size_bytes", "GC heap size in bytes", GC.GetTotalMemory(false));
+        WriteGauge(writer, "dotnet_gc_allocated_bytes_total", "Total bytes allocated over lifetime", GC.GetTotalAllocatedBytes());
+
+        // Memory
+        WriteGauge(writer, "process_working_set_bytes", "Process working set in bytes", process.WorkingSet64);
+        WriteGauge(writer, "process_private_memory_bytes", "Process private memory in bytes", process.PrivateMemorySize64);
+
+        // Thread pool
+        ThreadPool.GetAvailableThreads(out int workerAvailable, out int ioAvailable);
+        ThreadPool.GetMaxThreads(out int workerMax, out int ioMax);
+        WriteGauge(writer, "dotnet_threadpool_worker_active", "Active thread pool worker threads", workerMax - workerAvailable);
+        WriteGauge(writer, "dotnet_threadpool_io_active", "Active thread pool IO threads", ioMax - ioAvailable);
+
+        // Uptime
+        WriteGauge(writer, "process_uptime_seconds", "Process uptime in seconds",
+            (long)(DateTime.UtcNow - process.StartTime.ToUniversalTime()).TotalSeconds);
+
+        // CPU
+        WriteGauge(writer, "process_cpu_seconds_total", "Total CPU time in seconds",
+            (long)process.TotalProcessorTime.TotalSeconds);
+    }
+
+    private static void WriteGauge(StreamWriter writer, string name, string help,
+        long gen0, long gen1, long gen2)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.WriteLine(" gauge");
+        writer.Write(name);
+        writer.WriteLine("{generation=\"gen0\"} " + gen0);
+        writer.Write(name);
+        writer.WriteLine("{generation=\"gen1\"} " + gen1);
+        writer.Write(name);
+        writer.WriteLine("{generation=\"gen2\"} " + gen2);
     }
 
     private static void WriteCounter(StreamWriter writer, string name, string help, long value)

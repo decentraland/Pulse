@@ -83,6 +83,35 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void PlayerJoined_NextDeltaRespectsTickDue_Tier2()
+    {
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_2));
+
+        // Tick 0: TIER_2 divisor is 4, tick 0 % 4 == 0 → PlayerJoined fires
+        simulation.SimulateTick(peers, tickCounter: 0);
+        OutgoingMessage joinMsg = DrainSingleMessage();
+        Assert.That(joinMsg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
+
+        // Subject moves — snapshot advances
+        PublishSnapshot(subject, seq: 2, position: new Vector3(5f, 0f, 0f));
+
+        // Ticks 1, 2, 3: not divisible by 4 → tier gate blocks, no delta
+        for (uint tick = 1; tick <= 3; tick++)
+        {
+            simulation.SimulateTick(peers, tickCounter: tick);
+
+            Assert.That(messagePipe.TryReadOutgoingMessage(out _), Is.False,
+                $"Delta leaked on tick {tick} which is not due for TIER_2");
+        }
+
+        // Tick 4: 4 % 4 == 0 → delta fires
+        simulation.SimulateTick(peers, tickCounter: 4);
+        OutgoingMessage deltaMsg = DrainSingleMessage();
+        Assert.That(deltaMsg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
+        Assert.That(deltaMsg.PacketMode, Is.EqualTo(PacketMode.UNRELIABLE_SEQUENCED));
+    }
+
+    [Test]
     public void PlayerJoined_SentAgainAfterPlayerLeftAndReentry()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));

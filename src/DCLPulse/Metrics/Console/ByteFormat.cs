@@ -1,4 +1,4 @@
-namespace Pulse.Formatting;
+namespace Pulse.Metrics.Console;
 
 public static class ByteFormat
 {

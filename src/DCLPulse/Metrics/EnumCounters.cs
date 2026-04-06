@@ -2,7 +2,7 @@ namespace Pulse.Metrics;
 
 /// <summary>
 ///     Per-enum-value atomic counters. Thread-safe — written on hot-path threads,
-///     read by <see cref="MetricsCollector" />.
+///     read by <see cref="MeterListenerMetricsCollector" />.
 /// </summary>
 public sealed class EnumCounters<TEnum>(int bucketCount) where TEnum: Enum
 {

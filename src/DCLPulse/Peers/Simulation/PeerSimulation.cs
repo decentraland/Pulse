@@ -282,8 +282,8 @@ public sealed class PeerSimulation : IPeerSimulation
                             PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
                         }, PacketMode.RELIABLE));
 
-                        logger.LogInformation("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
-                            entry.Subject, observerId, lastKnownSeq);
+                        logger.LogWarning("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq}, gap={SeqGap})",
+                            entry.Subject, observerId, lastKnownSeq, subjectSnapshot.Seq - lastKnownSeq);
                     }
                     else
                     {

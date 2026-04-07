@@ -1,4 +1,4 @@
-namespace Pulse.Metrics;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Tracks a monotonic counter, computes per-second rate, and maintains rolling-window

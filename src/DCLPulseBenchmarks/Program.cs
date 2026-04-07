@@ -8,4 +8,5 @@ using DCLPulseBenchmarks;
 ManualConfig config = DefaultConfig.Instance
                                    .AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance));
 
-BenchmarkRunner.Run<SpatialInterestBenchmarks>(config, args);
+// BenchmarkRunner.Run<SpatialInterestBenchmarks>(config, args);
+BenchmarkRunner.Run<SignatureVerifierBenchmarks>(config, args);

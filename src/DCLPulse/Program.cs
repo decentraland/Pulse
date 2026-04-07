@@ -42,7 +42,7 @@ builder.Services.AddSingleton<ProfileAnnouncementHandler>();
 builder.Services.AddSingleton<EmoteStartHandler>();
 builder.Services.AddSingleton<EmoteStopHandler>();
 builder.Services.AddSingleton<TeleportHandler>();
-builder.Services.AddSingleton(new AuthChainValidator(new NethereumPersonalSignVerifier()));
+builder.Services.AddSingleton(new AuthChainValidator(new RustEthereumSignVerifier()));
 
 builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
 {

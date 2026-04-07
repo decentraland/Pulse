@@ -14,6 +14,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulseTestClient", "..\DC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulse.Transport.Shared", "..\DCLPulse.Transport.Shared\DCLPulse.Transport.Shared.csproj", "{65D98796-D60E-4E4A-A880-D090509293CD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RustEthereum", "..\RustEthereum\RustEthereum.csproj", "{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -108,6 +110,18 @@ Global
 		{65D98796-D60E-4E4A-A880-D090509293CD}.Release|x64.Build.0 = Release|Any CPU
 		{65D98796-D60E-4E4A-A880-D090509293CD}.Release|x86.ActiveCfg = Release|Any CPU
 		{65D98796-D60E-4E4A-A880-D090509293CD}.Release|x86.Build.0 = Release|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Debug|x64.Build.0 = Debug|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Debug|x86.Build.0 = Debug|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Release|x64.ActiveCfg = Release|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Release|x64.Build.0 = Release|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Release|x86.ActiveCfg = Release|Any CPU
+		{A15D4AD9-459F-4D34-B77C-9B1E08E3DF89}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

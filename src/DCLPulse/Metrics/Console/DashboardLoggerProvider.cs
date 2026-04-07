@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using XenoAtom.Terminal.UI.Controls;
 
-namespace Pulse.Dashboard;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     <see cref="ILoggerProvider" /> that buffers log entries and drains them on the UI thread.

@@ -1,4 +1,4 @@
-namespace Pulse.Metrics;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Tracks a sampled gauge value with rolling-window and lifetime percentiles.

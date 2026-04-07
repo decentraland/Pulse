@@ -1,4 +1,4 @@
-namespace Pulse.Metrics;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Fixed-capacity circular buffer with percentile computation.

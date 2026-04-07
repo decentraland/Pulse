@@ -15,6 +15,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\DCLPulse\DCLPulse.csproj" />
+        <ProjectReference Include="..\DCLAuth\DCLAuth.csproj" />
     </ItemGroup>
 
 </Project>

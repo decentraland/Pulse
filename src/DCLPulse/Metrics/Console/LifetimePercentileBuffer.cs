@@ -1,4 +1,4 @@
-namespace Pulse.Metrics;
+namespace Pulse.Metrics.Console;
 
 /// <summary>
 ///     Unbounded buffer that accumulates all samples since creation for lifetime percentile computation.

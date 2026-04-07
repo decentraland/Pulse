@@ -44,23 +44,21 @@
 
         <!-- Output directory for all generated C# files -->
         <_GeneratedDir>$(MSBuildProjectDirectory)/Generated</_GeneratedDir>
+
+        <!-- Glob patterns for proto sources — stored as properties so they can be
+             referenced both in the static UpToDateCheckInput (for the IDE) and inside
+             targets (for protoc), without creating two visible item groups in Rider. -->
+        <_ProtoGlobs>$(_ProtoRoot)/decentraland/common/**/*.proto;$(_ProtoRoot)/decentraland/pulse/**/*.proto</_ProtoGlobs>
     </PropertyGroup>
 
     <!-- When generating: compile Quantize.cs from the external protocol repo -->
-    <ItemGroup Label="BitwiseRuntime" Condition="'$(GenerateProto)' == 'true'">
-        <Compile Include="$(_ProtocolRepo)protoc-gen-bitwise/runtime/cs/Quantize.cs" />
-    </ItemGroup>
-
-    <ItemGroup Label="ProtoSources" Condition="'$(GenerateProto)' == 'true'">
-        <_ProtoSources Include="$(_ProtoRoot)/decentraland/common/**/*.proto" />
-        <_ProtoSources Include="$(_ProtoRoot)/decentraland/pulse/**/*.proto" />
-    </ItemGroup>
 
     <!-- Tell Rider / VS project system about external proto inputs so the IDE's
          fast up-to-date check doesn't short-circuit MSBuild when a .proto in the
-         sibling protocol repo changes. -->
-    <ItemGroup Label="IDEUpToDateCheck" Condition="'$(GenerateProto)' == 'true'">
-        <UpToDateCheckInput Include="@(_ProtoSources)" />
+         sibling protocol repo changes. Single item group — no _ProtoSources static
+         ItemGroup, so each file appears only once in the project tree. -->
+    <ItemGroup Label="ProtoSources" Condition="'$(GenerateProto)' == 'true'">
+        <UpToDateCheckInput Include="$(_ProtoGlobs)" />
     </ItemGroup>
 
     <!--
@@ -95,8 +93,14 @@
             Condition="'$(GenerateProto)' == 'true'"
             BeforeTargets="_AddGeneratedProtoToCompile"
             DependsOnTargets="Protobuf_ResolvePlatform"
-            Inputs="@(_ProtoSources)"
+            Inputs="$(_ProtoGlobs)"
             Outputs="$(MSBuildProjectDirectory)/Generated/.proto.stamp">
+
+        <!-- Build file list dynamically inside the target (not a static ItemGroup)
+             so Rider doesn't show a second set of proto entries in the project tree. -->
+        <ItemGroup>
+            <_ProtoSources Include="$(_ProtoGlobs)" />
+        </ItemGroup>
 
         <Message Text="Regenerating protocol: running protoc with csharp_out + bitwise_out..." Importance="high" />
 

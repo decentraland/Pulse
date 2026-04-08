@@ -51,8 +51,6 @@
         <_ProtoGlobs>$(_ProtoRoot)/decentraland/common/**/*.proto;$(_ProtoRoot)/decentraland/pulse/**/*.proto</_ProtoGlobs>
     </PropertyGroup>
 
-    <!-- When generating: compile Quantize.cs from the external protocol repo -->
-
     <!-- Tell Rider / VS project system about external proto inputs so the IDE's
          fast up-to-date check doesn't short-circuit MSBuild when a .proto in the
          sibling protocol repo changes. Single item group — no _ProtoSources static
@@ -131,10 +129,6 @@
     <Target Name="_AddGeneratedProtoToCompile" BeforeTargets="CoreCompile">
         <ItemGroup>
             <Compile Include="$(MSBuildProjectDirectory)/Generated/**/*.cs" />
-            <!-- When generating, Quantize.cs is compiled from the external repo via
-                 BitwiseRuntime ItemGroup — exclude the local copy to avoid duplicates. -->
-            <Compile Remove="$(MSBuildProjectDirectory)/Generated/Quantize.cs"
-                     Condition="'$(GenerateProto)' == 'true'" />
         </ItemGroup>
     </Target>
 

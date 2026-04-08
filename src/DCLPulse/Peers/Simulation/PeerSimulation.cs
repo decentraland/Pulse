@@ -334,7 +334,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 EmoteState? emoteState = emoteBoard.Get(entry.Subject);
                 string? currentEmote = emoteState?.EmoteId;
 
-                if (currentEmote == view.LastSentEmoteId)
+                if (currentEmote == view.LastSentEmoteId && emoteState?.StartTick == view.LastSentEmoteStartTick)
                     return;
 
                 if (currentEmote != null)
@@ -370,6 +370,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
 
                 view.LastSentEmoteId = currentEmote;
+                view.LastSentEmoteStartTick = emoteState?.StartTick ?? 0;
             }
 
             bool SendDelta(PeerSnapshot baseline, PacketMode packetMode)

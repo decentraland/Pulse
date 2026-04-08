@@ -42,6 +42,13 @@ public struct PeerToPeerView
     public string? LastSentEmoteId;
 
     /// <summary>
+    ///     The start tick of the last emote sent to the observer.
+    ///     Used together with <see cref="LastSentEmoteId" /> to detect preemptive replays
+    ///     of the same emote (same ID, different start tick).
+    /// </summary>
+    public uint LastSentEmoteStartTick;
+
+    /// <summary>
     ///     The sequence number of the last teleport snapshot sent to the observer for this subject.
     ///     Prevents duplicate teleport broadcasts and supports consecutive teleports.
     /// </summary>

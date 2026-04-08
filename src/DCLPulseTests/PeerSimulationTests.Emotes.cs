@@ -109,4 +109,47 @@ public partial class PeerSimulationTests
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStopped), Is.False);
     }
+
+    [TestCase(null, false, TestName = "Looping_AfterCancel")]
+    [TestCase(500u, false, TestName = "OneShot_AfterExpiration")]
+    [TestCase(null, true, TestName = "Looping_Preemptive")]
+    [TestCase(500u, true, TestName = "OneShot_Preemptive")]
+    public void SameEmotePlayedTwice_PropagatedTwice(uint? durationMs, bool preemptive)
+    {
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+
+        // First play
+        timeProvider.MonotonicTime.Returns(1000u);
+        emoteBoard.Start(subject, "wave", serverTick: 1000, durationMs: durationMs);
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<OutgoingMessage> firstPlay = DrainAllMessages();
+        OutgoingMessage firstEmote = firstPlay.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
+        Assert.That(firstEmote.Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
+        Assert.That(firstEmote.Message.EmoteStarted.ServerTick, Is.EqualTo(1000u));
+
+        if (!preemptive)
+        {
+            // End the emote: duration expiry for one-shot, client cancel for looping
+            if (durationMs != null)
+                timeProvider.MonotonicTime.Returns(1000u + durationMs.Value);
+            else
+                emoteBoard.Stop(subject, serverTick: 2000);
+
+            simulation.SimulateTick(peers, tickCounter: 2);
+            DrainAllMessages();
+        }
+
+        // Second play of the same emote (preemptive: while first is still active)
+        timeProvider.MonotonicTime.Returns(3000u);
+        emoteBoard.Start(subject, "wave", serverTick: 3000, durationMs: durationMs);
+        simulation.SimulateTick(peers, tickCounter: 3);
+
+        List<OutgoingMessage> secondPlay = DrainAllMessages();
+        OutgoingMessage secondEmote = secondPlay.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
+        Assert.That(secondEmote.Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
+        Assert.That(secondEmote.Message.EmoteStarted.ServerTick, Is.EqualTo(3000u));
+    }
 }

@@ -328,9 +328,6 @@ public sealed class PeerSimulation : IPeerSimulation
 
             void SyncEmoteState()
             {
-                // If the emote completion has not been processed by the peer's worker yet, try to complete it now
-                emoteBoard.TryComplete(entry.Subject, timeProvider.MonotonicTime);
-
                 EmoteState? emoteState = emoteBoard.Get(entry.Subject);
                 string? currentEmote = emoteState?.EmoteId;
 

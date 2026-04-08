@@ -55,6 +55,7 @@ public partial class PeerSimulationTests
     [Test]
     public void EmoteStopped_SentWithCompletedReason_WhenDurationExpires()
     {
+        peers[subject] = new PeerState(PeerConnectionState.AUTHENTICATED);
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
@@ -65,10 +66,14 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
-        // Advance time past the duration for the subject's emote to expire via TryComplete
+        // Advance time past the duration — TryComplete runs on the subject's own
+        // outer-loop iteration; the observer picks up the completed state next tick
         timeProvider.MonotonicTime.Returns(1500u);
         PublishSnapshot(subject, seq: 3);
         simulation.SimulateTick(peers, tickCounter: 2);
+        DrainAllMessages();
+
+        simulation.SimulateTick(peers, tickCounter: 3);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage stopMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStopped);

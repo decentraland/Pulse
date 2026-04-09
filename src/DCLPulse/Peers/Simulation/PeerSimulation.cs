@@ -341,6 +341,7 @@ public sealed class PeerSimulation : IPeerSimulation
                         EmoteStarted = new EmoteStarted
                         {
                             SubjectId = entry.Subject.Value,
+                            Sequence = subjectSnapshot.Seq,
                             ServerTick = emoteState!.StartTick,
                             EmoteId = currentEmote,
                             PlayerState = CreatePlayerState(subjectSnapshot),

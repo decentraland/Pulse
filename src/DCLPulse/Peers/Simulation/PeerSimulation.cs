@@ -243,6 +243,8 @@ public sealed class PeerSimulation : IPeerSimulation
                 view.LastSentProfileVersion = profileVersion;
                 // Player joined message replaces the teleport message
                 view.LastSentTeleportSeq = subjectSnapshot.Seq;
+
+                SyncEmoteState();
             }
             else
             {
@@ -269,33 +271,42 @@ public sealed class PeerSimulation : IPeerSimulation
 
                     logger.LogInformation("Broadcasting teleport from {Subject} to {ObserverId} at {Position}",
                         entry.Subject, observerId, subjectSnapshot.GlobalPosition);
-                }
-                else if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
-                {
-                    // Try a targeted delta from the client's baseline; fall back to full state
-                    // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
-                    if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
-                        || !SendDelta(knownSnapshot, PacketMode.RELIABLE))
-                    {
-                        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
-                        {
-                            PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
-                        }, PacketMode.RELIABLE));
 
-                        logger.LogWarning("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq}, gap={SeqGap})",
-                            entry.Subject, observerId, lastKnownSeq, subjectSnapshot.Seq - lastKnownSeq);
-                    }
-                    else
-                    {
-                        logger.LogInformation("Resync fulfilled with targeted delta for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
-                            entry.Subject, observerId, lastKnownSeq);
-                    }
+                    SyncEmoteState();
                 }
                 else
-                    SendDelta(view.LastSentSnapshot, PacketMode.UNRELIABLE_SEQUENCED);
-            }
+                {
+                    // EmoteStarted already carries PlayerState — skip redundant delta/full this tick
+                    bool emoteStartedSent = SyncEmoteState();
 
-            SyncEmoteState();
+                    if (!emoteStartedSent)
+                    {
+                        if (resyncRequests != null && resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
+                        {
+                            // Try a targeted delta from the client's baseline; fall back to full state
+                            // if the baseline is evicted, the seq hasn't advanced, or all fields are within epsilon.
+                            if (!snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
+                                || !SendDelta(knownSnapshot, PacketMode.RELIABLE))
+                            {
+                                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                                {
+                                    PlayerStateFull = CreateFullState(entry.Subject, subjectSnapshot),
+                                }, PacketMode.RELIABLE));
+
+                                logger.LogWarning("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq}, gap={SeqGap})",
+                                    entry.Subject, observerId, lastKnownSeq, subjectSnapshot.Seq - lastKnownSeq);
+                            }
+                            else
+                            {
+                                logger.LogInformation("Resync fulfilled with targeted delta for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
+                                    entry.Subject, observerId, lastKnownSeq);
+                            }
+                        }
+                        else
+                            SendDelta(view.LastSentSnapshot, PacketMode.UNRELIABLE_SEQUENCED);
+                    }
+                }
+            }
 
             view.LastSentSeq = subjectSnapshot.Seq;
             view.LastSentSnapshot = subjectSnapshot;
@@ -326,13 +337,15 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
             }
 
-            void SyncEmoteState()
+            bool SyncEmoteState()
             {
                 EmoteState? emoteState = emoteBoard.Get(entry.Subject);
                 string? currentEmote = emoteState?.EmoteId;
 
                 if (currentEmote == view.LastSentEmoteId && emoteState?.StartTick == view.LastSentEmoteStartTick)
-                    return;
+                    return false;
+
+                var emoteStarted = false;
 
                 if (currentEmote != null)
                 {
@@ -350,6 +363,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
                     logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
                         currentEmote, entry.Subject, observerId);
+
+                    emoteStarted = true;
                 }
                 else if (emoteState is { StopTick: not null, StopReason: not null })
                 {
@@ -369,6 +384,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
                 view.LastSentEmoteId = currentEmote;
                 view.LastSentEmoteStartTick = emoteState?.StartTick ?? 0;
+                return emoteStarted;
             }
 
             bool SendDelta(PeerSnapshot baseline, PacketMode packetMode)

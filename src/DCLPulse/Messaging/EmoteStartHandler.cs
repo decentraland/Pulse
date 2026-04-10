@@ -1,10 +1,18 @@
 using Decentraland.Pulse;
+using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using System.Numerics;
 
 namespace Pulse.Messaging;
 
-public class EmoteStartHandler(EmoteBoard emoteBoard, SnapshotBoard snapshotBoard, ITimeProvider timeProvider, ILogger<EmoteStartHandler> logger)
+public class EmoteStartHandler(
+    EmoteBoard emoteBoard,
+    SnapshotBoard snapshotBoard,
+    SpatialGrid spatialGrid,
+    ITimeProvider timeProvider,
+    ILogger<EmoteStartHandler> logger,
+    ParcelEncoder parcelEncoder)
     : RuntimePacketHandlerBase<EmoteStartHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -19,9 +27,27 @@ public class EmoteStartHandler(EmoteBoard emoteBoard, SnapshotBoard snapshotBoar
 
         emoteBoard.Start(from, emoteStart.EmoteId, now, durationMs);
 
-        // Bump the snapshot seq so EmoteStarted carries a distinct sequence from the preceding delta
-        if (snapshotBoard.TryRead(from, out PeerSnapshot current))
-            snapshotBoard.Publish(from, current with { Seq = snapshotBoard.LastSeq(from) + 1, ServerTick = now });
+        PlayerState state = emoteStart.PlayerState;
+        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(state.ParcelIndex, state.Position);
+
+        var snapshot = new PeerSnapshot(
+            snapshotBoard.LastSeq(from) + 1,
+            now,
+            state.ParcelIndex,
+            state.Position,
+            globalPosition,
+            state.Velocity,
+            state.RotationY,
+            state.JumpCount,
+            state.MovementBlend,
+            state.SlideBlend,
+            state.GetHeadYaw(),
+            state.GetHeadPitch(),
+            (PlayerAnimationFlags)state.StateFlags,
+            state.GlideState);
+
+        snapshotBoard.Publish(from, in snapshot);
+        spatialGrid.Set(from, snapshot.GlobalPosition);
 
         logger.LogInformation("Peer {Peer} started emote {EmoteId}", from.Value, emoteStart.EmoteId);
     }

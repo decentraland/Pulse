@@ -10,14 +10,14 @@ Building a high-performance MMO-like multiplayer networking stack. Client is Uni
 
 **ENet** over UDP.
 
-Channel semantics are enforced by convention, not by ENet itself — packet flags determine behavior per send call:
+Channel semantics are enforced by packet flags, not by channel assignment — reliable and unreliable sequenced traffic share the same ENet channel:
 - `ENET_PACKET_FLAG_RELIABLE` — reliable ordered (ch0)
-- `0` (no flags) — unreliable sequenced (ch1), stale packets silently dropped by ENet
-- `ENET_PACKET_FLAG_UNSEQUENCED` — unreliable unordered
+- `ENET_PACKET_FLAG_UNTHROTTLED` — unreliable sequenced (ch0), stale packets silently dropped by ENet
+- `ENET_PACKET_FLAG_UNSEQUENCED` — unreliable unordered (ch1)
 
 **Channel conventions:**
-- ch0: reliable control flow (snapshots, events, resyncs)
-- ch1: unreliable sequenced (high-frequency state updates, input)
+- ch0: reliable control flow + unreliable sequenced state updates (shared channel — see `ENetChannel.cs` for head-of-line blocking implications)
+- ch1: unreliable unsequenced
 
 ---
 
@@ -105,7 +105,7 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 ### Client → Server
 
-**MovementInput** (ch1, unreliable sequenced, variable while moving, 0hz while emoting)
+**MovementInput** (ch0, unreliable sequenced, variable while moving, 0hz while emoting)
 - Full continuous state every packet: position, velocity, rotation, blend values, head IK
 - Boolean state flags packed as u16 bitmask (grounded, jumping, falling, stunned, etc.)
 - No piggybacked ACKs (sliding window means no ACK tracking needed)
@@ -133,7 +133,7 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 - Full snapshot of a subject's state
 - Sent on zone entry or in response to RESYNC_REQUEST
 
-**STATE_DELTA** (ch1, unreliable sequenced, per server tick)
+**STATE_DELTA** (ch0, unreliable sequenced, per server tick)
 - Diff from last_sent_snapshot for each observer/subject pair
 - field_mask (from optional field presence) suppresses unchanged continuous fields
 - state_flags always present regardless of mask
@@ -162,7 +162,7 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **Client drives resync.** The server never proactively fires STATE_FULL when a baseline goes stale. The gap detection lives on the client (seq number check), which triggers RESYNC_REQUEST.
 
-**Unreliable input, not reliable.** Movement input on the unreliable channel avoids head-of-line blocking. A retransmitted stale position is worse than a skipped one. 3-tick redundancy recovers from loss without retransmission overhead.
+**Unreliable input, not reliable.** Movement input uses unreliable sequenced delivery — a retransmitted stale position is worse than a skipped one. 3-tick redundancy recovers from loss without retransmission overhead. Sharing the ENet channel with reliable traffic introduces brief head-of-line blocking when a reliable packet is lost (bounded by one RTT), but reliable messages are infrequent relative to the tick rate.
 
 **state_flags always present in STATE_DELTA.** Boolean transitions (jump, land, fall) drive animation events. Missing one costs more than the 2 bytes it takes to always include the full state.
 

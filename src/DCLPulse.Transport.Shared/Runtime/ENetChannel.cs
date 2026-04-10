@@ -3,11 +3,25 @@
 namespace Pulse.Transport
 {
     /// <summary>
-    ///     Reliable packets on a channel block sequenced unreliable packets on the same channel.
-    ///     Here's what happens concretely:
-    ///     Unreliable packets are still discarded if a newer sequence number has already been received — that's fine and expected.
-    ///     But if a reliable packet is in-flight and unacknowledged, ENet will hold back subsequent sequenced unreliable packets on that same channel until the reliable one is ACK'd. This is head-of-line blocking — exactly what you're trying to avoid for position updates.
-    ///     Unsequenced packets are immune to this — they bypass the sequence tracking entirely and will go through regardless of pending reliable packets on the channel.
+    ///     RELIABLE and UNRELIABLE_SEQUENCED share the same ENet channel (ch0). This simplifies
+    ///     the channel layout but introduces two ENet-level side effects:
+    ///     <para />
+    ///     <b>1. Head-of-line blocking.</b> If a reliable packet is in-flight and unacknowledged,
+    ///     ENet holds back all subsequent sequenced-unreliable packets on that channel until the
+    ///     reliable one is ACK'd. In practice this means STATE_DELTA delivery can stall while a
+    ///     lost reliable message (snapshot, emote, resync) is retransmitted. The stall is bounded
+    ///     by one RTT and reliable messages are infrequent relative to the tick rate, so the
+    ///     impact is small.
+    ///     <para />
+    ///     <b>2. Sequence counter reset.</b> Each reliable send resets the channel's
+    ///     <c>outgoingUnreliableSequenceNumber</c> to 0. On the receive side the counter is
+    ///     likewise reset when a reliable packet is dispatched. This partitions unreliable
+    ///     ordering into discrete windows bounded by reliable packets — ordering is maintained
+    ///     within each window but not across them. This is harmless because STATE_DELTA carries
+    ///     its own application-level sequence number for gap detection.
+    ///     <para />
+    ///     Unsequenced packets (UNRELIABLE_UNSEQUENCED, ch1) are immune to both effects — they
+    ///     bypass sequence tracking entirely.
     /// </summary>
     public readonly struct ENetChannel
     {
@@ -22,7 +36,7 @@ namespace Pulse.Transport
             PacketMode = packetMode;
         }
 
-        public const int COUNT = 3;
+        public const int COUNT = 2;
 
         public static readonly ENetChannel RELIABLE = new (0, PacketFlags.Reliable);
 
@@ -41,8 +55,8 @@ namespace Pulse.Transport
         ///     Application-level rate control (tier divisors) already governs send frequency,
         ///     making the ENet throttle redundant for this channel.
         /// </summary>
-        public static readonly ENetChannel UNRELIABLE_SEQUENCED = new (1, PacketFlags.Unthrottled);
+        public static readonly ENetChannel UNRELIABLE_SEQUENCED = new (0, PacketFlags.Unthrottled);
 
-        public static readonly ENetChannel UNRELIABLE_UNSEQUENCED = new (2, PacketFlags.Unsequenced);
+        public static readonly ENetChannel UNRELIABLE_UNSEQUENCED = new (1, PacketFlags.Unsequenced);
     }
 }

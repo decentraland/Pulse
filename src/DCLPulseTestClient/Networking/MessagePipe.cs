@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Pulse.Transport;
 using System.Threading.Channels;
 
 namespace PulseTestClient.Networking;
@@ -66,9 +67,9 @@ public sealed class MessagePipe
     public readonly struct OutgoingMessage
     {
         public ClientMessage Message { get; }
-        public ITransport.PacketMode PacketMode { get; }
+        public PacketMode PacketMode { get; }
 
-        public OutgoingMessage(ClientMessage message, ITransport.PacketMode packetMode)
+        public OutgoingMessage(ClientMessage message, PacketMode packetMode)
         {
             Message = message;
             PacketMode = packetMode;

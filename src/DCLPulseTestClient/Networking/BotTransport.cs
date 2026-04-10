@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using Pulse.Transport;
 
 namespace PulseTestClient.Networking;
 
@@ -13,13 +14,13 @@ public sealed class BotTransport(
         peerId = await sharedTransport.ConnectPeerAsync(address, port, pipe, ct);
     }
 
-    public Task DisconnectAsync(ITransport.DisconnectReason reason, CancellationToken ct)
+    public Task DisconnectAsync(DisconnectReason reason, CancellationToken ct)
     {
         sharedTransport.DisconnectPeer(peerId, reason);
         return Task.CompletedTask;
     }
 
-    public void Send(IMessage message, ITransport.PacketMode mode)
+    public void Send(IMessage message, PacketMode mode)
     {
         // Not used — PulseMultiplayerService sends via MessagePipe directly.
         // Kept to satisfy ITransport interface.

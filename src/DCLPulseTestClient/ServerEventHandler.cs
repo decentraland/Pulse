@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Pulse.Transport;
 using PulseTestClient.Networking;
 
 namespace PulseTestClient;
@@ -69,7 +70,7 @@ public static class ServerEventHandler
             bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
             {
                 Resync = new ResyncRequest { SubjectId = subjectId, KnownSeq = lastSeq },
-            }, ITransport.PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE));
 
             return;
         }

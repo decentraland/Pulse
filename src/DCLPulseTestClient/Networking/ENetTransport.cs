@@ -1,5 +1,7 @@
+using ENet;
 using System.Collections.Concurrent;
 using Google.Protobuf;
+using Pulse.Transport;
 
 namespace PulseTestClient.Networking;
 
@@ -57,7 +59,7 @@ public sealed class ENetTransport : IDisposable
         return tcs.Task.WaitAsync(ct);
     }
 
-    public void DisconnectPeer(PeerId peerId, ITransport.DisconnectReason reason)
+    public void DisconnectPeer(PeerId peerId, DisconnectReason reason)
     {
         if (connections.TryGetValue(peerId.Value, out PeerConnection conn))
             conn.Peer.Disconnect((uint)reason);
@@ -162,12 +164,12 @@ public sealed class ENetTransport : IDisposable
         peer.Send(channel.ChannelId, ref packet);
     }
 
-    private static ENetChannel ToENetChannel(ITransport.PacketMode mode)
+    private static ENetChannel ToENetChannel(PacketMode mode)
     {
         return mode switch
         {
-            ITransport.PacketMode.RELIABLE => ENetChannel.RELIABLE,
-            ITransport.PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
+            PacketMode.RELIABLE => ENetChannel.RELIABLE,
+            PacketMode.UNRELIABLE_SEQUENCED => ENetChannel.UNRELIABLE_SEQUENCED,
             _ => ENetChannel.UNRELIABLE_UNSEQUENCED,
         };
     }

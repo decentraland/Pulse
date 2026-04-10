@@ -1,5 +1,6 @@
 using System.Numerics;
 using Decentraland.Pulse;
+using Pulse.Transport;
 using PulseTestClient.Networking;
 using PulseTestClient.Timing;
 
@@ -148,14 +149,14 @@ public class SimulationLoop(
                     Velocity = new Decentraland.Common.Vector3 { X = velocity.X, Y = velocity.Y, Z = velocity.Z },
                 },
             },
-        }, ITransport.PacketMode.UNRELIABLE_SEQUENCED));
+        }, PacketMode.UNRELIABLE_SEQUENCED));
 
         if (bot.InputCollector.EmoteId is { } emoteId)
         {
             bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
             {
                 EmoteStart = new EmoteStart { EmoteId = emoteId },
-            }, ITransport.PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE));
         }
     }
 }

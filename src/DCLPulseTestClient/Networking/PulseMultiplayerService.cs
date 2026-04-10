@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Google.Protobuf;
+using Pulse.Transport;
 
 namespace PulseTestClient.Networking;
 
@@ -10,7 +11,7 @@ public partial class PulseMultiplayerService(
     private readonly Dictionary<ServerMessage.MessageOneofCase, ISubscriber> subscribers = new();
     private CancellationTokenSource? connectionLifeCycleCts;
 
-    public Task DisconnectAsync(ITransport.DisconnectReason reason, CancellationToken ct)
+    public Task DisconnectAsync(DisconnectReason reason, CancellationToken ct)
     {
         connectionLifeCycleCts.SafeCancelAndDispose();
         return transport.DisconnectAsync(reason, ct);
@@ -26,7 +27,7 @@ public partial class PulseMultiplayerService(
     {
         connectionLifeCycleCts.SafeCancelAndDispose();
         connectionLifeCycleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        
+
         await transport.ConnectAsync(address, port, ct);
 
         _ = RouteIncomingMessagesAsync(connectionLifeCycleCts.Token);
@@ -37,7 +38,7 @@ public partial class PulseMultiplayerService(
             {
                 AuthChain = ByteString.CopyFromUtf8(authChain),
             },
-        }, ITransport.PacketMode.RELIABLE));
+        }, PacketMode.RELIABLE));
 
         await foreach (HandshakeResponse response in SubscribeAsync<HandshakeResponse>(
                            ServerMessage.MessageOneofCase.Handshake, ct))
@@ -45,7 +46,7 @@ public partial class PulseMultiplayerService(
             if (!response.Success)
             {
                 connectionLifeCycleCts.SafeCancelAndDispose();
-                await transport.DisconnectAsync(ITransport.DisconnectReason.AuthFailed, ct);
+                await transport.DisconnectAsync(DisconnectReason.AUTH_FAILED, ct);
 
                 throw new PulseException(response.HasError ? response.Error : "Handshake failed");
             }

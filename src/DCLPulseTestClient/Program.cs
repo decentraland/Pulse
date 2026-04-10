@@ -1,5 +1,6 @@
 using System.Numerics;
 using Decentraland.Pulse;
+using Pulse.Transport;
 using PulseTestClient;
 using PulseTestClient.Auth;
 using PulseTestClient.Inputs;
@@ -88,7 +89,7 @@ await lifeCycleCts.CancelAsync();
 
 foreach (BotSession s in sessions)
 {
-    await s.Service.DisconnectAsync(ITransport.DisconnectReason.Graceful, CancellationToken.None);
+    await s.Service.DisconnectAsync(DisconnectReason.GRACEFUL, CancellationToken.None);
     s.Service.Dispose();
 }
 
@@ -148,7 +149,7 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
     {
         ProfileAnnouncement = new ProfileVersionAnnouncement { Version = profile.Version },
-    }, ITransport.PacketMode.RELIABLE));
+    }, PacketMode.RELIABLE));
 
     Console.WriteLine($"[{accountName}] Ready.");
     return session;

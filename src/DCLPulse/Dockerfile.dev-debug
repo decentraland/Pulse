@@ -11,11 +11,16 @@ WORKDIR "/build/src/DCLPulse"
 RUN dotnet publish "DCLPulse.csproj" -c Debug -o /app/publish /p:UseAppHost=false /p:GenerateProto=false
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip procps \
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip procps openssh-server \
     && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
     && apt-get remove -y curl unzip && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir /run/sshd \
+    && ssh-keygen -A \
+    && passwd -d root \
+    && printf 'Port 2222\nPermitRootLogin yes\nPermitEmptyPasswords yes\n' > /etc/ssh/sshd_config.d/debug.conf
 WORKDIR /app
 COPY --from=build /app/publish .
 EXPOSE 7777/udp
-ENTRYPOINT ["dotnet", "DCLPulse.dll"]
+EXPOSE 2222/tcp
+ENTRYPOINT ["/bin/sh", "-c", "set -e && /usr/sbin/sshd && exec dotnet DCLPulse.dll"]

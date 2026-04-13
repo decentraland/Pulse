@@ -8,6 +8,8 @@ jobs:
     uses: decentraland/platform-actions/.github/workflows/apps-docker-next.yml@main
     with:
       service-name: pulse-server
+      image-name: pulse-server-debug
+      docker-tag: debug
       dockerfile-url: https://raw.githubusercontent.com/decentraland/Pulse/main/src/DCLPulse/Dockerfile.dev-debug
       deployment-environment: dev
     secrets: inherit

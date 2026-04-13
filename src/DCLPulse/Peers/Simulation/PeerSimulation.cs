@@ -361,6 +361,9 @@ public sealed class PeerSimulation : IPeerSimulation
                         },
                     }, PacketMode.RELIABLE));
 
+                    view.LastSentEmoteId = currentEmote;
+                    view.LastSentEmoteStartTick = emoteState.StartTick;
+
                     logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
                         currentEmote, entry.Subject, observerId);
 
@@ -378,12 +381,13 @@ public sealed class PeerSimulation : IPeerSimulation
                         },
                     }, PacketMode.RELIABLE));
 
+                    view.LastSentEmoteId = currentEmote;
+                    view.LastSentEmoteStartTick = emoteState.StartTick;
+
                     logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
                         entry.Subject, observerId, emoteState.StopReason.Value);
                 }
 
-                view.LastSentEmoteId = currentEmote;
-                view.LastSentEmoteStartTick = emoteState?.StartTick ?? 0;
                 return emoteStarted;
             }
 

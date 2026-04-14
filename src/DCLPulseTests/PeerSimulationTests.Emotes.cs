@@ -19,7 +19,7 @@ public partial class PeerSimulationTests
 
         timeProvider.MonotonicTime.Returns(4200u);
         emoteBoard.Start(subject, "wave", serverTick: 4200, durationMs: 3000);
-        PublishSnapshot(subject, seq: 2);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
@@ -38,7 +38,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         emoteBoard.Start(subject, "dance", serverTick: 4000, durationMs: null);
-        PublishSnapshot(subject, seq: 2);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
@@ -63,7 +63,7 @@ public partial class PeerSimulationTests
 
         timeProvider.MonotonicTime.Returns(1000u);
         emoteBoard.Start(subject, "clap", serverTick: 1000, durationMs: 500);
-        PublishSnapshot(subject, seq: 2);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
@@ -89,7 +89,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         emoteBoard.Start(subject, "wave", serverTick: 4000, durationMs: 3000);
-        PublishSnapshot(subject, seq: 2);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
@@ -129,6 +129,7 @@ public partial class PeerSimulationTests
         // First play
         timeProvider.MonotonicTime.Returns(1000u);
         emoteBoard.Start(subject, "wave", serverTick: 1000, durationMs: durationMs);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> firstPlay = DrainAllMessages();
@@ -151,6 +152,7 @@ public partial class PeerSimulationTests
         // Second play of the same emote (preemptive: while first is still active)
         timeProvider.MonotonicTime.Returns(3000u);
         emoteBoard.Start(subject, "wave", serverTick: 3000, durationMs: durationMs);
+        PublishEmoteSnapshot(subject, seq: 3);
         simulation.SimulateTick(peers, tickCounter: 3);
 
         List<OutgoingMessage> secondPlay = DrainAllMessages();
@@ -168,7 +170,7 @@ public partial class PeerSimulationTests
 
         // Subject moves AND starts emoting — EmoteStarted already carries PlayerState
         emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
-        PublishSnapshot(subject, seq: 2, position: new Vector3(5f, 0f, 0f));
+        PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(5f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
@@ -191,7 +193,7 @@ public partial class PeerSimulationTests
         // Start emote + queue resync on the same tick
         AddResyncRequest(observer, subject, knownSeq: 1);
         emoteBoard.Start(subject, "dance", serverTick: 200, durationMs: null);
-        PublishSnapshot(subject, seq: 3);
+        PublishEmoteSnapshot(subject, seq: 3);
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> messages = DrainAllMessages();
@@ -208,7 +210,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
-        PublishSnapshot(subject, seq: 2);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
@@ -229,16 +231,17 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Subject teleports AND starts emoting in the same tick
+        // Subject teleports AND starts emoting in the same tick — separate snapshots
         emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
         PublishTeleportSnapshot(subject, seq: 2, new Vector3(50, 60, 70));
+        PublishEmoteSnapshot(subject, seq: 3, new Vector3(50, 60, 70));
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported), Is.True);
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted), Is.True);
 
-        // Teleported must precede EmoteStarted
+        // Teleported must precede EmoteStarted (teleport at seq 2 scanned before emote at seq 3)
         int teleportIdx = messages.FindIndex(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
         int emoteIdx = messages.FindIndex(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
         Assert.That(teleportIdx, Is.LessThan(emoteIdx));
@@ -252,7 +255,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         emoteBoard.Start(subject, "dance", serverTick: 100, durationMs: null);
-        PublishSnapshot(subject, seq: 2);
+        PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
@@ -271,15 +274,16 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void PlayerJoined_SentAlongsideEmoteStarted_ForNewSubject()
+    public void PlayerJoined_SkipsEmoteSync_ForNewSubject()
     {
-        // Subject is already emoting when observer first sees them
+        // Subject is already emoting when observer first sees them —
+        // PlayerJoined carries full state but EmoteStarted is not sent on the same tick
         emoteBoard.Start(subject, "dance", serverTick: 50, durationMs: null);
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined), Is.True);
-        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted), Is.True);
+        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted), Is.False);
     }
 }

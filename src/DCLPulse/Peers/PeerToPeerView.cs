@@ -12,11 +12,6 @@ public struct PeerToPeerView
     public PeerIndex Onto;
 
     /// <summary>
-    ///     Last sent sequence number
-    /// </summary>
-    public uint LastSentSeq;
-
-    /// <summary>
     ///     The actual snapshot that was last sent to the observer about this subject.
     ///     Used as the baseline for computing diffs - avoids cross-worker reads of the subject's ring buffer.
     /// </summary>

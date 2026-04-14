@@ -25,8 +25,6 @@ public class EmoteStartHandler(
         uint? durationMs = emoteStart.HasDurationMs ? emoteStart.DurationMs : null;
         uint now = timeProvider.MonotonicTime;
 
-        emoteBoard.Start(from, emoteStart.EmoteId, now, durationMs);
-
         PlayerState state = emoteStart.PlayerState;
         Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(state.ParcelIndex, state.Position);
 
@@ -44,8 +42,10 @@ public class EmoteStartHandler(
             state.GetHeadYaw(),
             state.GetHeadPitch(),
             (PlayerAnimationFlags)state.StateFlags,
-            state.GlideState);
+            state.GlideState,
+            IsEmote: true);
 
+        emoteBoard.Start(from, emoteStart.EmoteId, now, durationMs);
         snapshotBoard.Publish(from, in snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);
 

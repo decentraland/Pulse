@@ -4,7 +4,6 @@ using Google.Protobuf;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Transport;
-using System.Collections.Concurrent;
 
 namespace Pulse.Messaging;
 
@@ -59,68 +58,11 @@ public sealed class MessagePipe(
 
     public int OutgoingQueueDepth => Volatile.Read(ref outgoingDepth);
 
-    private ConcurrentDictionary<PeerIndex, ConcurrentDictionary<PeerIndex, HashSet<MessageSentRecord>>> lastOutgoingMessagesWithSequence = new ();
-
     public void Send(OutgoingMessage message)
     {
-        switch (message.Message.MessageCase)
-        {
-            case ServerMessage.MessageOneofCase.EmoteStarted:
-                AddSequence(new PeerIndex(message.Message.EmoteStarted.SubjectId), message.To, message.Message.EmoteStarted.Sequence, message.Message.MessageCase);
-                break;
-            case ServerMessage.MessageOneofCase.PlayerStateDelta:
-                AddSequence(new PeerIndex(message.Message.PlayerStateDelta.SubjectId), message.To, message.Message.PlayerStateDelta.NewSeq, message.Message.MessageCase);
-                break;
-            case ServerMessage.MessageOneofCase.PlayerStateFull:
-                AddSequence(new PeerIndex(message.Message.PlayerStateFull.Sequence), message.To, message.Message.PlayerStateFull.Sequence, message.Message.MessageCase);
-                break;
-            case ServerMessage.MessageOneofCase.Teleported:
-                AddSequence(new PeerIndex(message.Message.Teleported.SubjectId), message.To, message.Message.Teleported.Sequence, message.Message.MessageCase);
-                break;
-        }
-
         outgoingChannel.Writer.TryWrite(message);
         Interlocked.Increment(ref outgoingDepth);
         outgoingMessageCounters.Increment(message.Message.MessageCase);
-
-        void AddSequence(PeerIndex from, PeerIndex to, uint sequence, ServerMessage.MessageOneofCase type)
-        {
-            if (!lastOutgoingMessagesWithSequence.TryGetValue(from, out var log))
-            {
-                log = new ConcurrentDictionary<PeerIndex, HashSet<MessageSentRecord>>();
-                lastOutgoingMessagesWithSequence[from] = log;
-            }
-
-            if (!log.TryGetValue(to, out var hashSet))
-            {
-                hashSet = new HashSet<MessageSentRecord>();
-                log[to] = hashSet;
-            }
-
-            if (hashSet.Count >= 5)
-            {
-                MessageSentRecord oldest = hashSet.MinBy(b => b.Sequence)!;
-                hashSet.Remove(oldest);
-            }
-
-            if (!hashSet.Add(new MessageSentRecord(sequence, type)))
-                logger.LogWarning("Sequence {Sequence} {Type} sent duplicated for peer {PeerIndex}", sequence, type, from);
-
-            if (hashSet.Count >= 5)
-            {
-                MessageSentRecord oldest = hashSet.MinBy(b => b.Sequence)!;
-                hashSet.Remove(oldest);
-            }
-        }
-    }
-
-    private record MessageSentRecord(uint Sequence, ServerMessage.MessageOneofCase Type)
-    {
-        public virtual bool Equals(MessageSentRecord? other) =>
-            other != null && other.Sequence == Sequence;
-
-        public override int GetHashCode() =>
-            Sequence.GetHashCode();
     }
 
     /// <summary>

@@ -82,7 +82,7 @@ public class SelfMirrorTests
         identityBoard.Set(subject, "0xSUBJECT_WALLET");
     }
 
-    private void PublishSnapshot(PeerIndex peer, uint seq, Vector3? position = null)
+    private void PublishSnapshot(PeerIndex peer, uint seq, Vector3? position = null, bool isEmote = false)
     {
         snapshotBoard.SetActive(peer);
 
@@ -94,7 +94,8 @@ public class SelfMirrorTests
             RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed));
+            GlideState: GlideState.PropClosed,
+            IsEmote: isEmote));
     }
 
     private void SetVisibleSubjects(params (PeerIndex Subject, PeerViewSimulationTier Tier)[] entries)
@@ -182,6 +183,7 @@ public class SelfMirrorTests
 
         timeProvider.MonotonicTime.Returns(100u);
         emoteBoard.Start(observer, "wave", serverTick: 100, durationMs: 2000);
+        PublishSnapshot(observer, seq: 2, isEmote: true);
 
         simulation.SimulateTick(peers, tickCounter: 1);
 

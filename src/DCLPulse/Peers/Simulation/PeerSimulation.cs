@@ -270,7 +270,6 @@ public sealed class PeerSimulation : IPeerSimulation
         Dictionary<PeerIndex, uint>? resyncRequests)
     {
         PeerSnapshot lastSentState = view.LastSentSnapshot;
-        var emoteStartedSent = false;
         var discreteEventSent = false;
 
         // --- Phase 1: scan intermediates, collect last of each discrete event type ---
@@ -287,7 +286,8 @@ public sealed class PeerSimulation : IPeerSimulation
             discreteEventSent = true;
         }
 
-        // --- Broadcast emote start (only if more recent than the last stop) ---
+        // --- Broadcast emote start only if the emote is still active (not stopped in the same batch).
+        //     An emote that started and stopped between ticks is invisible to the observer. ---
         bool emoteStartIsEffective = lastEmoteStart.HasValue
                                      && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
 
@@ -303,16 +303,13 @@ public sealed class PeerSimulation : IPeerSimulation
             if (es.Seq > lastSentState.Seq)
                 lastSentState = es;
 
-            emoteStartedSent = true;
             discreteEventSent = true;
         }
 
-        // --- Phase 2: sync emote stop (only if we didn't just start one) ---
-        if (!emoteStartedSent)
-        {
-            PeerSnapshot? effectiveStop = !emoteStartIsEffective ? lastEmoteStop : null;
-            TrySyncEmoteStop(observerId, entry.Subject, ref view, latestSnapshot, effectiveStop);
-        }
+        // --- Phase 2: sync emote stop (skip when the start is still effective —
+        //     either just sent, or already synced via dedup — the emote is active) ---
+        if (!emoteStartIsEffective)
+            TrySyncEmoteStop(observerId, entry.Subject, ref view, latestSnapshot, lastEmoteStop);
 
         // --- Phase 3: resync or delta (skip if discrete events already carried full state) ---
         if (!discreteEventSent)

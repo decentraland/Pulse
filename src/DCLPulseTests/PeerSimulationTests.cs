@@ -109,6 +109,22 @@ public partial class PeerSimulationTests
             GlideState: GlideState.PropClosed));
     }
 
+    private void PublishEmoteSnapshot(PeerIndex peer, uint seq, Vector3? position = null)
+    {
+        snapshotBoard.SetActive(peer);
+
+        snapshotBoard.Publish(peer, new PeerSnapshot(
+            Seq: seq, ServerTick: seq * 10,
+            Parcel: 0,
+            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
+            GlobalPosition: position ?? Vector3.Zero,
+            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
+            HeadYaw: null, HeadPitch: null,
+            AnimationFlags: PlayerAnimationFlags.None,
+            GlideState: GlideState.PropClosed,
+            IsEmote: true));
+    }
+
     private void AddResyncRequest(PeerIndex observerPeer, PeerIndex subjectPeer, uint knownSeq)
     {
         PeerState state = peers[observerPeer];

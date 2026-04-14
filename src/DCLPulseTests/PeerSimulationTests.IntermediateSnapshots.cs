@@ -266,13 +266,13 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void MultipleTeleports_InIntermediates_AllDetected()
+    public void MultipleTeleports_InIntermediates_OnlyLastSent()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Two teleports between ticks
+        // Two teleports between ticks — only the final destination matters
         PublishTeleportSnapshot(subject, seq: 2, new Vector3(10f, 0f, 0f));
         PublishTeleportSnapshot(subject, seq: 3, new Vector3(50f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -283,20 +283,18 @@ public partial class PeerSimulationTests
                        .Where(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported)
                        .ToList();
 
-        Assert.That(teleports.Count, Is.EqualTo(2));
-        Assert.That(teleports[0].Message.Teleported.State.Position.X, Is.EqualTo(10f));
-        Assert.That(teleports[1].Message.Teleported.State.Position.X, Is.EqualTo(50f));
+        Assert.That(teleports.Count, Is.EqualTo(1));
+        Assert.That(teleports[0].Message.Teleported.State.Position.X, Is.EqualTo(50f));
     }
 
     [Test]
-    public void OnlyFirstEmote_DetectedInIntermediates_WhenMultipleEmoteSnapshots()
+    public void OnlyLastEmote_DetectedInIntermediates_WhenMultipleEmoteSnapshots()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Two emote snapshots, but emoteBoard only has one active emote
-        // emote metadata is now inline in the snapshot
+        // Two emote snapshots — only the last one is the currently active emote
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(1f, 0f, 0f));
         PublishEmoteSnapshot(subject, seq: 3, position: new Vector3(2f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -307,8 +305,7 @@ public partial class PeerSimulationTests
                     .Where(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted)
                     .ToList();
 
-        // Only one EmoteStarted — the first IsEmote snapshot triggers it, subsequent ones are skipped
         Assert.That(emotes.Count, Is.EqualTo(1));
-        Assert.That(emotes[0].Message.EmoteStarted.Sequence, Is.EqualTo(2u));
+        Assert.That(emotes[0].Message.EmoteStarted.Sequence, Is.EqualTo(3u));
     }
 }

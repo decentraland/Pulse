@@ -1,4 +1,6 @@
 using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
@@ -265,5 +267,76 @@ public partial class PeerSimulationTests
             "No response sent — client is stuck in resync-pending mode because the targeted delta was null");
 
         Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
+    }
+
+    // --- ResyncWithDelta flag tests ---
+
+    private PeerSimulation CreateSimulationWithResyncDelta() =>
+        new (
+            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            SimulationSteps, timeProvider, Substitute.For<ITransport>(),
+            profileBoard, Substitute.For<ILogger<PeerSimulation>>(),
+            resyncWithDelta: true);
+
+    [Test]
+    public void Resync_SendsTargetedDelta_WhenResyncWithDeltaEnabled()
+    {
+        PeerSimulation deltaSimulation = CreateSimulationWithResyncDelta();
+
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        deltaSimulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages(); // PlayerJoined
+
+        PublishSnapshot(subject, seq: 2);
+        PublishSnapshot(subject, seq: 3, position: new Vector3(5f, 0f, 0f));
+
+        AddResyncRequest(observer, subject, knownSeq: 1);
+
+        deltaSimulation.SimulateTick(peers, tickCounter: 1);
+
+        OutgoingMessage msg = DrainSingleMessage();
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
+        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
+        Assert.That(msg.Message.PlayerStateDelta.NewSeq, Is.EqualTo(3u));
+    }
+
+    [Test]
+    public void Resync_FallsBackToFullState_WhenKnownSeqEvictedFromRing_WithDeltaEnabled()
+    {
+        PeerSimulation deltaSimulation = CreateSimulationWithResyncDelta();
+
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        deltaSimulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+
+        // Advance past ring capacity so seq 1 is evicted
+        for (uint s = 2; s <= RING_CAPACITY + 5; s++)
+            PublishSnapshot(subject, seq: s);
+
+        AddResyncRequest(observer, subject, knownSeq: 1);
+
+        deltaSimulation.SimulateTick(peers, tickCounter: 1);
+
+        OutgoingMessage msg = DrainSingleMessage();
+        Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
+        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateFull));
+    }
+
+    [Test]
+    public void Resync_SendsFullState_WhenResyncWithDeltaDisabled_EvenIfKnownSeqInRing()
+    {
+        // Default simulation has resyncWithDelta=false
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+
+        PublishSnapshot(subject, seq: 2, position: new Vector3(5f, 0f, 0f));
+
+        AddResyncRequest(observer, subject, knownSeq: 1);
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        OutgoingMessage msg = DrainSingleMessage();
+        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateFull));
     }
 }

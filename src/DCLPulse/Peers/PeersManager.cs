@@ -110,7 +110,7 @@ public sealed class PeersManager : BackgroundService
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
                 messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, peerSimulationLogger,
-                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier);
+                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta);
 
             int idx = i;
 

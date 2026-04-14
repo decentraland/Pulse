@@ -29,4 +29,10 @@ public sealed class PeerOptions
     ///     Tier index (0, 1, 2) used for self-mirror updates, controlling update frequency and field detail.
     /// </summary>
     public int SelfMirrorTier { get; set; }
+
+    /// <summary>
+    ///     When enabled, resync responses attempt a targeted delta from the client's
+    ///     known baseline before falling back to STATE_FULL.
+    /// </summary>
+    public bool ResyncWithDelta { get; set; }
 }

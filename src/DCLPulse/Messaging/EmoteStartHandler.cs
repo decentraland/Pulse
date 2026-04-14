@@ -7,7 +7,6 @@ using System.Numerics;
 namespace Pulse.Messaging;
 
 public class EmoteStartHandler(
-    EmoteBoard emoteBoard,
     SnapshotBoard snapshotBoard,
     SpatialGrid spatialGrid,
     ITimeProvider timeProvider,
@@ -43,9 +42,8 @@ public class EmoteStartHandler(
             state.GetHeadPitch(),
             (PlayerAnimationFlags)state.StateFlags,
             state.GlideState,
-            IsEmote: true);
+            Emote: new EmoteState(emoteStart.EmoteId, now, durationMs));
 
-        emoteBoard.Start(from, emoteStart.EmoteId, now, durationMs);
         snapshotBoard.Publish(from, in snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);
 

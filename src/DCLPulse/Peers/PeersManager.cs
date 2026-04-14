@@ -47,7 +47,6 @@ public sealed class PeersManager : BackgroundService
     private readonly Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
-    private readonly EmoteBoard emoteBoard;
     private readonly ClientMessageCounters incomingMessageCounters;
 
     public PeersManager(
@@ -64,7 +63,6 @@ public sealed class PeersManager : BackgroundService
         Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
         ITransport transport,
         ProfileBoard profileBoard,
-        EmoteBoard emoteBoard,
         ClientMessageCounters incomingMessageCounters)
     {
         this.messagePipe = messagePipe;
@@ -74,7 +72,6 @@ public sealed class PeersManager : BackgroundService
         this.messageHandlers = messageHandlers;
         this.transport = transport;
         this.profileBoard = profileBoard;
-        this.emoteBoard = emoteBoard;
         this.incomingMessageCounters = incomingMessageCounters;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
@@ -112,7 +109,7 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, emoteBoard, peerSimulationLogger,
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, peerSimulationLogger,
                 peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier);
 
             int idx = i;

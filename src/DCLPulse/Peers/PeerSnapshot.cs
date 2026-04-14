@@ -1,7 +1,23 @@
-﻿using Decentraland.Pulse;
+using Decentraland.Pulse;
 using System.Numerics;
 
 namespace Pulse.Peers;
+
+/// <summary>
+///     Emote metadata carried on a snapshot. Null on PeerSnapshot means no emote activity.
+/// </summary>
+public record struct EmoteState(
+    string? EmoteId,
+    uint StartTick,
+    uint? DurationMs = null,
+    EmoteStopReason? StopReason = null
+);
+
+public static class PeerSnapshotExtensions
+{
+    public static bool IsEmoting(this in PeerSnapshot snapshot) =>
+        snapshot.Emote?.EmoteId != null;
+}
 
 /// <summary>
 ///     Contains positional and animation state for at a given moment of time
@@ -30,5 +46,7 @@ public record struct PeerSnapshot(
 
     // Flags
     bool IsTeleport = false,
-    bool IsEmote = false
+
+    // Emote — non-null means emote start or stop activity on this snapshot
+    EmoteState? Emote = null
 );

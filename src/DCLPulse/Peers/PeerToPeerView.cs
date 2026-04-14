@@ -31,17 +31,10 @@ public struct PeerToPeerView
     public int LastSentProfileVersion;
 
     /// <summary>
-    ///     The emote ID last sent to the observer for this subject, or null if idle.
-    ///     Compared against <see cref="Simulation.EmoteBoard" /> each tick to detect transitions.
+    ///     The emote last sent to the observer for this subject, or null if idle.
+    ///     Tracks EmoteId + StartTick for deduplication, DurationMs for server-side one-shot expiry.
     /// </summary>
-    public string? LastSentEmoteId;
-
-    /// <summary>
-    ///     The start tick of the last emote sent to the observer.
-    ///     Used together with <see cref="LastSentEmoteId" /> to detect preemptive replays
-    ///     of the same emote (same ID, different start tick).
-    /// </summary>
-    public uint LastSentEmoteStartTick;
+    public EmoteState? LastSentEmote;
 
     /// <summary>
     ///     The sequence number of the last teleport snapshot sent to the observer for this subject.

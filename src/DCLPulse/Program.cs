@@ -61,12 +61,6 @@ builder.Services.AddSingleton<ProfileBoard>(sp =>
     return new ProfileBoard(transportOptions.MaxPeers);
 });
 
-builder.Services.AddSingleton(sp =>
-{
-    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
-    return new EmoteBoard(transportOptions.MaxPeers);
-});
-
 // Simulation
 builder.Services.AddSingleton(sp =>
 {

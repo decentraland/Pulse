@@ -42,7 +42,6 @@ public class DrainPeerLifeCycleEventsTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100),
             new ClientMessageCounters(8));
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();

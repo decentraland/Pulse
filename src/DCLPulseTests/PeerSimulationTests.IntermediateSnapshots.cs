@@ -17,7 +17,7 @@ public partial class PeerSimulationTests
         DrainAllMessages(); // PlayerJoined
 
         // Multiple snapshots between ticks — emote is in the middle, not the latest
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishSnapshot(subject, seq: 2);
         PublishEmoteSnapshot(subject, seq: 3);
         PublishSnapshot(subject, seq: 4);
@@ -39,7 +39,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Emote snapshot at position A, latest snapshot at position B
-        emoteBoard.Start(subject, "dance", serverTick: 200, durationMs: null);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 20f, 30f));
         PublishSnapshot(subject, seq: 3, position: new Vector3(99f, 99f, 99f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -81,9 +81,9 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Teleport at seq 2, emote at seq 3, normal movement at seq 4
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishTeleportSnapshot(subject, seq: 2, new Vector3(50f, 0f, 0f));
-        PublishEmoteSnapshot(subject, seq: 3, new Vector3(50f, 0f, 0f));
+        PublishEmoteSnapshot(subject, seq: 3, position: new Vector3(50f, 0f, 0f));
         PublishSnapshot(subject, seq: 4, position: new Vector3(51f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
 
@@ -104,7 +104,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Emote at seq 2 (pos X=10), normal movement at seq 3 (pos X=20)
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 0f, 0f));
         PublishSnapshot(subject, seq: 3, position: new Vector3(20f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -180,7 +180,8 @@ public partial class PeerSimulationTests
 
         // Emote in intermediates + pending resync
         AddResyncRequest(observer, subject, knownSeq: 1);
-        emoteBoard.Start(subject, "wave", serverTick: 300, durationMs: 3000);
+
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 3);
         PublishSnapshot(subject, seq: 4);
         simulation.SimulateTick(peers, tickCounter: 2);
@@ -222,7 +223,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Emote starts — observer records it
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // EmoteStarted
@@ -230,7 +231,7 @@ public partial class PeerSimulationTests
         // New emote starts (preemptive) — the old emote was never explicitly stopped,
         // but a new one replaces it. The snapshot with IsEmote triggers EmoteStarted.
         // Phase 2 (TrySyncEmoteStop) must be skipped because emoteStartedSent=true.
-        emoteBoard.Start(subject, "dance", serverTick: 200, durationMs: null);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 3);
         simulation.SimulateTick(peers, tickCounter: 2);
 
@@ -295,7 +296,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Two emote snapshots, but emoteBoard only has one active emote
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(1f, 0f, 0f));
         PublishEmoteSnapshot(subject, seq: 3, position: new Vector3(2f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);

@@ -32,7 +32,6 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
-    private readonly EmoteBoard emoteBoard;
     private readonly ILogger<PeerSimulation> logger;
     private readonly bool selfMirrorEnabled;
     private readonly PeerViewSimulationTier selfMirrorTier;
@@ -73,7 +72,6 @@ public sealed class PeerSimulation : IPeerSimulation
         ITimeProvider timeProvider,
         ITransport transport,
         ProfileBoard profileBoard,
-        EmoteBoard emoteBoard,
         ILogger<PeerSimulation> logger,
         bool selfMirrorEnabled = false,
         int selfMirrorTier = 0)
@@ -86,7 +84,6 @@ public sealed class PeerSimulation : IPeerSimulation
         this.timeProvider = timeProvider;
         this.transport = transport;
         this.profileBoard = profileBoard;
-        this.emoteBoard = emoteBoard;
         this.logger = logger;
         this.selfMirrorEnabled = selfMirrorEnabled;
         this.selfMirrorTier = new PeerViewSimulationTier((byte)selfMirrorTier);
@@ -125,7 +122,6 @@ public sealed class PeerSimulation : IPeerSimulation
                     spatialGrid.Remove(observerId);
                     identityBoard.Remove(observerId);
                     profileBoard.Remove(observerId);
-                    emoteBoard.Remove(observerId);
                     observerViews.Remove(observerId);
                     peersToBeRemoved.Add(observerId);
                     logger.LogInformation("Peer {Peer} removed after disconnected", observerId);
@@ -135,9 +131,6 @@ public sealed class PeerSimulation : IPeerSimulation
 
             if (observerState.ConnectionState != PeerConnectionState.AUTHENTICATED)
                 continue;
-
-            // Completes the emote in case no observer is near this peer
-            emoteBoard.TryComplete(observerId, timeProvider.MonotonicTime);
 
             if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
                 continue;
@@ -259,18 +252,16 @@ public sealed class PeerSimulation : IPeerSimulation
             PeerSnapshot lastSentState = view.LastSentSnapshot;
             bool emoteStartedSent = false;
             bool discreteEventSent = false;
+            PeerSnapshot? emoteStopSnapshot = null;
 
             for (uint seq = view.LastSentSnapshot.Seq + 1; seq <= latestSnapshot.Seq; seq++)
             {
                 if (!snapshotBoard.TryRead(entry.Subject, seq, out PeerSnapshot snapshot))
                     continue;
 
-                if (snapshot.IsEmote && !emoteStartedSent)
+                if (snapshot.Emote is { EmoteId: not null } emote && !emoteStartedSent)
                 {
-                    EmoteState? emoteState = emoteBoard.Get(entry.Subject);
-
-                    if (emoteState?.EmoteId != null
-                        && !(emoteState.EmoteId == view.LastSentEmoteId && emoteState.StartTick == view.LastSentEmoteStartTick))
+                    if (!(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartTick == view.LastSentEmote?.StartTick))
                     {
                         messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
                         {
@@ -278,23 +269,25 @@ public sealed class PeerSimulation : IPeerSimulation
                             {
                                 SubjectId = entry.Subject.Value,
                                 Sequence = snapshot.Seq,
-                                ServerTick = emoteState.StartTick,
-                                EmoteId = emoteState.EmoteId,
+                                ServerTick = emote.StartTick,
+                                EmoteId = emote.EmoteId,
                                 PlayerState = CreatePlayerState(snapshot),
                             },
                         }, PacketMode.RELIABLE));
 
-                        view.LastSentEmoteId = emoteState.EmoteId;
-                        view.LastSentEmoteStartTick = emoteState.StartTick;
+                        view.LastSentEmote = emote;
                         resyncRequests?.Remove(entry.Subject);
                         lastSentState = snapshot;
                         emoteStartedSent = true;
                         discreteEventSent = true;
 
                         logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
-                            emoteState.EmoteId, entry.Subject, observerId);
+                            emote.EmoteId, entry.Subject, observerId);
                     }
                 }
+
+                if (snapshot.Emote is { StopReason: not null })
+                    emoteStopSnapshot = snapshot;
 
                 if (snapshot.IsTeleport && view.LastSentTeleportSeq < snapshot.Seq)
                 {
@@ -322,7 +315,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
             // --- Phase 2: Sync emote stop (only if we didn't just start one) ---
             if (!emoteStartedSent)
-                TrySyncEmoteStop();
+                TrySyncEmoteStop(emoteStopSnapshot);
 
             // --- Phase 3: Resync or delta (skip if discrete events already carried full state) ---
             if (!discreteEventSent)
@@ -374,31 +367,52 @@ public sealed class PeerSimulation : IPeerSimulation
                 }
             }
 
-            void TrySyncEmoteStop()
+            void TrySyncEmoteStop(PeerSnapshot? stopSnapshot)
             {
-                EmoteState? emoteState = emoteBoard.Get(entry.Subject);
-
-                if (emoteState?.EmoteId == view.LastSentEmoteId && emoteState?.StartTick == view.LastSentEmoteStartTick)
+                if (view.LastSentEmote?.EmoteId == null)
                     return;
 
-                if (emoteState is { EmoteId: null, StopTick: not null, StopReason: not null })
+                EmoteState sentEmote = view.LastSentEmote.Value;
+
+                // Time-based expiry for one-shot emotes — check before the no-change guard
+                // because the snapshot still carries the active emote even after time has elapsed
+                if (sentEmote.DurationMs.HasValue
+                    && timeProvider.MonotonicTime >= sentEmote.StartTick
+                    && timeProvider.MonotonicTime - sentEmote.StartTick >= sentEmote.DurationMs.Value)
                 {
-                    messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
-                    {
-                        EmoteStopped = new EmoteStopped
-                        {
-                            SubjectId = entry.Subject.Value,
-                            ServerTick = emoteState.StopTick.Value,
-                            Reason = emoteState.StopReason.Value,
-                        },
-                    }, PacketMode.RELIABLE));
-
-                    view.LastSentEmoteId = null;
-                    view.LastSentEmoteStartTick = emoteState.StartTick;
-
-                    logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
-                        entry.Subject, observerId, emoteState.StopReason.Value);
+                    SendEmoteStopped(latestSnapshot, EmoteStopReason.Completed, timeProvider.MonotonicTime);
+                    return;
                 }
+
+                // Nothing changed — latest snapshot still reflects the same emote we already sent
+                if (latestSnapshot.Emote?.EmoteId == sentEmote.EmoteId
+                    && latestSnapshot.Emote?.StartTick == sentEmote.StartTick
+                    && stopSnapshot == null)
+                    return;
+
+                // Explicit stop from EmoteStopHandler (stop snapshot found in intermediates)
+                if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
+                    SendEmoteStopped(stopSnapshot.Value, stopEmote.StopReason!.Value, stopSnapshot.Value.ServerTick);
+            }
+
+            void SendEmoteStopped(PeerSnapshot snapshot, EmoteStopReason reason, uint serverTick)
+            {
+                messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+                {
+                    EmoteStopped = new EmoteStopped
+                    {
+                        SubjectId = entry.Subject.Value,
+                        ServerTick = serverTick,
+                        Reason = reason,
+                        Sequence = snapshot.Seq,
+                        PlayerState = CreatePlayerState(snapshot),
+                    },
+                }, PacketMode.RELIABLE));
+
+                view.LastSentEmote = null;
+
+                logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
+                    entry.Subject, observerId, reason);
             }
 
             void SendDelta(PeerSnapshot baseline, PacketMode packetMode, PeerSnapshot target)

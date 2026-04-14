@@ -136,6 +136,12 @@ public sealed class SnapshotBoard
         }
     }
 
+    /// <summary>
+    ///     Returns true if the peer's latest snapshot has an active emote (non-null EmoteId).
+    /// </summary>
+    public bool IsEmoting(PeerIndex id) =>
+        TryRead(id, out PeerSnapshot snapshot) && snapshot.IsEmoting();
+
     public void SetActive(PeerIndex id)
     {
         Volatile.Write(ref active[(int)id.Value], true);

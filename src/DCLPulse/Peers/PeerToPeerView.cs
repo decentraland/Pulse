@@ -41,4 +41,12 @@ public struct PeerToPeerView
     ///     Prevents duplicate teleport broadcasts and supports consecutive teleports.
     /// </summary>
     public uint? LastSentTeleportSeq;
+
+    /// <summary>
+    ///     Sequence number of the last seq-carrying message (STATE_FULL, STATE_DELTA, EMOTE_STARTED,
+    ///     EMOTE_STOPPED, TELEPORT, PLAYER_JOINED) sent to the observer for this subject.
+    ///     Safety net: any subsequent send where the new seq equals <see cref="LastSentSeq" /> is
+    ///     a duplicate delivery bug in the simulation pipeline and gets logged as an error.
+    /// </summary>
+    public uint LastSentSeq;
 }

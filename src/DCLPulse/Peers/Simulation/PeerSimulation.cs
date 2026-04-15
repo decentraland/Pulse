@@ -254,6 +254,7 @@ public sealed class PeerSimulation : IPeerSimulation
             LastSentProfileVersion = profileVersion,
             LastSentTeleportSeq = latestSnapshot.Seq,
             LastSentSnapshot = latestSnapshot,
+            LastSentSeq = latestSnapshot.Seq,
         };
     }
 
@@ -279,7 +280,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // --- Broadcast teleport (spatial snap first) ---
         if (lastTeleport is { } tp && view.LastSentTeleportSeq < tp.Seq)
         {
-            SendTeleport(observerId, entry.Subject, tp);
+            SendTeleport(observerId, ref view, entry.Subject, tp);
             resyncRequests?.Remove(entry.Subject);
             view.LastSentTeleportSeq = tp.Seq;
             lastSentState = tp;
@@ -296,7 +297,7 @@ public sealed class PeerSimulation : IPeerSimulation
             && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartTick == view.LastSentEmote?.StartTick))
         {
             PeerSnapshot es = lastEmoteStart.Value;
-            SendEmoteStarted(observerId, entry.Subject, es, emote);
+            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote);
             resyncRequests?.Remove(entry.Subject);
             view.LastSentEmote = emote;
 
@@ -315,7 +316,7 @@ public sealed class PeerSimulation : IPeerSimulation
         if (!discreteEventSent)
         {
             lastSentState = HandleResyncOrDelta(
-                observerId, entry, lastSentState, latestSnapshot, resyncRequests);
+                observerId, entry, ref view, lastSentState, latestSnapshot, resyncRequests);
         }
 
         return lastSentState;
@@ -358,12 +359,18 @@ public sealed class PeerSimulation : IPeerSimulation
         EmoteState sentEmote = view.LastSentEmote.Value;
 
         // Time-based expiry for one-shot emotes — check before the no-change guard
-        // because the snapshot still carries the active emote even after time has elapsed
+        // because the snapshot still carries the active emote even after time has elapsed.
+        //
+        // Note: the Completed EmoteStopped carries latestSnapshot.Seq, which is also the seq
+        // Phase 3 will use for a subsequent STATE_DELTA (target = latestSnapshot), and may
+        // match the Phase 1 teleport seq when the teleport snapshot itself is the latest one.
+        // In those cases the duplicate-seq tripwire in SendTracked will fire for a legitimate
+        // reason — the two messages carry distinct payloads sourced from the same snapshot.
         if (sentEmote.DurationMs.HasValue
             && timeProvider.MonotonicTime >= sentEmote.StartTick
             && timeProvider.MonotonicTime - sentEmote.StartTick >= sentEmote.DurationMs.Value)
         {
-            SendEmoteStopped(observerId, subjectId, latestSnapshot, EmoteStopReason.Completed, timeProvider.MonotonicTime);
+            SendEmoteStopped(observerId, ref view, subjectId, latestSnapshot, EmoteStopReason.Completed, timeProvider.MonotonicTime);
             view.LastSentEmote = null;
             return;
         }
@@ -377,7 +384,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // Explicit stop from EmoteStopHandler (stop snapshot found in intermediates)
         if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
         {
-            SendEmoteStopped(observerId, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value, stopSnapshot.Value.ServerTick);
+            SendEmoteStopped(observerId, ref view, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value, stopSnapshot.Value.ServerTick);
             view.LastSentEmote = null;
         }
     }
@@ -387,13 +394,14 @@ public sealed class PeerSimulation : IPeerSimulation
     private PeerSnapshot HandleResyncOrDelta(
         PeerIndex observerId,
         InterestEntry entry,
+        ref PeerToPeerView view,
         PeerSnapshot lastSentState,
         PeerSnapshot latestSnapshot,
         Dictionary<PeerIndex, uint>? resyncRequests)
     {
         if (resyncRequests == null || !resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
         {
-            SendDelta(observerId, entry.Subject, lastSentState, latestSnapshot, entry.Tier, PacketMode.UNRELIABLE_SEQUENCED);
+            SendDelta(observerId, ref view, entry.Subject, lastSentState, latestSnapshot, entry.Tier, PacketMode.UNRELIABLE_SEQUENCED);
             return latestSnapshot;
         }
 
@@ -403,17 +411,17 @@ public sealed class PeerSimulation : IPeerSimulation
             && snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
             && knownSnapshot.Seq != latestSnapshot.Seq)
         {
-            SendDelta(observerId, entry.Subject, knownSnapshot, latestSnapshot, entry.Tier, PacketMode.RELIABLE);
+            SendDelta(observerId, ref view, entry.Subject, knownSnapshot, latestSnapshot, entry.Tier, PacketMode.RELIABLE);
 
             logger.LogInformation("Resync fulfilled with targeted delta for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
                 entry.Subject, observerId, lastKnownSeq);
         }
         else
         {
-            messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+            SendTracked(observerId, ref view, latestSnapshot.Seq, new ServerMessage
             {
                 PlayerStateFull = CreateFullState(entry.Subject, latestSnapshot),
-            }, PacketMode.RELIABLE));
+            }, PacketMode.RELIABLE);
 
             logger.LogWarning("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq}, gap={SeqGap})",
                 entry.Subject, observerId, lastKnownSeq, latestSnapshot.Seq - lastKnownSeq);
@@ -424,9 +432,27 @@ public sealed class PeerSimulation : IPeerSimulation
 
     // ── Message sending ─────────────────────────────────────────────
 
-    private void SendTeleport(PeerIndex observerId, PeerIndex subjectId, PeerSnapshot snapshot)
+    /// <summary>
+    ///     Sends a seq-carrying message to the observer and records the seq on the view as a
+    ///     duplicate-delivery tripwire. Logs an error if <paramref name="seq" /> equals
+    ///     <see cref="PeerToPeerView.LastSentSeq" /> — that means the same sequence number
+    ///     has already been delivered to this observer for this subject, which indicates a
+    ///     bug in the simulation pipeline.
+    /// </summary>
+    private void SendTracked(PeerIndex observerId, ref PeerToPeerView view, uint seq, ServerMessage message, PacketMode packetMode)
     {
-        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        if (seq == view.LastSentSeq)
+            logger.LogError(
+                "Duplicate seq {Seq} sent to observer {Observer} for subject {Subject} ({MessageCase})",
+                seq, observerId, view.Onto, message.MessageCase);
+
+        view.LastSentSeq = seq;
+        messagePipe.Send(new OutgoingMessage(observerId, message, packetMode));
+    }
+
+    private void SendTeleport(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot)
+    {
+        SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
             Teleported = new TeleportPerformed
             {
@@ -435,15 +461,15 @@ public sealed class PeerSimulation : IPeerSimulation
                 ServerTick = snapshot.ServerTick,
                 State = CreatePlayerState(snapshot),
             },
-        }, PacketMode.RELIABLE));
+        }, PacketMode.RELIABLE);
 
         logger.LogInformation("Broadcasting teleport from {Subject} to {ObserverId} at {Position}",
             subjectId, observerId, snapshot.GlobalPosition);
     }
 
-    private void SendEmoteStarted(PeerIndex observerId, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote)
+    private void SendEmoteStarted(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote)
     {
-        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
             EmoteStarted = new EmoteStarted
             {
@@ -453,15 +479,16 @@ public sealed class PeerSimulation : IPeerSimulation
                 EmoteId = emote.EmoteId,
                 PlayerState = CreatePlayerState(snapshot),
             },
-        }, PacketMode.RELIABLE));
+        }, PacketMode.RELIABLE);
 
         logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
             emote.EmoteId, subjectId, observerId);
     }
 
-    private void SendEmoteStopped(PeerIndex observerId, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason, uint serverTick)
+    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason,
+        uint serverTick)
     {
-        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
             EmoteStopped = new EmoteStopped
             {
@@ -471,13 +498,14 @@ public sealed class PeerSimulation : IPeerSimulation
                 Sequence = snapshot.Seq,
                 PlayerState = CreatePlayerState(snapshot),
             },
-        }, PacketMode.RELIABLE));
+        }, PacketMode.RELIABLE);
 
         logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
             subjectId, observerId, reason);
     }
 
-    private void SendDelta(PeerIndex observerId, PeerIndex subjectId, PeerSnapshot baseline, PeerSnapshot target, PeerViewSimulationTier tier,
+    private void SendDelta(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot baseline, PeerSnapshot target,
+        PeerViewSimulationTier tier,
         PacketMode packetMode)
     {
         if (baseline.Seq == target.Seq)
@@ -485,10 +513,10 @@ public sealed class PeerSimulation : IPeerSimulation
 
         PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(subjectId, baseline, target, tier);
 
-        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        SendTracked(observerId, ref view, target.Seq, new ServerMessage
         {
             PlayerStateDelta = delta,
-        }, packetMode));
+        }, packetMode);
     }
 
     private void TryAnnounceProfile(PeerIndex observerId, PeerIndex subjectId, ref PeerToPeerView view)

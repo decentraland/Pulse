@@ -25,6 +25,9 @@ public sealed class EmoteCompleter(SnapshotBoard snapshotBoard, ITimeProvider ti
             if (state.ConnectionState != PeerConnectionState.AUTHENTICATED)
                 continue;
 
+            // The ledger in SnapshotBoard.Publish carries the active emote forward onto every
+            // snapshot, so the latest snapshot is authoritative for the current emote — safe
+            // even when the original EmoteStart slot has been overwritten by a ring wrap.
             if (!snapshotBoard.TryRead(id, out PeerSnapshot current))
                 continue;
 
@@ -38,7 +41,8 @@ public sealed class EmoteCompleter(SnapshotBoard snapshotBoard, ITimeProvider ti
             {
                 Seq = snapshotBoard.LastSeq(id) + 1,
                 ServerTick = now,
-                Emote = new EmoteState(null, emote.StartTick, StopReason: EmoteStopReason.Completed),
+                Emote = new EmoteState(null, StartSeq: emote.StartSeq, StartTick: emote.StartTick,
+                    StopReason: EmoteStopReason.Completed),
             };
 
             snapshotBoard.Publish(id, in stop);

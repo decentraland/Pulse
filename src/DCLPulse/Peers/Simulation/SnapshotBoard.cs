@@ -47,17 +47,29 @@ public sealed class SnapshotBoard
     ///     Publish a snapshot for a peer. Stores it in the ring at <c>snapshot.Seq % ringCapacity</c>
     ///     and updates <see cref="LastSeq" />.
     ///     Called only by the owning worker — single writer per slot.
+    ///     <para />
+    ///     Emote-ledger invariant: if the incoming snapshot has no emote intent (<c>Emote == null</c>),
+    ///     we carry the active emote forward from the previous snapshot so every ring slot reflects
+    ///     the current emote state. A stop marker in the previous slot is consumed (resolves to
+    ///     <c>null</c>) so post-stop snapshots are correctly idle. Consequence: the latest snapshot
+    ///     is self-sufficient for "is this peer emoting, since when, for how long" — independent of
+    ///     ring depth. See <see cref="PeerSnapshotExtensions.IsEmoting" />.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Publish(PeerIndex id, in PeerSnapshot snapshot)
     {
         var index = (int)id.Value;
 
+        // Ledger inheritance for non-event snapshots (movement, teleport with Emote == null).
+        PeerSnapshot toWrite = snapshot.Emote is null
+            ? snapshot with { Emote = InheritEmoteState(index) }
+            : snapshot;
+
         // Increment to odd (write in progress)
         Volatile.Write(ref versions[index], Volatile.Read(ref versions[index]) + 1);
 
-        rings[index][snapshot.Seq % ringCapacity] = snapshot;
-        lastSeqs[index] = snapshot.Seq;
+        rings[index][toWrite.Seq % ringCapacity] = toWrite;
+        lastSeqs[index] = toWrite.Seq;
 
         // Full fence: ensure data writes are globally visible before the version goes even.
         // Volatile.Write alone only prevents reordering of that store with later stores —
@@ -66,6 +78,24 @@ public sealed class SnapshotBoard
 
         // Increment to even (write complete)
         Volatile.Write(ref versions[index], Volatile.Read(ref versions[index]) + 1);
+    }
+
+    /// <summary>
+    ///     Resolve the emote state for a non-event snapshot from the previous ring slot.
+    ///     Stop markers are transient — they only appear on their own snapshot and are consumed
+    ///     by the next publish (resolves to null). Active emotes are carried forward verbatim.
+    ///     Called on the owner worker; no seqlock needed (single writer reads its own prior slot).
+    /// </summary>
+    private EmoteState? InheritEmoteState(int index)
+    {
+        uint lastSeq = lastSeqs[index];
+
+        if (lastSeq == uint.MaxValue)
+            return null;
+
+        EmoteState? prev = rings[index][lastSeq % ringCapacity].Emote;
+
+        return prev is { StopReason: not null } ? null : prev;
     }
 
     /// <summary>
@@ -137,7 +167,8 @@ public sealed class SnapshotBoard
     }
 
     /// <summary>
-    ///     Returns true if the peer's latest snapshot has an active emote (non-null EmoteId).
+    ///     Returns true if the peer currently has an active emote. Ring-wrap safe because
+    ///     <see cref="Publish" /> carries the active emote forward onto every snapshot.
     /// </summary>
     public bool IsEmoting(PeerIndex id) =>
         TryRead(id, out PeerSnapshot snapshot) && snapshot.IsEmoting();

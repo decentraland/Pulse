@@ -287,16 +287,28 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void PlayerJoined_SkipsEmoteSync_ForNewSubject()
+    public void PlayerJoined_AlsoAnnouncesActiveEmote_ForNewSubject()
     {
-        // Subject is already emoting when observer first sees them —
-        // PlayerJoined carries full state but EmoteStarted is not sent on the same tick
+        // Subject is already emoting when observer first sees them. Thanks to the emote ledger,
+        // latestSnapshot.Emote reflects the ongoing emote even if the original EmoteStart has
+        // rotated out of the ring. HandleNewSubject announces the emote immediately so the
+        // observer can animate it — without it the remainder of the emote would play silently.
         PublishEmoteSnapshot(subject, seq: 1, emoteId: "dance", startTick: 50);
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined), Is.True);
-        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted), Is.False);
+        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted), Is.True);
+
+        OutgoingMessage emoteMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
+        Assert.That(emoteMsg.Message.EmoteStarted.EmoteId, Is.EqualTo("dance"));
+        Assert.That(emoteMsg.Message.EmoteStarted.ServerTick, Is.EqualTo(50u));
+
+        // PlayerJoined must precede the EmoteStarted so the client has the subject in its world
+        // before the animation event arrives.
+        int joinIdx = messages.FindIndex(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined);
+        int emoteIdx = messages.FindIndex(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
+        Assert.That(joinIdx, Is.LessThan(emoteIdx));
     }
 }

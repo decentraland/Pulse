@@ -12,19 +12,22 @@ public class EmoteStopHandler(SnapshotBoard snapshotBoard, ITimeProvider timePro
         if (SkipFromUnauthorizedPeer(peers, from, message, out _))
             return;
 
+        // The emote ledger in SnapshotBoard carries the active emote onto every snapshot, so
+        // the latest snapshot's Emote.{StartSeq, StartTick} is authoritative even after a ring wrap.
         if (!snapshotBoard.TryRead(from, out PeerSnapshot current) || !current.IsEmoting())
         {
             logger.LogWarning("Peer {Peer} sent EmoteStop but no emote is active", from.Value);
             return;
         }
 
+        EmoteState active = current.Emote!.Value;
         uint now = timeProvider.MonotonicTime;
 
         PeerSnapshot stop = current with
         {
             Seq = snapshotBoard.LastSeq(from) + 1,
             ServerTick = now,
-            Emote = new EmoteState(null, current.Emote!.Value.StartTick,
+            Emote = new EmoteState(null, StartSeq: active.StartSeq, StartTick: active.StartTick,
                 StopReason: EmoteStopReason.Cancelled),
         };
 

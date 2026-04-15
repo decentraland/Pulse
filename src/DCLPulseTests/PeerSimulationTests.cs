@@ -113,11 +113,14 @@ public partial class PeerSimulationTests
     private void PublishEmoteSnapshot(PeerIndex peer, uint seq, string emoteId = "wave",
         uint? durationMs = null, Vector3? position = null, uint? startTick = null)
     {
+        // Production EmoteStartHandler stamps the snapshot Seq into Emote.StartSeq so the scan's
+        // real-start discriminator (Seq == StartSeq) identifies the event unambiguously. Match
+        // that here so tests exercise the production shape.
         uint tick = startTick ?? seq * 10;
         snapshotBoard.SetActive(peer);
 
         snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: seq * 10,
+            Seq: seq, ServerTick: tick,
             Parcel: 0,
             LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
             GlobalPosition: position ?? Vector3.Zero,
@@ -125,10 +128,10 @@ public partial class PeerSimulationTests
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
-            Emote: new EmoteState(emoteId, tick, durationMs)));
+            Emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
     }
 
-    private void PublishEmoteStopSnapshot(PeerIndex peer, uint seq, uint emoteStartTick = 0,
+    private void PublishEmoteStopSnapshot(PeerIndex peer, uint seq, uint emoteStartTick = 0, uint emoteStartSeq = 0,
         EmoteStopReason reason = EmoteStopReason.Cancelled, Vector3? position = null)
     {
         snapshotBoard.SetActive(peer);
@@ -142,7 +145,7 @@ public partial class PeerSimulationTests
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
-            Emote: new EmoteState(null, emoteStartTick, StopReason: reason)));
+            Emote: new EmoteState(null, StartSeq: emoteStartSeq, StartTick: emoteStartTick, StopReason: reason)));
     }
 
     private void AddResyncRequest(PeerIndex observerPeer, PeerIndex subjectPeer, uint knownSeq)

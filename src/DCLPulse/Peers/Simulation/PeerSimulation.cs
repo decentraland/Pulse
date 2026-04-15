@@ -222,6 +222,10 @@ public sealed class PeerSimulation : IPeerSimulation
 
     /// <summary>
     ///     First-time visibility: send PlayerJoined with full state.
+    ///     If the subject is mid-emote (the ledger guarantees <see cref="PeerSnapshot.Emote" />
+    ///     reflects current state), announce the emote immediately so the observer animates it
+    ///     instead of waiting for the next start/stop event — which may never come for the
+    ///     remainder of this emote.
     /// </summary>
     private PeerToPeerView HandleNewSubject(
         PeerIndex observerId, PeerIndex subjectId,
@@ -248,14 +252,33 @@ public sealed class PeerSimulation : IPeerSimulation
 
         logger.LogInformation("Sending PlayerJoined for subject {Subject} to observer {Observer}", subjectId, observerId);
 
-        return new PeerToPeerView
+        var view = new PeerToPeerView
         {
             Onto = subjectId,
             LastSentProfileVersion = profileVersion,
             LastSentTeleportSeq = latestSnapshot.Seq,
             LastSentSnapshot = latestSnapshot,
-            LastSentSeq = latestSnapshot.Seq,
+
+            // LastSentSeq is assigned below — either implicitly by SendEmoteStarted or explicitly.
         };
+
+        // If the subject is already emoting when first visible, broadcast the ongoing emote
+        // so the observer can scrub the animation forward instead of staying idle. Treated as
+        // the eviction case: we only know the emote through the ledger-carried latest snapshot,
+        // not a real EmoteStart event, so the tripwire should warn (not error) on seq collisions.
+        if (latestSnapshot.Emote is { EmoteId: not null } activeEmote)
+        {
+            SendEmoteStarted(observerId, ref view, subjectId, latestSnapshot, activeEmote, fromEviction: true);
+            view.LastSentEmote = activeEmote;
+        }
+        else
+        {
+            // No seq-carrying send happened — seed the tripwire baseline so the next SendTracked
+            // can detect genuine duplicates against a meaningful prior seq.
+            view.LastSentSeq = latestSnapshot.Seq;
+        }
+
+        return view;
     }
 
     /// <summary>
@@ -274,8 +297,9 @@ public sealed class PeerSimulation : IPeerSimulation
         var discreteEventSent = false;
 
         // --- Phase 1: scan intermediates, collect last of each discrete event type ---
-        ScanIntermediateEvents(entry.Subject, view.LastSentSnapshot.Seq, latestSnapshot.Seq,
-            out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport);
+        ScanIntermediateEvents(entry.Subject, view.LastSentSnapshot.Seq, latestSnapshot,
+            out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport,
+            out bool emoteStartFromEviction);
 
         // --- Broadcast teleport (spatial snap first) ---
         if (lastTeleport is { } tp && view.LastSentTeleportSeq < tp.Seq)
@@ -294,10 +318,10 @@ public sealed class PeerSimulation : IPeerSimulation
 
         if (emoteStartIsEffective
             && lastEmoteStart!.Value.Emote is { EmoteId: not null } emote
-            && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartTick == view.LastSentEmote?.StartTick))
+            && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartSeq == view.LastSentEmote?.StartSeq))
         {
             PeerSnapshot es = lastEmoteStart.Value;
-            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote);
+            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote, fromEviction: emoteStartFromEviction);
             resyncRequests?.Remove(entry.Subject);
             view.LastSentEmote = emote;
 
@@ -322,26 +346,91 @@ public sealed class PeerSimulation : IPeerSimulation
         return lastSentState;
     }
 
-    private void ScanIntermediateEvents(PeerIndex subjectId, uint fromSeq, uint toSeq,
-        out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport)
+    /// <summary>
+    ///     Collect the last teleport, emote start, and emote stop within
+    ///     <paramref name="fromSeq" />+1..<paramref name="latestSnapshot" />.Seq.
+    ///     <para />
+    ///     Under the emote ledger (<see cref="SnapshotBoard.Publish" />), every snapshot between
+    ///     EmoteStart and EmoteStop carries a non-null <c>Emote.EmoteId</c>. Most of those are
+    ///     *carry-forwards* of an earlier start, not real start events. A real EmoteStart
+    ///     snapshot is the only one where <c>Seq == Emote.StartSeq</c> — the handler stamps
+    ///     both from the same fresh sequence number. Carry-forwards keep the original
+    ///     <c>StartSeq</c> while their own <c>Seq</c> advances. Using Seq (not ServerTick) as
+    ///     the discriminator is required because multiple snapshots can share a ServerTick when
+    ///     e.g. a teleport and an emote-start are processed on the same tick; Seq is monotonic
+    ///     and unique per snapshot. Detecting the real start via that equality lets
+    ///     <see cref="SendEmoteStarted" /> broadcast the position the subject had *at the moment
+    ///     they started emoting*, not a later carry-forward position.
+    ///     <para />
+    ///     Ring-wrap fallback: if the real start snapshot has been evicted from the ring (high
+    ///     publish rate, low-tier observer), the scan can't find a <c>ServerTick == StartTick</c>
+    ///     match. In that case we promote the <b>earliest</b> carrying snapshot in range (the
+    ///     one closest in time to the real start, therefore closest in position) to
+    ///     <paramref name="lastEmoteStart" /> and set <paramref name="emoteStartFromEviction" />
+    ///     so the caller can tag the subsequent <see cref="SendEmoteStarted" /> as an
+    ///     expected-duplicate case. If nothing in range carries the emote but
+    ///     <paramref name="latestSnapshot" /> does (entire scan range predated the start), we
+    ///     fall back to it as a last resort.
+    ///     <para />
+    ///     Only the stop snapshot itself has <c>StopReason != null</c> (post-stop snapshots
+    ///     inherit <c>null</c>), so <paramref name="lastEmoteStop" /> remains unique per transition.
+    /// </summary>
+    private void ScanIntermediateEvents(PeerIndex subjectId, uint fromSeq, PeerSnapshot latestSnapshot,
+        out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport,
+        out bool emoteStartFromEviction)
     {
         lastEmoteStart = null;
         lastEmoteStop = null;
         lastTeleport = null;
+        emoteStartFromEviction = false;
 
-        for (uint seq = fromSeq + 1; seq <= toSeq; seq++)
+        PeerSnapshot? earliestCarry = null;
+
+        for (uint seq = fromSeq + 1; seq <= latestSnapshot.Seq; seq++)
         {
             if (!snapshotBoard.TryRead(subjectId, seq, out PeerSnapshot snapshot))
                 continue;
 
-            if (snapshot.Emote is { EmoteId: not null })
-                lastEmoteStart = snapshot;
+            if (snapshot.Emote is { EmoteId: not null, StartSeq: var startSeq })
+            {
+                if (snapshot.Seq == startSeq)
+                {
+                    lastEmoteStart = snapshot;
+
+                    // Reset the earliest-carry tracker: any carries preceding a newer real start
+                    // belonged to a superseded emote (the real start is what the observer must
+                    // see; older carries are irrelevant).
+                    earliestCarry = null;
+                }
+                else if (earliestCarry is null)
+                {
+                    // First carry we've seen since the last real start (or scan start) — hold
+                    // onto it as the best fallback position if no real start appears.
+                    earliestCarry = snapshot;
+                }
+            }
 
             if (snapshot.Emote is { StopReason: not null })
                 lastEmoteStop = snapshot;
 
             if (snapshot.IsTeleport)
                 lastTeleport = snapshot;
+        }
+
+        if (lastEmoteStart is null)
+        {
+            if (earliestCarry is { } carry)
+            {
+                lastEmoteStart = carry;
+                emoteStartFromEviction = true;
+            }
+            else if (latestSnapshot.Emote is { EmoteId: not null, StopReason: null })
+            {
+                // Scan range was empty (e.g. single-tick gap with no new publishes) but the
+                // latest snapshot outside the scan still holds the emote state.
+                lastEmoteStart = latestSnapshot;
+                emoteStartFromEviction = true;
+            }
         }
     }
 
@@ -355,7 +444,6 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         if (view.LastSentEmote?.EmoteId == null)
             return;
-
         // Explicit stop — either Cancelled (from EmoteStopHandler) or Completed (from EmoteCompleter).
         // Both are published as real stop snapshots on the subject's worker, so they carry their own seq.
         if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
@@ -420,13 +508,27 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     <see cref="PeerToPeerView.LastSentSeq" /> — that means the same sequence number
     ///     has already been delivered to this observer for this subject, which indicates a
     ///     bug in the simulation pipeline.
+    ///     <para />
+    ///     When <paramref name="fromEmoteStartEviction" /> is <c>true</c>, the duplicate is
+    ///     expected: the EmoteStart snapshot was evicted from the ring, the scan fell back to
+    ///     the latest carrying snapshot, and its seq may collide with a prior send in the same
+    ///     tick (e.g. a teleport also landing at the latest seq). The collision is logged as
+    ///     a warning with explicit eviction context rather than an error.
     /// </summary>
-    private void SendTracked(PeerIndex observerId, ref PeerToPeerView view, uint seq, ServerMessage message, PacketMode packetMode)
+    private void SendTracked(PeerIndex observerId, ref PeerToPeerView view, uint seq, ServerMessage message, PacketMode packetMode,
+        bool fromEmoteStartEviction = false)
     {
         if (seq == view.LastSentSeq)
-            logger.LogError(
-                "Duplicate seq {Seq} sent to observer {Observer} for subject {Subject} ({MessageCase})",
-                seq, observerId, view.Onto, message.MessageCase);
+        {
+            if (fromEmoteStartEviction)
+                logger.LogWarning(
+                    "Duplicate seq {Seq} sent to observer {Observer} for subject {Subject} ({MessageCase}) — EmoteStart snapshot evicted from ring, scan fell back to the latest carrying snapshot",
+                    seq, observerId, view.Onto, message.MessageCase);
+            else
+                logger.LogError(
+                    "Duplicate seq {Seq} sent to observer {Observer} for subject {Subject} ({MessageCase})",
+                    seq, observerId, view.Onto, message.MessageCase);
+        }
 
         view.LastSentSeq = seq;
         messagePipe.Send(new OutgoingMessage(observerId, message, packetMode));
@@ -449,7 +551,8 @@ public sealed class PeerSimulation : IPeerSimulation
             subjectId, observerId, snapshot.GlobalPosition);
     }
 
-    private void SendEmoteStarted(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote)
+    private void SendEmoteStarted(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote,
+        bool fromEviction = false)
     {
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
@@ -461,7 +564,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 EmoteId = emote.EmoteId,
                 PlayerState = CreatePlayerState(snapshot),
             },
-        }, PacketMode.RELIABLE);
+        }, PacketMode.RELIABLE, fromEmoteStartEviction: fromEviction);
 
         logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
             emote.EmoteId, subjectId, observerId);

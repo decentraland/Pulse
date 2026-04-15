@@ -23,12 +23,13 @@ public class EmoteStartHandler(
 
         uint? durationMs = emoteStart.HasDurationMs ? emoteStart.DurationMs : null;
         uint now = timeProvider.MonotonicTime;
+        uint seq = snapshotBoard.LastSeq(from) + 1;
 
         PlayerState state = emoteStart.PlayerState;
         Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(state.ParcelIndex, state.Position);
 
         var snapshot = new PeerSnapshot(
-            snapshotBoard.LastSeq(from) + 1,
+            seq,
             now,
             state.ParcelIndex,
             state.Position,
@@ -42,7 +43,11 @@ public class EmoteStartHandler(
             state.GetHeadPitch(),
             (PlayerAnimationFlags)state.StateFlags,
             state.GlideState,
-            Emote: new EmoteState(emoteStart.EmoteId, now, durationMs));
+
+            // StartSeq stamped with the real start snapshot's own Seq. Ledger carry-forwards
+            // preserve it verbatim, so `snapshot.Seq == snapshot.Emote.StartSeq` uniquely
+            // identifies the real start downstream.
+            Emote: new EmoteState(emoteStart.EmoteId, StartSeq: seq, StartTick: now, DurationMs: durationMs));
 
         snapshotBoard.Publish(from, in snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);

@@ -101,7 +101,7 @@ public class SelfMirrorTests
         snapshotBoard.SetActive(peer);
 
         snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: seq * 10,
+            Seq: seq, ServerTick: tick,
             Parcel: 0,
             LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
             GlobalPosition: position ?? Vector3.Zero,
@@ -109,7 +109,7 @@ public class SelfMirrorTests
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
-            Emote: new EmoteState(emoteId, tick, durationMs)));
+            Emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
     }
 
     private void SetVisibleSubjects(params (PeerIndex Subject, PeerViewSimulationTier Tier)[] entries)

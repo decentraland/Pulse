@@ -16,8 +16,9 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages(); // PlayerJoined
 
-        // Multiple snapshots between ticks — emote is in the middle, not the latest
-        // emote metadata is now inline in the snapshot
+        // Multiple snapshots between ticks — emote starts at seq 3, seq 4 is a trailing movement
+        // that inherits the emote via the ledger. ScanIntermediateEvents must still latch onto the
+        // real start (seq 3) via the ServerTick == StartTick discriminator, not the latest carry.
         PublishSnapshot(subject, seq: 2);
         PublishEmoteSnapshot(subject, seq: 3);
         PublishSnapshot(subject, seq: 4);
@@ -38,8 +39,10 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Emote snapshot at position A, latest snapshot at position B
-        // emote metadata is now inline in the snapshot
+        // Emote snapshot at position A, trailing movement at position B. Even though the ledger
+        // carries the emote forward onto seq 3, the scan picks the real start (seq 2) via
+        // ServerTick == StartTick — so EmoteStarted carries the position the subject had when
+        // they began emoting, not a later carry-forward position.
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 20f, 30f));
         PublishSnapshot(subject, seq: 3, position: new Vector3(99f, 99f, 99f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -47,7 +50,6 @@ public partial class PeerSimulationTests
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage emoteMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
 
-        // EmoteStarted must carry the emote snapshot's state, not the latest
         Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.X, Is.EqualTo(10f));
         Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.Y, Is.EqualTo(20f));
         Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.Z, Is.EqualTo(30f));

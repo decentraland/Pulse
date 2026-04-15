@@ -35,6 +35,7 @@ public partial class PeerSimulationTests
     private IAreaOfInterest areaOfInterest;
     private ITimeProvider timeProvider;
     private PeerSimulation simulation;
+    private EmoteCompleter emoteCompleter;
     private Dictionary<PeerIndex, PeerState> peers;
 
     /// <summary>
@@ -77,6 +78,8 @@ public partial class PeerSimulationTests
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<ILogger<PeerSimulation>>());
+
+        emoteCompleter = new EmoteCompleter(snapshotBoard, timeProvider);
 
         peers = new Dictionary<PeerIndex, PeerState>
         {

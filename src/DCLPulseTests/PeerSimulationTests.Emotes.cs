@@ -54,6 +54,9 @@ public partial class PeerSimulationTests
     [Test]
     public void EmoteStopped_SentWithCompletedReason_WhenDurationExpires()
     {
+        // The subject peer must be authenticated so EmoteCompleter scans it.
+        peers[subject] = new PeerState(PeerConnectionState.AUTHENTICATED);
+
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
@@ -63,8 +66,10 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
-        // Advance time past the duration — expiry computed from view data
+        // Advance time past the duration — EmoteCompleter (subject's worker loop) publishes a
+        // real Completed stop snapshot with its own seq, which the observer picks up next tick.
         timeProvider.MonotonicTime.Returns(1500u);
+        emoteCompleter.CompleteExpiredEmotes(peers);
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> messages = DrainAllMessages();
@@ -189,7 +194,7 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void EmoteStopped_DoesNotSuppressDelta()
+    public void EmoteStopped_SuppressesRedundantDelta_WhenStopIsLatest()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
@@ -199,8 +204,33 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // consume EmoteStarted
 
-        // Stop emote AND move — both EmoteStopped and delta should be sent
+        // Stop is the latest snapshot in the ring. EmoteStopped already carries the full PlayerState,
+        // so Phase 2 advances the baseline to the stop snapshot and Phase 3's delta (stop → stop)
+        // suppresses early. The redundant delta is eliminated — and with it the duplicate-seq
+        // collision that would have fired on SendTracked.
         PublishEmoteStopSnapshot(subject, seq: 3, emoteStartTick: 20, position: new Vector3(5f, 0f, 0f));
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStopped), Is.True);
+        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerStateDelta), Is.False);
+    }
+
+    [Test]
+    public void EmoteStopped_AllowsDelta_WhenMovementFollowsInSameBatch()
+    {
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+
+        PublishEmoteSnapshot(subject, seq: 2, durationMs: 3000);
+        simulation.SimulateTick(peers, tickCounter: 1);
+        DrainAllMessages(); // consume EmoteStarted
+
+        // Stop at seq 3, then movement at seq 4 — Phase 2 anchors the baseline to the stop,
+        // Phase 3 diffs stop → movement and still delivers the post-stop position delta.
+        PublishEmoteStopSnapshot(subject, seq: 3, emoteStartTick: 20, position: new Vector3(5f, 0f, 0f));
+        PublishSnapshot(subject, seq: 4, position: new Vector3(7f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> messages = DrainAllMessages();

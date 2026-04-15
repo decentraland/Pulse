@@ -41,6 +41,7 @@ builder.Services.AddSingleton<HandshakeHandler>();
 builder.Services.AddSingleton<ProfileAnnouncementHandler>();
 builder.Services.AddSingleton<EmoteStartHandler>();
 builder.Services.AddSingleton<EmoteStopHandler>();
+builder.Services.AddSingleton<EmoteCompleter>();
 builder.Services.AddSingleton<TeleportHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new RustEthereumSignVerifier()));
 

@@ -310,7 +310,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // --- Phase 2: sync emote stop (skip when the start is still effective —
         //     either just sent, or already synced via dedup — the emote is active) ---
         if (!emoteStartIsEffective)
-            TrySyncEmoteStop(observerId, entry.Subject, ref view, latestSnapshot, lastEmoteStop);
+            TrySyncEmoteStop(observerId, entry.Subject, ref view, ref lastSentState, lastEmoteStop);
 
         // --- Phase 3: resync or delta (skip if discrete events already carried full state) ---
         if (!discreteEventSent)
@@ -350,42 +350,24 @@ public sealed class PeerSimulation : IPeerSimulation
     private void TrySyncEmoteStop(
         PeerIndex observerId, PeerIndex subjectId,
         ref PeerToPeerView view,
-        PeerSnapshot latestSnapshot,
+        ref PeerSnapshot lastSentState,
         PeerSnapshot? stopSnapshot)
     {
         if (view.LastSentEmote?.EmoteId == null)
             return;
 
-        EmoteState sentEmote = view.LastSentEmote.Value;
-
-        // Time-based expiry for one-shot emotes — check before the no-change guard
-        // because the snapshot still carries the active emote even after time has elapsed.
-        //
-        // Note: the Completed EmoteStopped carries latestSnapshot.Seq, which is also the seq
-        // Phase 3 will use for a subsequent STATE_DELTA (target = latestSnapshot), and may
-        // match the Phase 1 teleport seq when the teleport snapshot itself is the latest one.
-        // In those cases the duplicate-seq tripwire in SendTracked will fire for a legitimate
-        // reason — the two messages carry distinct payloads sourced from the same snapshot.
-        if (sentEmote.DurationMs.HasValue
-            && timeProvider.MonotonicTime >= sentEmote.StartTick
-            && timeProvider.MonotonicTime - sentEmote.StartTick >= sentEmote.DurationMs.Value)
-        {
-            SendEmoteStopped(observerId, ref view, subjectId, latestSnapshot, EmoteStopReason.Completed, timeProvider.MonotonicTime);
-            view.LastSentEmote = null;
-            return;
-        }
-
-        // Nothing changed — latest snapshot still reflects the same emote we already sent
-        if (latestSnapshot.Emote?.EmoteId == sentEmote.EmoteId
-            && latestSnapshot.Emote?.StartTick == sentEmote.StartTick
-            && stopSnapshot == null)
-            return;
-
-        // Explicit stop from EmoteStopHandler (stop snapshot found in intermediates)
+        // Explicit stop — either Cancelled (from EmoteStopHandler) or Completed (from EmoteCompleter).
+        // Both are published as real stop snapshots on the subject's worker, so they carry their own seq.
         if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
         {
             SendEmoteStopped(observerId, ref view, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value, stopSnapshot.Value.ServerTick);
             view.LastSentEmote = null;
+
+            // Advance the Phase 3 baseline to the stop snapshot — otherwise Phase 3's
+            // SendDelta would diff from the pre-emote baseline and potentially re-send
+            // the same seq already carried by EmoteStopped above.
+            if (stopSnapshot.Value.Seq > lastSentState.Seq)
+                lastSentState = stopSnapshot.Value;
         }
     }
 

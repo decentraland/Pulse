@@ -48,6 +48,7 @@ public sealed class PeersManager : BackgroundService
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
     private readonly ClientMessageCounters incomingMessageCounters;
+    private readonly EmoteCompleter emoteCompleter;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -63,7 +64,8 @@ public sealed class PeersManager : BackgroundService
         Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
         ITransport transport,
         ProfileBoard profileBoard,
-        ClientMessageCounters incomingMessageCounters)
+        ClientMessageCounters incomingMessageCounters,
+        EmoteCompleter emoteCompleter)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -73,6 +75,7 @@ public sealed class PeersManager : BackgroundService
         this.transport = transport;
         this.profileBoard = profileBoard;
         this.incomingMessageCounters = incomingMessageCounters;
+        this.emoteCompleter = emoteCompleter;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -175,6 +178,12 @@ public sealed class PeersManager : BackgroundService
             signal.Reset();
 
             DrainEvents(reader, peers, workerIndex);
+
+            // Finalize one-shot emotes whose duration has elapsed — runs on this worker
+            // so each expired emote gets its own seq in the ring (no lazy expiry in the
+            // observer loop, which would reuse latestSnapshot.Seq and collide with the
+            // subsequent Phase 3 delta).
+            emoteCompleter.CompleteExpiredEmotes(peers);
 
             long now = timeProvider.MonotonicTime;
 

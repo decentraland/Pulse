@@ -29,5 +29,6 @@ public record struct PeerSnapshot(
     GlideState GlideState,
 
     // Flags
-    bool IsTeleport = false
+    bool IsTeleport = false,
+    bool IsEmote = false
 );

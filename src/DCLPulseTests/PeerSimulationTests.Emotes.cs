@@ -274,11 +274,27 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void PlayerJoined_SkipsEmoteSync_ForNewSubject()
+    public void PlayerJoined_SyncsActiveEmote_ForNewSubject()
     {
         // Subject is already emoting when observer first sees them —
-        // PlayerJoined carries full state but EmoteStarted is not sent on the same tick
+        // PlayerJoined is followed by EmoteStarted so the observer can play the animation
         emoteBoard.Start(subject, "dance", serverTick: 50, durationMs: null);
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined), Is.True);
+        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted), Is.True);
+
+        OutgoingMessage emoteMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
+        Assert.That(emoteMsg.Message.EmoteStarted.EmoteId, Is.EqualTo("dance"));
+        Assert.That(emoteMsg.Message.EmoteStarted.ServerTick, Is.EqualTo(50u));
+        Assert.That(emoteMsg.Message.EmoteStarted.SubjectId, Is.EqualTo(subject.Value));
+    }
+
+    [Test]
+    public void PlayerJoined_DoesNotSendEmoteStarted_WhenSubjectNotEmoting()
+    {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
 

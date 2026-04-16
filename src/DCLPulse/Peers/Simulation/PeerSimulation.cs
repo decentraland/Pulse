@@ -244,6 +244,9 @@ public sealed class PeerSimulation : IPeerSimulation
                 view.LastSentTeleportSeq = latestSnapshot.Seq;
                 view.LastSentSnapshot = latestSnapshot;
                 view.LastSeenTick = tickCounter;
+
+                TrySyncEmoteStart(observerId, entry.Subject, in latestSnapshot, ref view);
+
                 views[entry.Subject] = view;
 
                 continue;
@@ -265,35 +268,13 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (!snapshotBoard.TryRead(entry.Subject, seq, out PeerSnapshot snapshot))
                     continue;
 
-                if (snapshot.IsEmote && !emoteStartedSent)
+                if (snapshot.IsEmote && !emoteStartedSent
+                    && TrySyncEmoteStart(observerId, entry.Subject, in snapshot, ref view))
                 {
-                    EmoteState? emoteState = emoteBoard.Get(entry.Subject);
-
-                    if (emoteState?.EmoteId != null
-                        && !(emoteState.EmoteId == view.LastSentEmoteId && emoteState.StartTick == view.LastSentEmoteStartTick))
-                    {
-                        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
-                        {
-                            EmoteStarted = new EmoteStarted
-                            {
-                                SubjectId = entry.Subject.Value,
-                                Sequence = snapshot.Seq,
-                                ServerTick = emoteState.StartTick,
-                                EmoteId = emoteState.EmoteId,
-                                PlayerState = CreatePlayerState(snapshot),
-                            },
-                        }, PacketMode.RELIABLE));
-
-                        view.LastSentEmoteId = emoteState.EmoteId;
-                        view.LastSentEmoteStartTick = emoteState.StartTick;
-                        resyncRequests?.Remove(entry.Subject);
-                        lastSentState = snapshot;
-                        emoteStartedSent = true;
-                        discreteEventSent = true;
-
-                        logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
-                            emoteState.EmoteId, entry.Subject, observerId);
-                    }
+                    resyncRequests?.Remove(entry.Subject);
+                    lastSentState = snapshot;
+                    emoteStartedSent = true;
+                    discreteEventSent = true;
                 }
 
                 if (snapshot.IsTeleport && view.LastSentTeleportSeq < snapshot.Seq)
@@ -444,6 +425,38 @@ public sealed class PeerSimulation : IPeerSimulation
 
             views.Remove(id);
         }
+    }
+
+    private bool TrySyncEmoteStart(
+        PeerIndex observerId, PeerIndex subjectId, in PeerSnapshot snapshot, ref PeerToPeerView view)
+    {
+        EmoteState? emoteState = emoteBoard.Get(subjectId);
+
+        if (emoteState?.EmoteId == null)
+            return false;
+
+        if (emoteState.EmoteId == view.LastSentEmoteId && emoteState.StartTick == view.LastSentEmoteStartTick)
+            return false;
+
+        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        {
+            EmoteStarted = new EmoteStarted
+            {
+                SubjectId = subjectId.Value,
+                Sequence = snapshot.Seq,
+                ServerTick = emoteState.StartTick,
+                EmoteId = emoteState.EmoteId,
+                PlayerState = CreatePlayerState(snapshot),
+            },
+        }, PacketMode.RELIABLE));
+
+        view.LastSentEmoteId = emoteState.EmoteId;
+        view.LastSentEmoteStartTick = emoteState.StartTick;
+
+        logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
+            emoteState.EmoteId, subjectId, observerId);
+
+        return true;
     }
 
     private PlayerStateFull CreateFullState(PeerIndex subjectId, PeerSnapshot snapshot) =>

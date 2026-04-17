@@ -155,7 +155,25 @@ public class SimulationLoop(
         {
             bot.Pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
             {
-                EmoteStart = new EmoteStart { EmoteId = emoteId },
+                EmoteStart = new EmoteStart
+                {
+                    EmoteId = emoteId,
+                    PlayerState = new PlayerState
+                    {
+                        HeadPitch = 0f,
+                        HeadYaw = rotationY,
+                        GlideState = new GlideState(),
+                        MovementBlend = 0f,
+                        Position = new Decentraland.Common.Vector3
+                            { X = relativePosition.X, Y = relativePosition.Y, Z = relativePosition.Z },
+                        RotationY = rotationY,
+                        SlideBlend = 0f,
+                        StateFlags = stateFlags,
+                        JumpCount = bot.JumpCount,
+                        ParcelIndex = parcelIndex,
+                        Velocity = new Decentraland.Common.Vector3 { X = 0f, Y = 0f, Z = 0f },
+                    },
+                },
             }, PacketMode.RELIABLE));
         }
     }

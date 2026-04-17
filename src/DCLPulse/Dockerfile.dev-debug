@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip proc
     && RRD_VERSION=$(echo "$RRD_URL" | sed 's/.*linux-x64\.\(.*\)\.zip/\1/') \
     && curl -sSL -o /tmp/rrd.zip "$RRD_URL" \
     && mkdir -p "/root/.local/share/JetBrains/RiderRemoteDebugger/${RRD_VERSION}" \
-    && unzip -q /tmp/rrd.zip -d "/root/.local/share/JetBrains/RiderRemoteDebugger/${RRD_VERSION}" \
+    && unzip -oq /tmp/rrd.zip -d "/root/.local/share/JetBrains/RiderRemoteDebugger/${RRD_VERSION}" \
     && rm /tmp/rrd.zip \
     && apt-get remove -y curl unzip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/* \

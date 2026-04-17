@@ -11,6 +11,8 @@ WORKDIR "/build/src/DCLPulse"
 RUN dotnet publish "DCLPulse.csproj" -c Debug -o /app/publish /p:UseAppHost=false /p:GenerateProto=false
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+ARG COMMIT_HASH=unknown
+ENV COMMIT_HASH=$COMMIT_HASH
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip procps openssh-server \
     && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
     && RRD_URL=$(curl -sSIL -o /dev/null -w '%{url_effective}' "https://data.services.jetbrains.com/products/download?code=RRD&platform=linux64") \

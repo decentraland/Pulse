@@ -203,101 +203,14 @@ When in doubt, check 1–2 nearby files in the same directory.
 
 ## Docker — Deployment & Debugging
 
-### Production Dockerfile
+Three Dockerfiles:
+- `src/DCLPulse/Dockerfile` — production (Release, lean runtime image)
+- `src/DCLPulse/Dockerfile.dev-debug` — Fargate dev debug deploy (Debug build + vsdbg + sshd + RiderRemoteDebugger pre-installed)
+- `Dockerfile.debug` + `docker-compose.debug.yml` — local docker-compose debugging
 
-```dockerfile
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-WORKDIR /src
-COPY *.sln ./
-COPY src/ ./src/
-RUN dotnet restore
-RUN dotnet publish src/GameServer/GameServer.csproj -c Release -o /app/publish --no-restore
+Deploy pipeline: `main` push builds `Dockerfile` → dev. Manual **Deploy Dev (Debug)** action builds `Dockerfile.dev-debug` → dev. Release tag builds `Dockerfile` → prod.
 
-FROM mcr.microsoft.com/dotnet/runtime:9.0 AS runtime
-WORKDIR /app
-COPY --from=build /app/publish .
-EXPOSE 7777/udp
-ENTRYPOINT ["dotnet", "GameServer.dll"]
-```
-
-### Debug Dockerfile (`Dockerfile.debug`)
-
-```dockerfile
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS debug
-WORKDIR /app
-RUN apt-get update && apt-get install -y curl unzip procps && \
-    curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg && \
-    rm -rf /var/lib/apt/lists/*
-COPY . .
-EXPOSE 7777/udp
-ENTRYPOINT ["dotnet", "run", "--project", "src/GameServer/GameServer.csproj", "--configuration", "Debug"]
-```
-
-### docker-compose.debug.yml
-
-```yaml
-services:
-  game-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.debug
-    container_name: game-server-debug
-    ports:
-      - "7777:7777/udp"
-      - "8080:8080"
-    volumes:
-      - ./src:/app/src
-    environment:
-      DOTNET_ENVIRONMENT: Development
-      Logging__LogLevel__Default: Debug
-    cap_add:
-      - SYS_PTRACE         # mandatory for vsdbg
-    security_opt:
-      - seccomp:unconfined # mandatory for vsdbg
-```
-
-### .csproj Debug Symbols
-
-```xml
-<PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-  <DebugType>full</DebugType>
-  <DebugSymbols>true</DebugSymbols>
-  <Optimize>false</Optimize>
-</PropertyGroup>
-```
-
-### Rider Remote Debugging
-
-Selected approach: **Rider → Docker Attach to .NET process** (not SSH remote).
-
-1. Start container first: `docker compose -f docker-compose.debug.yml up --build`
-2. Wait for server to log that it is listening on port 7777
-3. In Rider: **Run → Edit Configurations → + → .NET Attach to Remote Process**
-   - Connection type: Docker container
-   - Container: `game-server-debug`
-   - vsdbg path: `/vsdbg`
-4. Path mapping: local `./src` ↔ container `/app/src` (resolved automatically via volume mount; set manually if Rider misses it)
-
-**Logpoints over breakpoints** for networking code — right-click gutter → Add Logpoint. Evaluates expression and logs to Debug console without pausing the ENet tick loop or disconnecting clients.
-
-### IP Addresses (Local)
-
-| Scenario | Address |
-|---|---|
-| Unity client → game server (same machine) | `127.0.0.1:7777` |
-| Container internal IP (changes each run) | `docker inspect game-server-debug \| grep IPAddress` |
-| Container → container (same compose) | Use service name, e.g. `game-server:7777` |
-| Container → host machine service | `host.docker.internal` (Linux: add `extra_hosts: - "host.docker.internal:host-gateway"`) |
-
-### Quick Reference
-
-| Action | Command |
-|---|---|
-| Start debug container | `docker compose -f docker-compose.debug.yml up --build` |
-| Tail logs | `docker logs -f game-server-debug` |
-| Rebuild after Dockerfile change | `docker compose -f docker-compose.debug.yml up --build --force-recreate` |
-| Stop | `docker compose -f docker-compose.debug.yml down` |
-| Push to ECR | `aws ecr get-login-password \| docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com` |
+For full debugging workflows (local + remote Fargate, Rider setup, logpoints, ports), see [docs/debugging.md](docs/debugging.md). Bastion/tunnel specifics are in the `decentraland/playbooks` repo (internal access only).
 
 ---
 

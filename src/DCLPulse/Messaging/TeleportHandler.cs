@@ -9,6 +9,7 @@ namespace Pulse.Messaging;
 public class TeleportHandler(ILogger<TeleportHandler> logger,
     ITimeProvider timeProvider,
     SnapshotBoard snapshotBoard,
+    SpatialGrid spatialGrid,
     ParcelEncoder parcelEncoder)
     : RuntimePacketHandlerBase<TeleportHandler>(logger), IMessageHandler
 {
@@ -43,6 +44,7 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
             IsTeleport: true);
 
         snapshotBoard.Publish(from, snapshot);
+        spatialGrid.Set(from, snapshot.GlobalPosition);
 
         logger.LogInformation("Teleport requested by {Peer} at {Position}", from, globalPosition);
     }

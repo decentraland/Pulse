@@ -5,6 +5,7 @@ using Pulse;
 using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using System.Numerics;
 
 namespace DCLPulseTests;
 
@@ -14,7 +15,7 @@ public class EmoteStopHandlerTests
     private const uint START_TIME = 5000;
     private const uint STOP_TIME = 6000;
 
-    private EmoteBoard emoteBoard;
+    private SnapshotBoard snapshotBoard;
     private ITimeProvider timeProvider;
     private EmoteStopHandler handler;
     private Dictionary<PeerIndex, PeerState> peers;
@@ -22,27 +23,34 @@ public class EmoteStopHandlerTests
     [SetUp]
     public void SetUp()
     {
-        emoteBoard = new EmoteBoard(100);
+        snapshotBoard = new SnapshotBoard(100, 16);
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(STOP_TIME);
 
-        handler = new EmoteStopHandler(emoteBoard, timeProvider, Substitute.For<ILogger<EmoteStopHandler>>());
+        handler = new EmoteStopHandler(snapshotBoard, timeProvider, Substitute.For<ILogger<EmoteStopHandler>>());
         peers = new Dictionary<PeerIndex, PeerState>();
     }
 
     [Test]
-    public void Handle_ActiveEmote_StopsWithServerTick()
+    public void Handle_ActiveEmote_PublishesStopSnapshot()
     {
         var peer = new PeerIndex(1);
         peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
-        emoteBoard.Start(peer, "dance", START_TIME, durationMs: null);
+        snapshotBoard.SetActive(peer);
+
+        // Publish an emote snapshot first
+        snapshotBoard.Publish(peer, new PeerSnapshot(
+            Seq: 1, ServerTick: START_TIME, Parcel: 0,
+            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, default(PlayerAnimationFlags), default(GlideState),
+            Emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 
-        EmoteState? state = emoteBoard.Get(peer);
-        Assert.That(state!.EmoteId, Is.Null);
-        Assert.That(state.StopTick, Is.EqualTo(STOP_TIME));
-        Assert.That(state.StopReason, Is.EqualTo(EmoteStopReason.Cancelled));
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Emote?.EmoteId, Is.Null);
+        Assert.That(snapshot.Emote?.StopReason, Is.EqualTo(EmoteStopReason.Cancelled));
+        Assert.That(snapshot.ServerTick, Is.EqualTo(STOP_TIME));
+        Assert.That(snapshot.Seq, Is.EqualTo(2u));
     }
 
     [Test]
@@ -50,10 +58,17 @@ public class EmoteStopHandlerTests
     {
         var peer = new PeerIndex(1);
         peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peer);
+
+        // Publish a normal snapshot (no emote)
+        snapshotBoard.Publish(peer, new PeerSnapshot(
+            Seq: 1, ServerTick: START_TIME, Parcel: 0,
+            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, default(PlayerAnimationFlags), default(GlideState)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 
-        Assert.That(emoteBoard.Get(peer), Is.Null);
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(1u)); // no new snapshot published
     }
 
     [Test]
@@ -61,10 +76,17 @@ public class EmoteStopHandlerTests
     {
         var peer = new PeerIndex(1);
         peers[peer] = new PeerState(PeerConnectionState.PENDING_AUTH);
-        emoteBoard.Start(peer, "dance", START_TIME, durationMs: null);
+        snapshotBoard.SetActive(peer);
+
+        // Publish an emote snapshot
+        snapshotBoard.Publish(peer, new PeerSnapshot(
+            Seq: 1, ServerTick: START_TIME, Parcel: 0,
+            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, default(PlayerAnimationFlags), default(GlideState),
+            Emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 
-        Assert.That(emoteBoard.IsEmoting(peer), Is.True);
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Emote?.EmoteId, Is.EqualTo("dance")); // unchanged
     }
 }

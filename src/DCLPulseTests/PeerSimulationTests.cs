@@ -35,6 +35,7 @@ public partial class PeerSimulationTests
     private IAreaOfInterest areaOfInterest;
     private ITimeProvider timeProvider;
     private PeerSimulation simulation;
+    private EmoteCompleter emoteCompleter;
     private Dictionary<PeerIndex, PeerState> peers;
 
     /// <summary>
@@ -44,7 +45,6 @@ public partial class PeerSimulationTests
     private List<(PeerIndex Subject, PeerViewSimulationTier Tier)> visibleSubjects;
     private SpatialGrid spatialGrid;
     private ProfileBoard profileBoard;
-    private EmoteBoard emoteBoard;
 
     [SetUp]
     public void SetUp()
@@ -73,12 +73,13 @@ public partial class PeerSimulationTests
         timeProvider.MonotonicTime.Returns(0u);
 
         profileBoard = new ProfileBoard(MAX_PEERS);
-        emoteBoard = new EmoteBoard(MAX_PEERS);
 
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, emoteBoard, Substitute.For<ILogger<PeerSimulation>>());
+            profileBoard, Substitute.For<ILogger<PeerSimulation>>());
+
+        emoteCompleter = new EmoteCompleter(snapshotBoard, timeProvider);
 
         peers = new Dictionary<PeerIndex, PeerState>
         {
@@ -109,7 +110,29 @@ public partial class PeerSimulationTests
             GlideState: GlideState.PropClosed));
     }
 
-    private void PublishEmoteSnapshot(PeerIndex peer, uint seq, Vector3? position = null)
+    private void PublishEmoteSnapshot(PeerIndex peer, uint seq, string emoteId = "wave",
+        uint? durationMs = null, Vector3? position = null, uint? startTick = null)
+    {
+        // Production EmoteStartHandler stamps the snapshot Seq into Emote.StartSeq so the scan's
+        // real-start discriminator (Seq == StartSeq) identifies the event unambiguously. Match
+        // that here so tests exercise the production shape.
+        uint tick = startTick ?? seq * 10;
+        snapshotBoard.SetActive(peer);
+
+        snapshotBoard.Publish(peer, new PeerSnapshot(
+            Seq: seq, ServerTick: tick,
+            Parcel: 0,
+            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
+            GlobalPosition: position ?? Vector3.Zero,
+            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
+            HeadYaw: null, HeadPitch: null,
+            AnimationFlags: PlayerAnimationFlags.None,
+            GlideState: GlideState.PropClosed,
+            Emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
+    }
+
+    private void PublishEmoteStopSnapshot(PeerIndex peer, uint seq, uint emoteStartTick = 0, uint emoteStartSeq = 0,
+        EmoteStopReason reason = EmoteStopReason.Cancelled, Vector3? position = null)
     {
         snapshotBoard.SetActive(peer);
 
@@ -122,7 +145,7 @@ public partial class PeerSimulationTests
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
-            IsEmote: true));
+            Emote: new EmoteState(null, StartSeq: emoteStartSeq, StartTick: emoteStartTick, StopReason: reason)));
     }
 
     private void AddResyncRequest(PeerIndex observerPeer, PeerIndex subjectPeer, uint knownSeq)

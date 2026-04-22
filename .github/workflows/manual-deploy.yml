@@ -16,6 +16,11 @@ on:
         default: "latest"
         type: string
         description: "Docker tag (quay.io)"
+      resync-with-delta:
+        required: false
+        type: boolean
+        default: false
+        description: "Enable targeted delta for resync responses (instead of always STATE_FULL)"
 
 jobs:
   deployment:
@@ -32,3 +37,5 @@ jobs:
           serviceName: "pulse-server"
           env: ${{ inputs.deployment-environment }}
           token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          Peers__ResyncWithDelta: ${{ inputs.resync-with-delta }}

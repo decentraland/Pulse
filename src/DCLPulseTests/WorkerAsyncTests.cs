@@ -41,8 +41,8 @@ public class WorkerAsyncTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100),
-            new ClientMessageCounters(8));
+            new ClientMessageCounters(8),
+            new EmoteCompleter(snapshotBoard, timeProvider));
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         signal = new ManualResetEventSlim();

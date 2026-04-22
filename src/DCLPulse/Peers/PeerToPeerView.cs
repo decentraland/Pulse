@@ -31,21 +31,22 @@ public struct PeerToPeerView
     public int LastSentProfileVersion;
 
     /// <summary>
-    ///     The emote ID last sent to the observer for this subject, or null if idle.
-    ///     Compared against <see cref="Simulation.EmoteBoard" /> each tick to detect transitions.
+    ///     The emote last sent to the observer for this subject, or null if idle.
+    ///     Tracks EmoteId + StartTick for deduplication, DurationMs for server-side one-shot expiry.
     /// </summary>
-    public string? LastSentEmoteId;
-
-    /// <summary>
-    ///     The start tick of the last emote sent to the observer.
-    ///     Used together with <see cref="LastSentEmoteId" /> to detect preemptive replays
-    ///     of the same emote (same ID, different start tick).
-    /// </summary>
-    public uint LastSentEmoteStartTick;
+    public EmoteState? LastSentEmote;
 
     /// <summary>
     ///     The sequence number of the last teleport snapshot sent to the observer for this subject.
     ///     Prevents duplicate teleport broadcasts and supports consecutive teleports.
     /// </summary>
     public uint? LastSentTeleportSeq;
+
+    /// <summary>
+    ///     Sequence number of the last seq-carrying message (STATE_FULL, STATE_DELTA, EMOTE_STARTED,
+    ///     EMOTE_STOPPED, TELEPORT, PLAYER_JOINED) sent to the observer for this subject.
+    ///     Safety net: any subsequent send where the new seq equals <see cref="LastSentSeq" /> is
+    ///     a duplicate delivery bug in the simulation pipeline and gets logged as an error.
+    /// </summary>
+    public uint LastSentSeq;
 }

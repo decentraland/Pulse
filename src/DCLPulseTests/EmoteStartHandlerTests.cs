@@ -16,7 +16,6 @@ public class EmoteStartHandlerTests
 {
     private const uint MONOTONIC_TIME = 5000;
 
-    private EmoteBoard emoteBoard;
     private SnapshotBoard snapshotBoard;
     private SpatialGrid spatialGrid;
     private ParcelEncoder parcelEncoder;
@@ -27,20 +26,19 @@ public class EmoteStartHandlerTests
     [SetUp]
     public void SetUp()
     {
-        emoteBoard = new EmoteBoard(100);
         snapshotBoard = new SnapshotBoard(100, 16);
         spatialGrid = new SpatialGrid(100, 100);
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
 
-        handler = new EmoteStartHandler(emoteBoard, snapshotBoard, spatialGrid, timeProvider,
+        handler = new EmoteStartHandler(snapshotBoard, spatialGrid, timeProvider,
             Substitute.For<ILogger<EmoteStartHandler>>(), parcelEncoder);
         peers = new Dictionary<PeerIndex, PeerState>();
     }
 
     [Test]
-    public void Handle_AuthenticatedPeer_StartsEmoteWithServerTick()
+    public void Handle_AuthenticatedPeer_SetsEmoteFieldsOnSnapshot()
     {
         var peer = new PeerIndex(1);
         peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
@@ -48,11 +46,10 @@ public class EmoteStartHandlerTests
 
         handler.Handle(peers, peer, CreateEmoteMessage("wave", durationMs: 3000));
 
-        EmoteState? state = emoteBoard.Get(peer);
-        Assert.That(state, Is.Not.Null);
-        Assert.That(state!.EmoteId, Is.EqualTo("wave"));
-        Assert.That(state.StartTick, Is.EqualTo(MONOTONIC_TIME));
-        Assert.That(state.DurationMs, Is.EqualTo(3000u));
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Emote?.EmoteId, Is.EqualTo("wave"));
+        Assert.That(snapshot.Emote?.StartTick, Is.EqualTo(MONOTONIC_TIME));
+        Assert.That(snapshot.Emote?.DurationMs, Is.EqualTo(3000u));
     }
 
     [Test]
@@ -64,8 +61,8 @@ public class EmoteStartHandlerTests
 
         handler.Handle(peers, peer, CreateEmoteMessage("dance"));
 
-        EmoteState? state = emoteBoard.Get(peer);
-        Assert.That(state!.DurationMs, Is.Null);
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Emote?.DurationMs, Is.Null);
     }
 
     [Test]
@@ -76,7 +73,7 @@ public class EmoteStartHandlerTests
 
         handler.Handle(peers, peer, CreateEmoteMessage("wave", durationMs: 3000));
 
-        Assert.That(emoteBoard.Get(peer), Is.Null);
+        Assert.That(snapshotBoard.TryRead(peer, out _), Is.False);
     }
 
     [Test]
@@ -86,7 +83,7 @@ public class EmoteStartHandlerTests
 
         handler.Handle(peers, peer, CreateEmoteMessage("wave", durationMs: 3000));
 
-        Assert.That(emoteBoard.Get(peer), Is.Null);
+        Assert.That(snapshotBoard.TryRead(peer, out _), Is.False);
     }
 
     [Test]

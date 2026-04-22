@@ -47,8 +47,8 @@ public sealed class PeersManager : BackgroundService
     private readonly Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
-    private readonly EmoteBoard emoteBoard;
     private readonly ClientMessageCounters incomingMessageCounters;
+    private readonly EmoteCompleter emoteCompleter;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -64,8 +64,8 @@ public sealed class PeersManager : BackgroundService
         Dictionary<ClientMessage.MessageOneofCase, IMessageHandler> messageHandlers,
         ITransport transport,
         ProfileBoard profileBoard,
-        EmoteBoard emoteBoard,
-        ClientMessageCounters incomingMessageCounters)
+        ClientMessageCounters incomingMessageCounters,
+        EmoteCompleter emoteCompleter)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -74,8 +74,8 @@ public sealed class PeersManager : BackgroundService
         this.messageHandlers = messageHandlers;
         this.transport = transport;
         this.profileBoard = profileBoard;
-        this.emoteBoard = emoteBoard;
         this.incomingMessageCounters = incomingMessageCounters;
+        this.emoteCompleter = emoteCompleter;
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -112,8 +112,8 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, emoteBoard, peerSimulationLogger,
-                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier);
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, peerSimulationLogger,
+                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta);
 
             int idx = i;
 
@@ -178,6 +178,13 @@ public sealed class PeersManager : BackgroundService
             signal.Reset();
 
             DrainEvents(reader, peers, workerIndex);
+
+            // Finalize one-shot emotes whose duration has elapsed — runs on this worker
+            // so each expired emote gets its own seq in the ring (no lazy expiry in the
+            // observer loop, which would reuse latestSnapshot.Seq and collide with the
+            // subsequent Phase 3 delta).
+            try { emoteCompleter.CompleteExpiredEmotes(peers); }
+            catch (Exception ex) { logger.LogError(ex, "Error completing expired emotes on worker {Worker}.", workerIndex); }
 
             long now = timeProvider.MonotonicTime;
 

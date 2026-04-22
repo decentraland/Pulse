@@ -16,8 +16,9 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages(); // PlayerJoined
 
-        // Multiple snapshots between ticks — emote is in the middle, not the latest
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // Multiple snapshots between ticks — emote starts at seq 3, seq 4 is a trailing movement
+        // that inherits the emote via the ledger. ScanIntermediateEvents must still latch onto the
+        // real start (seq 3) via the ServerTick == StartTick discriminator, not the latest carry.
         PublishSnapshot(subject, seq: 2);
         PublishEmoteSnapshot(subject, seq: 3);
         PublishSnapshot(subject, seq: 4);
@@ -38,8 +39,10 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Emote snapshot at position A, latest snapshot at position B
-        emoteBoard.Start(subject, "dance", serverTick: 200, durationMs: null);
+        // Emote snapshot at position A, trailing movement at position B. Even though the ledger
+        // carries the emote forward onto seq 3, the scan picks the real start (seq 2) via
+        // ServerTick == StartTick — so EmoteStarted carries the position the subject had when
+        // they began emoting, not a later carry-forward position.
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 20f, 30f));
         PublishSnapshot(subject, seq: 3, position: new Vector3(99f, 99f, 99f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -47,7 +50,6 @@ public partial class PeerSimulationTests
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage emoteMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
 
-        // EmoteStarted must carry the emote snapshot's state, not the latest
         Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.X, Is.EqualTo(10f));
         Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.Y, Is.EqualTo(20f));
         Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.Z, Is.EqualTo(30f));
@@ -81,9 +83,9 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Teleport at seq 2, emote at seq 3, normal movement at seq 4
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishTeleportSnapshot(subject, seq: 2, new Vector3(50f, 0f, 0f));
-        PublishEmoteSnapshot(subject, seq: 3, new Vector3(50f, 0f, 0f));
+        PublishEmoteSnapshot(subject, seq: 3, position: new Vector3(50f, 0f, 0f));
         PublishSnapshot(subject, seq: 4, position: new Vector3(51f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
 
@@ -104,7 +106,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Emote at seq 2 (pos X=10), normal movement at seq 3 (pos X=20)
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 0f, 0f));
         PublishSnapshot(subject, seq: 3, position: new Vector3(20f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -180,7 +182,8 @@ public partial class PeerSimulationTests
 
         // Emote in intermediates + pending resync
         AddResyncRequest(observer, subject, knownSeq: 1);
-        emoteBoard.Start(subject, "wave", serverTick: 300, durationMs: 3000);
+
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 3);
         PublishSnapshot(subject, seq: 4);
         simulation.SimulateTick(peers, tickCounter: 2);
@@ -222,7 +225,7 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Emote starts — observer records it
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 2);
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // EmoteStarted
@@ -230,7 +233,7 @@ public partial class PeerSimulationTests
         // New emote starts (preemptive) — the old emote was never explicitly stopped,
         // but a new one replaces it. The snapshot with IsEmote triggers EmoteStarted.
         // Phase 2 (TrySyncEmoteStop) must be skipped because emoteStartedSent=true.
-        emoteBoard.Start(subject, "dance", serverTick: 200, durationMs: null);
+        // emote metadata is now inline in the snapshot
         PublishEmoteSnapshot(subject, seq: 3);
         simulation.SimulateTick(peers, tickCounter: 2);
 
@@ -265,13 +268,13 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void MultipleTeleports_InIntermediates_AllDetected()
+    public void MultipleTeleports_InIntermediates_OnlyLastSent()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Two teleports between ticks
+        // Two teleports between ticks — only the final destination matters
         PublishTeleportSnapshot(subject, seq: 2, new Vector3(10f, 0f, 0f));
         PublishTeleportSnapshot(subject, seq: 3, new Vector3(50f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -282,20 +285,18 @@ public partial class PeerSimulationTests
                        .Where(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported)
                        .ToList();
 
-        Assert.That(teleports.Count, Is.EqualTo(2));
-        Assert.That(teleports[0].Message.Teleported.State.Position.X, Is.EqualTo(10f));
-        Assert.That(teleports[1].Message.Teleported.State.Position.X, Is.EqualTo(50f));
+        Assert.That(teleports.Count, Is.EqualTo(1));
+        Assert.That(teleports[0].Message.Teleported.State.Position.X, Is.EqualTo(50f));
     }
 
     [Test]
-    public void OnlyFirstEmote_DetectedInIntermediates_WhenMultipleEmoteSnapshots()
+    public void OnlyLastEmote_DetectedInIntermediates_WhenMultipleEmoteSnapshots()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Two emote snapshots, but emoteBoard only has one active emote
-        emoteBoard.Start(subject, "wave", serverTick: 100, durationMs: 3000);
+        // Two emote snapshots — only the last one is the currently active emote
         PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(1f, 0f, 0f));
         PublishEmoteSnapshot(subject, seq: 3, position: new Vector3(2f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
@@ -306,8 +307,7 @@ public partial class PeerSimulationTests
                     .Where(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted)
                     .ToList();
 
-        // Only one EmoteStarted — the first IsEmote snapshot triggers it, subsequent ones are skipped
         Assert.That(emotes.Count, Is.EqualTo(1));
-        Assert.That(emotes[0].Message.EmoteStarted.Sequence, Is.EqualTo(2u));
+        Assert.That(emotes[0].Message.EmoteStarted.Sequence, Is.EqualTo(3u));
     }
 }

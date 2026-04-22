@@ -41,6 +41,7 @@ builder.Services.AddSingleton<HandshakeHandler>();
 builder.Services.AddSingleton<ProfileAnnouncementHandler>();
 builder.Services.AddSingleton<EmoteStartHandler>();
 builder.Services.AddSingleton<EmoteStopHandler>();
+builder.Services.AddSingleton<EmoteCompleter>();
 builder.Services.AddSingleton<TeleportHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new RustEthereumSignVerifier()));
 
@@ -59,12 +60,6 @@ builder.Services.AddSingleton<ProfileBoard>(sp =>
 {
     ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
     return new ProfileBoard(transportOptions.MaxPeers);
-});
-
-builder.Services.AddSingleton(sp =>
-{
-    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
-    return new EmoteBoard(transportOptions.MaxPeers);
 });
 
 // Simulation

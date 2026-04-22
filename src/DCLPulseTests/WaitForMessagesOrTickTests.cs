@@ -30,11 +30,13 @@ public class WorkerSignalTests
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(0u);
 
+        var snapshotBoard = new SnapshotBoard(100, 10);
+
         manager = new PeersManager(
             new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
-            new SnapshotBoard(100, 10),
+            snapshotBoard,
             new SpatialGrid(50, 100),
             new IdentityBoard(100),
             new PeerOptions(),
@@ -44,8 +46,8 @@ public class WorkerSignalTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100),
-            new ClientMessageCounters(8));
+            new ClientMessageCounters(8),
+            new EmoteCompleter(snapshotBoard, timeProvider));
 
         eventChannel = Channel.CreateUnbounded<IncomingEvent>();
         signal = new ManualResetEventSlim();
@@ -175,11 +177,13 @@ public class WorkerSignalTests
             [ClientMessage.MessageOneofCase.Input] = handler,
         };
 
+        var localSnapshotBoard = new SnapshotBoard(100, 10);
+
         var managerWithHandler = new PeersManager(
             new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
-            new SnapshotBoard(100, 10),
+            localSnapshotBoard,
             new SpatialGrid(50, 100),
             new IdentityBoard(100),
             new PeerOptions(),
@@ -189,8 +193,8 @@ public class WorkerSignalTests
             handlers,
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new EmoteBoard(100),
-            new ClientMessageCounters(8));
+            new ClientMessageCounters(8),
+            new EmoteCompleter(localSnapshotBoard, timeProvider));
 
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(5000u);

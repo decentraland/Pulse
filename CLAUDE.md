@@ -95,7 +95,11 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **No proactive STATE_FULL mid-session.** The client drives resync, the server never anticipates it.
 
-**Snapshot History.** The server keeps a small rolling history of snapshots per subject. When a `RESYNC_REQUEST` arrives with the client's last known seq, and the seq is still in the ring, the server sends a targeted delta instead of a full snapshot.
+**Snapshot History.** The server keeps a small rolling history of snapshots per subject (`SnapshotBoard` ring buffer). Each snapshot carries positional/animation state and optional `EmoteState` metadata (emote ID, start tick, duration, stop reason). The ring is the single source of truth for all per-peer state — there is no separate emote board.
+
+**Intermediate snapshot scanning.** Between two simulation ticks, multiple snapshots may be published (movement, teleports, emote starts/stops). The simulation scans all intermediates from `lastSentSeq+1` to `latestSeq`, collecting the **last** of each discrete event type (teleport, emote start, emote stop). Earlier events of the same type are superseded. An emote that started and stopped in the same batch is invisible to the observer.
+
+**Resync.** Default: always responds with `STATE_FULL`. When `Peers.ResyncWithDelta` is enabled, the server first attempts a targeted delta from the client's `knownSeq` baseline (if still in the ring), falling back to `STATE_FULL` when evicted. Configurable via `appsettings.json`, Docker env var (`Peers__ResyncWithDelta`), or GitHub manual deploy input.
 
 **Interest management** on the server limits which players receive updates about which other players. Per-observer fan-out is the primary bandwidth concern.
 
@@ -113,11 +117,13 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 - Tiered quantization based on interest management
 
 **EMOTE_START** (ch0, reliable)
-- Emote string ID, emote type (one_shot / looping) is not transmitted, it is resolved from the DTO on the client side
+- Emote string ID, optional duration_ms, and full PlayerState
+- Server publishes a snapshot with `EmoteState` (emote ID, start tick, duration) — no separate emote board
 - Client stops sending MovementInput while emoting
 
 **EMOTE_STOP** (ch0, reliable)
-- Looping emotes only; one-shots are terminated by the server timer
+- Looping emotes only; one-shots expire via server-side time check against `EmoteState.DurationMs`
+- Server publishes a stop snapshot (EmoteId=null, StopReason=Cancelled) preserving the subject's position
 
 **TELEPORT_REQUEST** (ch0, reliable)
 - Client-initiated teleport (e.g. triggered by game logic)
@@ -125,7 +131,7 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **RESYNC_REQUEST** (ch0, reliable)
 - Sent when a received STATE_DELTA can't be applied (gap in seq)
-- Server responds with STATE_FULL
+- Server responds with STATE_FULL (or targeted delta when `Peers.ResyncWithDelta` is enabled)
 
 ### Server → Client
 
@@ -140,12 +146,14 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 - Quantized floats, same ranges as MovementInput
 
 **EMOTE_STARTED** (ch0, reliable, broadcast to interest set)
-- Emote string ID, type, server_tick, and piggybacked anchor position (Vec3)
-- Anchor position sent reliably because no further position updates will arrive during the emote
+- Emote string ID, sequence, server_tick, and full PlayerState
+- PlayerState sent reliably because no further position updates will arrive during the emote
 - Observers use server_tick to scrub animation forward by transit latency
+- Only the last emote start per batch is broadcast; earlier ones superseded by the latest
 
 **EMOTE_STOPPED** (ch0, reliable, broadcast to interest set)
-- Reason: completed (one-shot timer) or cancelled (client sent EMOTE_STOP)
+- Reason: completed (one-shot duration expired) or cancelled (client sent EMOTE_STOP)
+- Carries sequence and full PlayerState so the client can snap to the correct position on resume
 - Client resumes MovementInput only after receiving this (gates resume on server clock)
 
 **TELEPORT** (ch0, reliable, broadcast to interest set)
@@ -168,8 +176,11 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **Teleport as a separate message, not an is_instant flag.** Teleports are discrete events, not a property of continuous movement. Keeping them as a dedicated reliable message guarantees the interpolation-skip instruction arrives before subsequent position updates.
 
-**server_tick is a single unified clock** across all messages (STATE_DELTA, EMOTE_STARTED, EMOTE_STOPPED, TELEPORT). Client uses it for animation scrubbing and dead reckoning. `peer->roundTrip
-` (available on both client and server via ENet) provides latency without requiring client_tick fields in packets.
+**server_tick is a single unified clock** across all messages (STATE_DELTA, EMOTE_STARTED, EMOTE_STOPPED, TELEPORT). Client uses it for animation scrubbing and dead reckoning. `peer->roundTripTime` (available on both client and server via ENet) provides latency without requiring client_tick fields in packets.
+
+**Emote state inlined into PeerSnapshot.** `EmoteState` (emote ID, start tick, duration, stop reason) is a nullable struct on `PeerSnapshot`, stored in the ring buffer alongside positional data. No separate emote board — the snapshot ring is the single source of truth. EmoteStartHandler writes emote metadata directly into the snapshot. EmoteStopHandler publishes a stop snapshot. One-shot emote expiry is computed lazily from the view's cached duration at observation time, not eagerly mutated.
+
+**Simulation loop: scan → broadcast → stop → delta.** Each tick, the simulation scans intermediate snapshots and collects the last teleport, emote start, and emote stop. Only the final event of each type is broadcast — intermediate positions or superseded emotes are discarded. An emote that started and stopped in the same batch is invisible to the observer. Discrete events (teleport, emote start) suppress the unreliable delta for that tick to prevent baseline races. Emote stop does not suppress delta — the client needs the position update on resume.
 
 **Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
 

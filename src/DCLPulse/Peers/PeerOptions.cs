@@ -35,4 +35,26 @@ public sealed class PeerOptions
     ///     known baseline before falling back to STATE_FULL.
     /// </summary>
     public bool ResyncWithDelta { get; set; }
+
+    /// <summary>
+    ///     How long a peer remains in DISCONNECTING before <c>CleanupDisconnectedPeer</c> fires,
+    ///     wipes every per-peer board, and releases the slot back to
+    ///     <see cref="PeerIndexAllocator" />. This is the single clock governing slot reuse — the
+    ///     allocator has no independent timer, so its pending-recycle state and the simulation's
+    ///     cleanup state cannot drift.
+    ///     <para />
+    ///     Must stay above the stale-view sweep interval (<c>SWEEP_INTERVAL × BaseTickMs</c>, ≈5 s)
+    ///     so observers get a chance to emit <c>PlayerLeft</c> before the slot is reused. The
+    ///     auth-timeout path funnels through the same sequence — a PENDING_AUTH peer that times
+    ///     out is transport-disconnected, which triggers the ENet disconnect event and the same
+    ///     DISCONNECTING → cleanup → release flow.
+    /// </summary>
+    public uint DisconnectionCleanTimeoutMs { get; set; } = 5000;
+
+    /// <summary>
+    ///     Maximum time a peer may stay in PENDING_AUTH before being force-disconnected. After
+    ///     force-disconnect, the slot still follows the normal disconnect cleanup path governed
+    ///     by <see cref="DisconnectionCleanTimeoutMs" />.
+    /// </summary>
+    public uint PendingAuthCleanTimeoutMs { get; set; } = 30000;
 }

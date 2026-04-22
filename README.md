@@ -42,6 +42,23 @@ To set `GenerateProto` from Rider:
 
 In practice the default (`true`) is correct for local development. The `false` value is used by Docker/CI builds that don't have the protocol repo available.
 
+## Transport
+
+Pulse uses ENet over UDP. A couple of non-obvious behaviors worth knowing before reading or changing server code:
+
+- **`PeerIndex` is a recycled slot, not an identity.** It wraps `ENetPeer.ID`, which ENet reassigns to the next connecting peer as soon as the previous one is freed. The stable identity is the wallet address from the auth handshake — resolve it through `IdentityBoard` rather than treating `PeerIndex` as the player.
+- **Any per-observer state keyed by `PeerIndex` must be invalidated on disconnect.** If a view, cache, or baseline keyed by `PeerIndex` outlives the peer, the next peer that lands on that slot will silently inherit the stale state — no `PlayerJoined` for the new player, wrong wallet cached on clients, deltas diffed against the old baseline.
+- **Channel convention is enforced by packet flags, not by ENet.** Ch0 is reliable control flow (snapshots, events, resyncs); ch1 is unreliable sequenced (high-frequency state updates, input).
+
+### Capacity tuning
+
+Two knobs control concurrent-peer capacity:
+
+- `Transport.MaxPeers` — size of the `PeerIndex` pool and every per-peer array board (`SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `SpatialGrid`). Hard ceiling on active + in-grace slots.
+- `Transport.MaxConcurrentConnections` — ENet host capacity. `0` = `MaxPeers`. Set below `MaxPeers` to reserve slots for the allocator's pending-recycle grace window — without headroom, a burst of reconnects can exhaust the `PeerIndex` pool while ENet still has free slots, causing `SERVER_FULL` refusals on otherwise admittable connections.
+
+Rule of thumb: `MaxConcurrentConnections ≈ MaxPeers - ceil(peakDisconnectsPerSecond × Peers.DisconnectionCleanTimeoutMs / 1000)`.
+
 ## Metrics & Dashboard
 
 Pulse includes a real-time terminal dashboard for monitoring transport throughput, queue backpressure, and per-message-type rates during development. Enable it with `"Dashboard": { "Enabled": true }` in `appsettings.json`.

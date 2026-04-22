@@ -20,8 +20,6 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     Sweep stale views every N ticks to reclaim memory from subjects that left the interest set.
     /// </summary>
     private const uint SWEEP_INTERVAL = 100;
-    private const uint PEER_DISCONNECTION_CLEAN_TIMEOUT = 5000;
-    private const uint PEER_PENDING_AUTH_CLEAN_TIMEOUT = 30000;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -37,10 +35,13 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
     private readonly ProfileBoard profileBoard;
+    private readonly IPeerIndexAllocator peerIndexAllocator;
     private readonly ILogger<PeerSimulation> logger;
     private readonly bool selfMirrorEnabled;
     private readonly PeerViewSimulationTier selfMirrorTier;
     private readonly bool resyncWithDelta;
+    private readonly uint disconnectionCleanTimeoutMs;
+    private readonly uint pendingAuthCleanTimeoutMs;
 
     /// <summary>
     ///     Reusable collector to avoid allocation per tick.
@@ -72,10 +73,13 @@ public sealed class PeerSimulation : IPeerSimulation
         ITimeProvider timeProvider,
         ITransport transport,
         ProfileBoard profileBoard,
+        IPeerIndexAllocator peerIndexAllocator,
         ILogger<PeerSimulation> logger,
         bool selfMirrorEnabled = false,
         int selfMirrorTier = 0,
-        bool resyncWithDelta = false)
+        bool resyncWithDelta = false,
+        uint disconnectionCleanTimeoutMs = 5000,
+        uint pendingAuthCleanTimeoutMs = 30000)
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
@@ -85,10 +89,13 @@ public sealed class PeerSimulation : IPeerSimulation
         this.timeProvider = timeProvider;
         this.transport = transport;
         this.profileBoard = profileBoard;
+        this.peerIndexAllocator = peerIndexAllocator;
         this.logger = logger;
         this.selfMirrorEnabled = selfMirrorEnabled;
         this.selfMirrorTier = new PeerViewSimulationTier((byte)selfMirrorTier);
         this.resyncWithDelta = resyncWithDelta;
+        this.disconnectionCleanTimeoutMs = disconnectionCleanTimeoutMs;
+        this.pendingAuthCleanTimeoutMs = pendingAuthCleanTimeoutMs;
 
         BaseTickMs = simulationSteps[0];
         tierDivisors = new uint[simulationSteps.Length];
@@ -106,7 +113,7 @@ public sealed class PeerSimulation : IPeerSimulation
         {
             if (observerState.ConnectionState == PeerConnectionState.PENDING_AUTH)
             {
-                if (timeProvider.MonotonicTime - observerState.TransportState.ConnectionTime >= PEER_PENDING_AUTH_CLEAN_TIMEOUT)
+                if (timeProvider.MonotonicTime - observerState.TransportState.ConnectionTime >= pendingAuthCleanTimeoutMs)
                 {
                     transport.Disconnect(observerId, DisconnectReason.AUTH_TIMEOUT);
                     logger.LogInformation("Peer {Peer} disconnected due to authentication timed out", observerId);
@@ -116,7 +123,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
             if (observerState.ConnectionState == PeerConnectionState.DISCONNECTING)
             {
-                if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= PEER_DISCONNECTION_CLEAN_TIMEOUT)
+                if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= disconnectionCleanTimeoutMs)
                 {
                     CleanupDisconnectedPeer(observerId);
                     continue;
@@ -182,6 +189,9 @@ public sealed class PeerSimulation : IPeerSimulation
 
             bool isNew = !views.TryGetValue(entry.Subject, out PeerToPeerView view);
 
+            if (!isNew && DetectAndHandleAliasing(observerId, entry.Subject, isSelfMirror, view, views))
+                isNew = true;
+
             // Stamp before tier gate — a TIER_2 subject fires every 4th tick,
             // but it's still visible on the intervening ticks. Without this,
             // 3 unstamped ticks would trigger false re-entry detection.
@@ -218,6 +228,40 @@ public sealed class PeerSimulation : IPeerSimulation
             view.LastSeenTick = tickCounter;
             views[entry.Subject] = view;
         }
+    }
+
+    /// <summary>
+    ///     Defense-in-depth against <see cref="PeerIndex" /> aliasing. If the observer's view
+    ///     was seeded for a different wallet than the one currently occupying this slot, the
+    ///     logical identity has been replaced mid-session — emit <c>PlayerLeft</c> for the
+    ///     stale identity and drop the view so the caller re-enters the <c>isNew</c> path.
+    ///     <para />
+    ///     The transport-level <see cref="PeerIndexAllocator" /> prevents this via pending-
+    ///     recycle, but the simulation must not rely on that invariant silently. Returns true
+    ///     when aliasing was detected and the view was removed.
+    /// </summary>
+    private bool DetectAndHandleAliasing(
+        PeerIndex observerId, PeerIndex subjectId, bool isSelfMirror,
+        PeerToPeerView view, Dictionary<PeerIndex, PeerToPeerView> views)
+    {
+        string? currentWallet = isSelfMirror
+            ? SELF_MIRROR_WALLET_ID
+            : identityBoard.GetWalletIdByPeerIndex(subjectId);
+
+        if (string.Equals(view.LastSentWalletId, currentWallet, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        {
+            PlayerLeft = new PlayerLeft { SubjectId = subjectId },
+        }, PacketMode.RELIABLE));
+
+        logger.LogWarning(
+            "PeerIndex {Subject} aliased (view held '{OldWallet}', board now '{NewWallet}') — observer {Observer} notified",
+            subjectId, view.LastSentWalletId, currentWallet, observerId);
+
+        views.Remove(subjectId);
+        return true;
     }
 
     /// <summary>
@@ -258,6 +302,7 @@ public sealed class PeerSimulation : IPeerSimulation
             LastSentProfileVersion = profileVersion,
             LastSentTeleportSeq = latestSnapshot.Seq,
             LastSentSnapshot = latestSnapshot,
+            LastSentWalletId = userId,
 
             // LastSentSeq is assigned below — either implicitly by SendEmoteStarted or explicitly.
         };
@@ -635,6 +680,12 @@ public sealed class PeerSimulation : IPeerSimulation
         profileBoard.Remove(peerId);
         observerViews.Remove(peerId);
         peersToBeRemoved.Add(peerId);
+
+        // Return the PeerIndex to the allocator last, after every per-peer board is wiped.
+        // This is the one place in the system that unparks a slot — keeping cleanup and
+        // reuse in lockstep.
+        peerIndexAllocator.Release(peerId);
+
         logger.LogInformation("Peer {Peer} removed after disconnected", peerId);
     }
 

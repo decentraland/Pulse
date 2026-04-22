@@ -64,7 +64,8 @@ public class SelfMirrorTests
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<ILogger<PeerSimulation>>(),
+            profileBoard, Substitute.For<IPeerIndexAllocator>(),
+            Substitute.For<ILogger<PeerSimulation>>(),
             selfMirrorEnabled: true, selfMirrorTier: 0);
 
         peers = new Dictionary<PeerIndex, PeerState>
@@ -239,7 +240,8 @@ public class SelfMirrorTests
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider,
             Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<ILogger<PeerSimulation>>());
+            profileBoard, Substitute.For<IPeerIndexAllocator>(),
+            Substitute.For<ILogger<PeerSimulation>>());
 
         SetVisibleSubjects((observer, PeerViewSimulationTier.TIER_0));
 
@@ -254,7 +256,7 @@ public class SelfMirrorTests
         var tier1Simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard,
+            profileBoard, Substitute.For<IPeerIndexAllocator>(),
             Substitute.For<ILogger<PeerSimulation>>(),
             selfMirrorEnabled: true, selfMirrorTier: 1);
 

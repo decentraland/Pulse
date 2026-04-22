@@ -47,7 +47,8 @@ public class WorkerSignalTests
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
             new ClientMessageCounters(8),
-            new EmoteCompleter(snapshotBoard, timeProvider));
+            new EmoteCompleter(snapshotBoard, timeProvider),
+            Substitute.For<IPeerIndexAllocator>());
 
         eventChannel = Channel.CreateUnbounded<IncomingEvent>();
         signal = new ManualResetEventSlim();
@@ -194,7 +195,8 @@ public class WorkerSignalTests
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
             new ClientMessageCounters(8),
-            new EmoteCompleter(localSnapshotBoard, timeProvider));
+            new EmoteCompleter(localSnapshotBoard, timeProvider),
+            Substitute.For<IPeerIndexAllocator>());
 
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(5000u);

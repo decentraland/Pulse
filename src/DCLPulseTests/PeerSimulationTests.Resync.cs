@@ -275,7 +275,8 @@ public partial class PeerSimulationTests
         new (
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<ILogger<PeerSimulation>>(),
+            profileBoard, Substitute.For<IPeerIndexAllocator>(),
+            Substitute.For<ILogger<PeerSimulation>>(),
             resyncWithDelta: true);
 
     [Test]

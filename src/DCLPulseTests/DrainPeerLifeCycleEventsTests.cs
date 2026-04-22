@@ -19,6 +19,7 @@ public class DrainPeerLifeCycleEventsTests
     private PeersManager manager;
     private Channel<MessagePipe.IncomingEvent> eventChannel;
     private Dictionary<PeerIndex, PeerState> peers;
+    private IdentityBoard identityBoard;
 
     [SetUp]
     public void SetUp()
@@ -27,6 +28,7 @@ public class DrainPeerLifeCycleEventsTests
         timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
 
         var snapshotBoard = new SnapshotBoard(100, 10);
+        identityBoard = new IdentityBoard(100);
 
         manager = new PeersManager(
             new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
@@ -34,7 +36,7 @@ public class DrainPeerLifeCycleEventsTests
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
             new SpatialGrid(100, 100),
-            new IdentityBoard(100),
+            identityBoard,
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),
             Substitute.For<ILogger<PeerSimulation>>(),
@@ -43,7 +45,8 @@ public class DrainPeerLifeCycleEventsTests
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
             new ClientMessageCounters(8),
-            new EmoteCompleter(snapshotBoard, timeProvider));
+            new EmoteCompleter(snapshotBoard, timeProvider),
+            Substitute.For<IPeerIndexAllocator>());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();
@@ -161,5 +164,34 @@ public class DrainPeerLifeCycleEventsTests
         manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
         Assert.That(peers, Is.Empty);
+    }
+
+    /// <summary>
+    ///     Pins the worker-shard isolation rule (<c>CLAUDE.md</c>): even when
+    ///     <see cref="IdentityBoard" /> reports a wallet for a <see cref="PeerIndex" />, the
+    ///     worker must NOT materialize a <see cref="PeerState" /> on the fly when it sees a
+    ///     message for that index without a prior <c>Connected</c> lifecycle event. Doing so
+    ///     would be cross-worker adoption, which was deliberately removed — the rule says all
+    ///     coordination must go through the ENet → router → worker channel path, and state
+    ///     must never be conjured by one worker on another's behalf.
+    /// </summary>
+    [Test]
+    public void UnknownPeerMessage_DoesNotAdoptEvenWhenWalletIsInIdentityBoard()
+    {
+        var unknownPeer = new PeerIndex(42);
+
+        // Simulate the state a cross-worker adoption scheme would rely on: another worker has
+        // already authenticated the peer and the shared IdentityBoard reflects that.
+        identityBoard.Set(unknownPeer, "0xCROSS_WORKER_WALLET");
+
+        // A data message for this PeerIndex arrives on this worker with no Connected event first.
+        eventChannel.Writer.TryWrite(
+            new MessagePipe.IncomingEvent(unknownPeer, new ClientMessage { Input = new PlayerStateInput() }));
+
+        manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
+
+        Assert.That(peers, Does.Not.ContainKey(unknownPeer),
+            "PeersManager must NOT materialize PeerState for an unknown PeerIndex when a message arrives — "
+          + "cross-worker adoption is forbidden by the worker-shard isolation rule");
     }
 }

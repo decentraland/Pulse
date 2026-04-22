@@ -42,7 +42,8 @@ public class WorkerAsyncTests
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
             new ClientMessageCounters(8),
-            new EmoteCompleter(snapshotBoard, timeProvider));
+            new EmoteCompleter(snapshotBoard, timeProvider),
+            Substitute.For<IPeerIndexAllocator>());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         signal = new ManualResetEventSlim();

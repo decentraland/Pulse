@@ -37,6 +37,7 @@ public partial class PeerSimulationTests
     private PeerSimulation simulation;
     private EmoteCompleter emoteCompleter;
     private Dictionary<PeerIndex, PeerState> peers;
+    private IPeerIndexAllocator peerIndexAllocator;
 
     /// <summary>
     ///     Mutable interest entries read by the single <see cref="IAreaOfInterest" /> callback.
@@ -74,10 +75,13 @@ public partial class PeerSimulationTests
 
         profileBoard = new ProfileBoard(MAX_PEERS);
 
+        peerIndexAllocator = Substitute.For<IPeerIndexAllocator>();
+
         simulation = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<ILogger<PeerSimulation>>());
+            profileBoard, peerIndexAllocator,
+            Substitute.For<ILogger<PeerSimulation>>());
 
         emoteCompleter = new EmoteCompleter(snapshotBoard, timeProvider);
 

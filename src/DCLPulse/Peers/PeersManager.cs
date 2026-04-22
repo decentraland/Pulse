@@ -49,6 +49,7 @@ public sealed class PeersManager : BackgroundService
     private readonly ProfileBoard profileBoard;
     private readonly ClientMessageCounters incomingMessageCounters;
     private readonly EmoteCompleter emoteCompleter;
+    private readonly IPeerIndexAllocator peerIndexAllocator;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -65,7 +66,8 @@ public sealed class PeersManager : BackgroundService
         ITransport transport,
         ProfileBoard profileBoard,
         ClientMessageCounters incomingMessageCounters,
-        EmoteCompleter emoteCompleter)
+        EmoteCompleter emoteCompleter,
+        IPeerIndexAllocator peerIndexAllocator)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -82,11 +84,9 @@ public sealed class PeersManager : BackgroundService
         this.spatialGrid = spatialGrid;
         this.identityBoard = identityBoard;
         this.peerOptions = peerOptions;
-        int processorCount = Environment.ProcessorCount;
+        this.peerIndexAllocator = peerIndexAllocator;
 
-        workerCount = peerOptions.MaxWorkerThreads > 0
-            ? Math.Min(peerOptions.MaxWorkerThreads, processorCount)
-            : processorCount;
+        workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
         workerChannels = new Channel<IncomingEvent>[workerCount];
         workerSignals = new ManualResetEventSlim[workerCount];
@@ -112,8 +112,10 @@ public sealed class PeersManager : BackgroundService
         {
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
-                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard, peerSimulationLogger,
-                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta);
+                messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard,
+                peerIndexAllocator, peerSimulationLogger,
+                peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta,
+                peerOptions.DisconnectionCleanTimeoutMs, peerOptions.PendingAuthCleanTimeoutMs);
 
             int idx = i;
 
@@ -141,7 +143,7 @@ public sealed class PeersManager : BackgroundService
                 if (!evt.IsLifeCycle)
                     messagePipe.AckIncomingRead();
 
-                var index = (int)(evt.From.Value % (uint)workerCount);
+                int index = WorkerShard.For(evt.From, workerCount);
                 workerChannels[index].Writer.TryWrite(evt);
                 workerSignals[index].Set();
             }

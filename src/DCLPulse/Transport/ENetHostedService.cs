@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Peers;
+using Pulse.Peers.Simulation;
 using Host = ENet.Host;
 
 namespace Pulse.Transport;
@@ -11,15 +12,24 @@ namespace Pulse.Transport;
 public sealed class ENetHostedService(
     IOptions<ENetTransportOptions> options,
     ILogger<ENetHostedService> logger,
-    MessagePipe messagePipe
+    MessagePipe messagePipe,
+    IPeerIndexAllocator peerIndexAllocator,
+    IdentityBoard identityBoard
 ) : BackgroundService,
     // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
     ITransport
 {
     private readonly ENetTransportOptions options = options.Value;
 
-    // Keyed by ENet peer ID. Maintained exclusively on the ENet thread — no locking needed.
+    // Keyed by the server-allocated PeerIndex. Maintained exclusively on the ENet thread —
+    // no locking needed.
     private readonly Dictionary<PeerIndex, Peer> connectedPeers = new ();
+
+    // ENet peer slot id (netEvent.Peer.ID) → logical PeerIndex. ENet recycles slot ids the
+    // moment a peer is freed; the allocator holds logical indexes through a grace period, so
+    // the two lifecycles diverge and we translate here on every ENet event.
+    private readonly Dictionary<uint, PeerIndex> slotToPeerIndex = new ();
+
     private readonly byte[] receiveBuffer = new byte[options.Value.BufferSize];
     private readonly byte[] sendBuffer = new byte[options.Value.BufferSize];
 
@@ -53,10 +63,12 @@ public sealed class ENetHostedService(
         address.SetIP("::");
         address.Port = options.Port;
 
-        host.Create(address, options.MaxPeers, channelLimit: ENetChannel.COUNT);
+        int concurrentCap = options.EffectiveMaxConcurrentConnections;
+        host.Create(address, concurrentCap, channelLimit: ENetChannel.COUNT);
 
-        logger.LogInformation("ENet host listening on 0.0.0.0:{Port} (maxPeers={MaxPeers}).",
-            options.Port, options.MaxPeers);
+        logger.LogInformation(
+            "ENet host listening on 0.0.0.0:{Port} (concurrentCap={Cap}, peerIndexPool={Pool}).",
+            options.Port, concurrentCap, options.MaxPeers);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -114,12 +126,25 @@ public sealed class ENetHostedService(
 
     private void HandleEvent(ref Event netEvent)
     {
-        var peerIndex = new PeerIndex(netEvent.Peer.ID);
+        uint slotId = netEvent.Peer.ID;
 
         switch (netEvent.Type)
         {
             case EventType.Connect:
+            {
+                if (!peerIndexAllocator.TryAllocate(out PeerIndex peerIndex))
+                {
+                    // Pool exhausted — refuse the connection. This can happen if the pool is the
+                    // same size as ENet's max peers and every pending-recycle slot is still in grace.
+                    // Operator should raise the pool size or shorten the grace window.
+                    logger.LogWarning("PeerIndex pool exhausted — refusing connection from {IP}:{Port}",
+                        netEvent.Peer.IP, netEvent.Peer.Port);
+                    netEvent.Peer.DisconnectNow((uint)DisconnectReason.SERVER_FULL);
+                    break;
+                }
+
                 netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);
+                slotToPeerIndex[slotId] = peerIndex;
                 connectedPeers[peerIndex] = netEvent.Peer;
 
                 messagePipe.OnPeerConnected(peerIndex);
@@ -127,36 +152,50 @@ public sealed class ENetHostedService(
                 PulseMetrics.Transport.PEERS_CONNECTED.Add(1);
                 PulseMetrics.Transport.ACTIVE_PEERS.Add(1);
 
-                logger.LogDebug("Peer connected: {IP}:{Port} (id={ID}).",
-                    netEvent.Peer.IP, netEvent.Peer.Port, netEvent.Peer.ID);
+                logger.LogDebug("Peer connected: {IP}:{Port} (slot={Slot}, peerIndex={PeerIndex}).",
+                    netEvent.Peer.IP, netEvent.Peer.Port, slotId, peerIndex);
 
                 break;
+            }
 
             case EventType.Disconnect:
-                connectedPeers.Remove(peerIndex);
-                messagePipe.OnPeerDisconnected(peerIndex);
-
-                PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
-                PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
-
-                logger.LogDebug("Peer disconnected: id={ID} data={Data}.",
-                    netEvent.Peer.ID, netEvent.Data);
-
-                break;
-
             case EventType.Timeout:
+            {
+                if (!slotToPeerIndex.Remove(slotId, out PeerIndex peerIndex))
+                {
+                    logger.LogWarning("Unknown ENet slot {Slot} on {EventType} — nothing to release.", slotId, netEvent.Type);
+                    break;
+                }
+
                 connectedPeers.Remove(peerIndex);
+
+                // Park the slot. The allocator won't reissue it until CleanupDisconnectedPeer
+                // releases it — that's the one place the simulation wipes every per-peer board,
+                // so allocation and cleanup stay in lockstep.
+                peerIndexAllocator.MarkPending(peerIndex);
+
+                string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);
                 messagePipe.OnPeerDisconnected(peerIndex);
 
                 PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
                 PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
 
-                logger.LogDebug("Peer timed out: id={ID}.", netEvent.Peer.ID);
+                logger.LogDebug("Peer {EventType}: slot={Slot} peerIndex={PeerIndex} wallet={Wallet} data={Data}.",
+                    netEvent.Type, slotId, peerIndex, walletId ?? "<none>", netEvent.Data);
                 break;
+            }
 
             case EventType.Receive:
             {
                 using Packet _ = netEvent.Packet;
+
+                if (!slotToPeerIndex.TryGetValue(slotId, out PeerIndex peerIndex))
+                {
+                    // Should not happen — ENet delivers Connect before Receive for a given slot.
+                    logger.LogWarning("Receive from unknown ENet slot {Slot} — dropping packet.", slotId);
+                    break;
+                }
+
                 int packetLength = netEvent.Packet.Length;
                 netEvent.Packet.CopyTo(receiveBuffer);
 

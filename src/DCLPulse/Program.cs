@@ -76,6 +76,12 @@ builder.Services.AddSingleton(sp =>
     return new IdentityBoard(transportOptions.MaxPeers);
 });
 
+builder.Services.AddSingleton<IPeerIndexAllocator>(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+    return new PeerIndexAllocator(transportOptions.MaxPeers);
+});
+
 builder.Services.Configure<SpatialHashAreaOfInterestOptions>(
     builder.Configuration.GetSection(SpatialHashAreaOfInterestOptions.SECTION_NAME));
 

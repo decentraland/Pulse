@@ -19,6 +19,16 @@ Channel semantics are enforced by convention, not by ENet itself — packet flag
 - ch0: reliable control flow (snapshots, events, resyncs)
 - ch1: unreliable sequenced (high-frequency state updates, input)
 
+### PeerIndex is ENet's recycled slot ID — not a stable identity
+
+`PeerIndex` wraps `ENetPeer.ID`, which is an index into the host's fixed-size peer table. **ENet reuses the slot** as soon as a previous peer is freed, so the same `PeerIndex` value can refer to a different wallet across connect/disconnect cycles. The stable identity is the wallet address resolved during the auth handshake (`IdentityBoard.GetWalletIdByPeerIndex`).
+
+**Implications for server code:**
+- Never treat `PeerIndex` as the player identity — always dereference through `IdentityBoard` or carry the `UserId` explicitly in protocol messages.
+- Any observer-side state keyed by `PeerIndex` (per-observer views, caches, baselines) must be invalidated synchronously when the underlying peer disconnects, or it will collide with the next peer that lands on that slot.
+- Peer-lifecycle messages (`PlayerJoined`, `PlayerLeft`) are correctness-critical: a missed `PlayerLeft` lets the client keep a stale wallet associated with a slot and apply subsequent deltas against the wrong player.
+- When writing tests that simulate reconnects, remember that ENet would reuse the slot — test the reused-ID path explicitly, not only the fresh-ID path.
+
 ---
 
 ## Authorization
@@ -211,6 +221,21 @@ When in doubt, check 1–2 nearby files in the same directory.
 
 - Use NSubstitute instead of Fake/Null implementations
 - Don't mention line numbers in comments as they can change any time
+
+## Worker-shard isolation rule
+
+`PeersManager` shards peers across workers by `PeerIndex.Value % workerCount`. Every worker owns its own `peerStates` dict and its own `observerViews`; the owning worker is the **only** thread that reads or writes those structures. Cross-worker state migration and direct-message-passing between workers are not supported and must not be introduced — ad-hoc handshake/reclamation schemes that try to move a peer's state from one worker's dict to another's race the owning worker's simulation loop (DISCONNECTING cleanup, sweep, message drain) and silently destroy live state.
+
+All cross-worker coordination goes through the one existing channel: the ENet thread writes `MessagePipe.incomingChannel` (lifecycle + data events), the `PeersManager` router fans those out to `workerChannels[shard]`, and each worker processes its own channel sequentially. If a feature seems to need cross-worker orchestration, the right fix is to either keep the coordination at the transport/allocator layer (which is already shared) or route decisions through the incoming-event pipeline so they land on the target worker in order.
+
+Concrete consequences:
+- Same-wallet reconnect always gets a **fresh** server-allocated `PeerIndex` today. We do not rekey the transport to reuse the prior `PeerIndex` — doing so would require cross-worker rekey, which this rule forbids.
+- Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~2 × `SWEEP_INTERVAL` × `BaseTickMs` ≈ 10 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
+- Different-wallet on a recycled ENet slot: the allocator's pending-recycle already prevents the server from issuing the same `PeerIndex` to a different wallet within the grace window, so this case does not produce aliased observer views; the original bug is fixed.
+
+## PeerSimulation — method decoupling
+
+`PeerSimulation` is on the hot path and already long. New logic added to it must go into its own private method — do not inline new behavior into existing methods. Keep each method focused on a single concern (e.g. tier gating, delta computation, aliasing detection, profile announcement). The orchestrator `ProcessVisibleSubjects` should read as a short sequence of named calls, not a wall of conditionals. This keeps the per-subject control flow legible and makes it possible to test or reason about each concern in isolation.
 
 ## Docker — Deployment & Debugging
 

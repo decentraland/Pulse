@@ -159,7 +159,7 @@ public partial class PeerSimulationTests
         var sim = new PeerSimulation(
             areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, simulationLogger);
+            profileBoard, Substitute.For<IPeerIndexAllocator>(), simulationLogger);
 
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
 

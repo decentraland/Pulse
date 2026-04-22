@@ -49,4 +49,14 @@ public struct PeerToPeerView
     ///     a duplicate delivery bug in the simulation pipeline and gets logged as an error.
     /// </summary>
     public uint LastSentSeq;
+
+    /// <summary>
+    ///     Wallet the observer currently believes owns this PeerIndex. Captured at
+    ///     <c>PlayerJoined</c> time. If <see cref="Simulation.IdentityBoard" /> now reports a
+    ///     different wallet for the same PeerIndex, the slot has been aliased — emit
+    ///     <c>PlayerLeft</c> and re-announce as new. Defense-in-depth: the transport-level
+    ///     <see cref="PeerIndexAllocator" /> prevents aliasing by holding pending slots through
+    ///     a grace period, but the simulation should not silently trust that invariant.
+    /// </summary>
+    public string? LastSentWalletId;
 }

@@ -16,6 +16,8 @@ ARG BUILD_CONFIGURATION=Release
 RUN dotnet publish "DCLPulse.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:GenerateProto=false
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+ARG COMMIT_HASH=unknown
+ENV COMMIT_HASH=$COMMIT_HASH
 WORKDIR /app
 COPY --from=publish /app/publish .
 EXPOSE 7777/udp

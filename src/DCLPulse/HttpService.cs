@@ -10,6 +10,12 @@ public sealed class HttpService(
     IMetricsCollector metricsCollector,
     MetricsBearerToken metricsBearerToken) : BackgroundService
 {
+    private static readonly byte[] ABOUT_RESPONSE =
+        System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown",
+            }));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -32,6 +38,11 @@ public sealed class HttpService(
                 {
                     case "/health":
                         ctx.Response.StatusCode = 200;
+                        break;
+                    case "/about":
+                        ctx.Response.StatusCode = 200;
+                        ctx.Response.ContentType = "application/json";
+                        await ctx.Response.OutputStream.WriteAsync(ABOUT_RESPONSE, stoppingToken);
                         break;
                     case "/metrics":
                         if (!AuthorizeMetrics(ctx.Request))

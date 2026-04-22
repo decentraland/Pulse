@@ -1,4 +1,4 @@
-﻿using Decentraland.Pulse;
+using Decentraland.Pulse;
 using Pulse.Metrics;
 using Pulse.Peers;
 using System.Diagnostics.CodeAnalysis;

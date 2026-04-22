@@ -18,6 +18,8 @@ public class SpatialHashAreaOfInterestTests
     private const float TIER_1_RADIUS = 50f;
     private const float MAX_RADIUS = 100f;
 
+    private const string REALM = "realm-a";
+
     private SpatialGrid grid;
     private SnapshotBoard snapshotBoard;
     private SpatialHashAreaOfInterest aoi;
@@ -260,14 +262,100 @@ public class SpatialHashAreaOfInterestTests
         Assert.That(collector.Entries[1].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_2));
     }
 
-    private void SetupPeer(PeerIndex peer, Vector3 position)
+    [Test]
+    public void SubjectInDifferentRealm_NotVisible()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+
+        Vector3 observerPos = new (100, 0, 100);
+        Vector3 subjectPos = new (110, 0, 100);
+
+        SetupPeer(observer, observerPos, "realm-a");
+        SetupPeer(subject, subjectPos, "realm-b");
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(observerPos, realm: "realm-a");
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        Assert.That(collector.Count, Is.EqualTo(0));
+    }
+
+    [Test]
+    public void ObserverWithoutRealm_SeesNobody()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+
+        Vector3 observerPos = new (100, 0, 100);
+        Vector3 subjectPos = new (110, 0, 100);
+
+        // Observer has no realm — subject is otherwise perfectly in range and in a realm.
+        SetupPeer(observer, observerPos, realm: null);
+        SetupPeer(subject, subjectPos);
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(observerPos, realm: null);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        Assert.That(collector.Count, Is.EqualTo(0));
+    }
+
+    [Test]
+    public void SubjectWithInheritedRealm_Visible()
+    {
+        // End-to-end realm-ledger check: a teleport-style publish seeds realm-a on seq 1, then
+        // an input-style publish at seq 2 passes Realm=null. The SnapshotBoard inherits, so AoI
+        // reads realm-a on the latest snapshot and the observer sees the subject.
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+
+        Vector3 observerPos = new (100, 0, 100);
+        Vector3 subjectPos = new (110, 0, 100);
+
+        SetupPeer(observer, observerPos);
+        grid.Set(subject, subjectPos);
+        snapshotBoard.SetActive(subject);
+        PublishSnapshot(subject, subjectPos); // seq 1, explicit realm
+        PublishSnapshot(subject, subjectPos, realm: null); // seq 2, inherits realm
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(observerPos, realm: REALM);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        Assert.That(collector.Count, Is.EqualTo(1));
+        Assert.That(collector.Entries[0].Subject, Is.EqualTo(subject));
+    }
+
+    [Test]
+    public void SubjectWithoutRealm_NotVisible()
+    {
+        // Edge case: an authenticated subject that has never sent a TeleportRequest is in the
+        // spatial grid and has snapshots, but its realm is null. An observer with a valid realm
+        // must not see it — AoI filters by exact string equality, and `null != "realm-a"`.
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+
+        Vector3 observerPos = new (100, 0, 100);
+        Vector3 subjectPos = new (110, 0, 100);
+
+        SetupPeer(observer, observerPos);
+        SetupPeer(subject, subjectPos, realm: null);
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(observerPos, realm: REALM);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        Assert.That(collector.Count, Is.EqualTo(0));
+    }
+
+    private void SetupPeer(PeerIndex peer, Vector3 position) =>
+        SetupPeer(peer, position, REALM);
+
+    private void SetupPeer(PeerIndex peer, Vector3 position, string? realm)
     {
         grid.Set(peer, position);
         snapshotBoard.SetActive(peer);
-        PublishSnapshot(peer, position);
+        PublishSnapshot(peer, position, realm);
     }
 
-    private void PublishSnapshot(PeerIndex peer, Vector3 position)
+    private void PublishSnapshot(PeerIndex peer, Vector3 position, string? realm = REALM)
     {
         snapshotBoard.Publish(peer, new PeerSnapshot(
             Seq: snapshotBoard.LastSeq(peer) + 1,
@@ -283,15 +371,17 @@ public class SpatialHashAreaOfInterestTests
             HeadYaw: null,
             HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed));
+            GlideState: GlideState.PropClosed,
+            Realm: realm));
     }
 
-    private static PeerSnapshot MakeSnapshot(Vector3 position) =>
+    private static PeerSnapshot MakeSnapshot(Vector3 position, string? realm = REALM) =>
         new (Seq: 1, ServerTick: 0, Parcel: 0,
             LocalPosition: position, Velocity: Vector3.Zero,
             GlobalPosition: position,
             RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
             AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed);
+            GlideState: GlideState.PropClosed,
+            Realm: realm);
 }

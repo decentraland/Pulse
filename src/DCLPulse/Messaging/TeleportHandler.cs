@@ -18,18 +18,29 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
         if (SkipFromUnauthorizedPeer(peers, from, message, out _))
             return;
 
-        Vector3 localPosition = message.Teleport.Position;
-        int parcelIndex = message.Teleport.ParcelIndex;
+        TeleportRequest request = message.Teleport;
+        string realm = request.Realm;
+
+        if (string.IsNullOrEmpty(realm))
+        {
+            logger.LogWarning("Teleport from {Peer} rejected: empty realm", from);
+            return;
+        }
+
+        Vector3 localPosition = request.Position;
+        int parcelIndex = request.ParcelIndex;
         System.Numerics.Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(parcelIndex, localPosition);
 
         float rotationY = 0;
         float? headYaw = null, headPitch = null;
+        string? previousRealm = null;
 
         if (snapshotBoard.TryRead(from, out PeerSnapshot prevSnapshot))
         {
             rotationY = prevSnapshot.RotationY;
             headYaw = prevSnapshot.HeadYaw;
             headPitch = prevSnapshot.HeadPitch;
+            previousRealm = prevSnapshot.Realm;
         }
 
         var snapshot = new PeerSnapshot(snapshotBoard.LastSeq(from) + 1,
@@ -41,11 +52,21 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
             headYaw, headPitch,
             PlayerAnimationFlags.Grounded,
             GlideState.PropClosed,
-            IsTeleport: true);
+            IsTeleport: true,
+            Realm: realm);
 
         snapshotBoard.Publish(from, snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);
 
-        logger.LogInformation("Teleport requested by {Peer} at {Position}", from, globalPosition);
+        if (!string.Equals(previousRealm, realm, StringComparison.Ordinal))
+        {
+            logger.LogInformation("Peer {Peer} teleported to realm '{Realm}' (was '{Previous}') at {Position}",
+                from, realm, previousRealm ?? "<none>", globalPosition);
+        }
+        else
+        {
+            logger.LogInformation("Teleport requested by {Peer} at {Position} (realm '{Realm}')",
+                from, globalPosition, realm);
+        }
     }
 }

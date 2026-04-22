@@ -183,7 +183,8 @@ public sealed class PeersManager : BackgroundService
             // so each expired emote gets its own seq in the ring (no lazy expiry in the
             // observer loop, which would reuse latestSnapshot.Seq and collide with the
             // subsequent Phase 3 delta).
-            emoteCompleter.CompleteExpiredEmotes(peers);
+            try { emoteCompleter.CompleteExpiredEmotes(peers); }
+            catch (Exception ex) { logger.LogError(ex, "Error completing expired emotes on worker {Worker}.", workerIndex); }
 
             long now = timeProvider.MonotonicTime;
 

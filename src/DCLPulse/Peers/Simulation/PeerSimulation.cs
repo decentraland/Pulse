@@ -363,7 +363,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     they started emoting*, not a later carry-forward position.
     ///     <para />
     ///     Ring-wrap fallback: if the real start snapshot has been evicted from the ring (high
-    ///     publish rate, low-tier observer), the scan can't find a <c>ServerTick == StartTick</c>
+    ///     publish rate, low-tier observer), the scan can't find a <c>Seq == StartSeq</c>
     ///     match. In that case we promote the <b>earliest</b> carrying snapshot in range (the
     ///     one closest in time to the real start, therefore closest in position) to
     ///     <paramref name="lastEmoteStart" /> and set <paramref name="emoteStartFromEviction" />
@@ -448,7 +448,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // Both are published as real stop snapshots on the subject's worker, so they carry their own seq.
         if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
         {
-            SendEmoteStopped(observerId, ref view, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value, stopSnapshot.Value.ServerTick);
+            SendEmoteStopped(observerId, ref view, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value);
             view.LastSentEmote = null;
 
             // Advance the Phase 3 baseline to the stop snapshot — otherwise Phase 3's
@@ -570,15 +570,14 @@ public sealed class PeerSimulation : IPeerSimulation
             emote.EmoteId, subjectId, observerId);
     }
 
-    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason,
-        uint serverTick)
+    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason)
     {
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
             EmoteStopped = new EmoteStopped
             {
                 SubjectId = subjectId.Value,
-                ServerTick = serverTick,
+                ServerTick = snapshot.ServerTick,
                 Reason = reason,
                 Sequence = snapshot.Seq,
                 PlayerState = CreatePlayerState(snapshot),

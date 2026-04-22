@@ -184,8 +184,6 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
 
-**Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
-
 ---
 
 ## RTT

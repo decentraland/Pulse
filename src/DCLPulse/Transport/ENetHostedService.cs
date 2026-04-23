@@ -90,7 +90,9 @@ public sealed partial class ENetHostedService(
     }
 
     /// <summary>
-    ///     ENet is not thread-safe so we are obliged to write from the same thread we read
+    ///     ENet is not thread-safe so we are obliged to write from the same thread we read.
+    ///     Drains both data sends and disconnect requests in enqueue order — any queued
+    ///     send for a peer reaches ENet before that peer's disconnect.
     /// </summary>
     private void FlushOutgoing()
     {
@@ -98,6 +100,12 @@ public sealed partial class ENetHostedService(
         {
             if (!connectedPeers.TryGetValue(msg.To, out Peer peer))
                 continue;
+
+            if (msg.IsDisconnect)
+            {
+                peer.Disconnect((uint)msg.Disconnect!.Value);
+                continue;
+            }
 
             ENetChannel channel = msg.PacketMode switch
                                   {
@@ -223,10 +231,13 @@ public sealed partial class ENetHostedService(
         logger.LogInformation("ENet deinitialized.");
     }
 
-    public void Disconnect(PeerIndex pi, DisconnectReason reason)
-    {
-        if (!connectedPeers.TryGetValue(pi, out Peer peer)) return;
-
-        peer.Disconnect((uint) reason);
-    }
+    /// <summary>
+    ///     Safe to call from any thread. The actual <c>enet_peer_disconnect</c> runs on the
+    ///     ENet thread via <see cref="FlushOutgoing" /> — the native ENet API is not
+    ///     thread-safe (see <c>CLAUDE.md</c>), and <see cref="connectedPeers" /> is only mutated
+    ///     by the ENet thread, so both concerns are resolved by routing through
+    ///     <see cref="MessagePipe" />.
+    /// </summary>
+    public void Disconnect(PeerIndex pi, DisconnectReason reason) =>
+        messagePipe.SendDisconnect(pi, reason);
 }

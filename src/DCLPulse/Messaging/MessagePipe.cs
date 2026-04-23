@@ -62,8 +62,20 @@ public sealed class MessagePipe(
     {
         outgoingChannel.Writer.TryWrite(message);
         Interlocked.Increment(ref outgoingDepth);
-        outgoingMessageCounters.Increment(message.Message.MessageCase);
+
+        // Disconnect envelopes carry a sentinel Message — skip the message-type counter.
+        if (!message.IsDisconnect)
+            outgoingMessageCounters.Increment(message.Message.MessageCase);
     }
+
+    /// <summary>
+    ///     Enqueues a disconnect for <paramref name="to" /> on the outgoing channel so the ENet
+    ///     thread performs the actual <c>enet_peer_disconnect</c> call. Callable from any thread.
+    ///     The disconnect is ordered against in-flight sends from the same worker: both flow
+    ///     through the single outgoing channel, FIFO.
+    /// </summary>
+    public void SendDisconnect(PeerIndex to, DisconnectReason reason) =>
+        Send(OutgoingMessage.DisconnectPeer(to, reason));
 
     /// <summary>
     ///     Called on the Transport thread for every received packet.
@@ -112,7 +124,28 @@ public sealed class MessagePipe(
         public bool IsLifeCycle => LifeCycle.HasValue;
     }
 
-    public readonly record struct OutgoingMessage(PeerIndex To, ServerMessage Message, PacketMode PacketMode);
+    /// <summary>
+    ///     A unit of work for the ENet thread's <c>FlushOutgoing</c>. Either a data send
+    ///     (<see cref="Disconnect" /> null) or a disconnect request (<see cref="Disconnect" />
+    ///     set, <see cref="Message" /> is a sentinel that must not be read). The union lets
+    ///     workers post both through a single channel so the ENet thread sees them in enqueue
+    ///     order — the peer's final reliable sends always reach ENet before the disconnect.
+    ///     Consumers must check <see cref="IsDisconnect" /> before reading <see cref="Message" />.
+    /// </summary>
+    public readonly record struct OutgoingMessage(
+        PeerIndex To,
+        ServerMessage Message,
+        PacketMode PacketMode,
+        DisconnectReason? Disconnect = null)
+    {
+        public bool IsDisconnect => Disconnect.HasValue;
+
+        public static OutgoingMessage DisconnectPeer(PeerIndex to, DisconnectReason reason) =>
+            // null! — Message is a sentinel for disconnects and is never read; FlushOutgoing
+            // branches on IsDisconnect first. Keeps the type non-nullable so data-send
+            // consumers don't have to null-check on every access.
+            new (to, null!, default, reason);
+    }
 
     public enum PeerEventType { Connected, Disconnected }
 }

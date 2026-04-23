@@ -280,9 +280,18 @@ that fall outside the encoder's grid produce garbage global positions downstream
 ### Defense
 
 `src/DCLPulse/Messaging/Hardening/FieldValidator.cs` — one class, three per-message methods
-(`ValidatePlayerStateInput`, `ValidateEmoteStart`, `ValidateTeleport`). Parcel bounds come
-from the existing `ParcelEncoderOptions` (`ParcelEncoder.IsValidIndex`). On any violation the
-peer is disconnected with a message-type-specific `DisconnectReason`.
+(`ValidatePlayerStateInput`, `ValidateEmoteStart`, `ValidateTeleport`). Checks performed:
+
+- Parcel-index bounds (delegated to `ParcelEncoder.IsValidIndex`).
+- String length caps (`EmoteId`, `Realm`).
+- `EmoteStart.DurationMs` upper bound.
+- **Finiteness** (`float.IsFinite`) on every client-supplied float: `Position`, `Velocity`,
+  `RotationY`, `MovementBlend`, `SlideBlend`, optional `HeadYaw`/`HeadPitch`,
+  `TeleportRequest.Position`. Rejects NaN and ±Infinity. Optional fields (head yaw/pitch)
+  are checked only when the proto's `Has*` flag is set.
+- Null-guard on `Position`/`Velocity` proto sub-messages to prevent NRE on malformed input.
+
+On any violation the peer is disconnected with a message-type-specific `DisconnectReason`.
 
 ### Config
 

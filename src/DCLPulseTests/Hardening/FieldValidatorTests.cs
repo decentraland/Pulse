@@ -34,7 +34,13 @@ public class FieldValidatorTests
 
     private static PeerState NewState() => new (PeerConnectionState.AUTHENTICATED);
 
-    private static PlayerState ValidPlayerState() => new () { ParcelIndex = 100 };
+    private static PlayerState ValidPlayerState() =>
+        new ()
+        {
+            ParcelIndex = 100,
+            Position = new Vector3(),
+            Velocity = new Vector3(),
+        };
 
     private static EmoteStart ValidEmoteStart(string emoteId = "wave", uint? durationMs = 3000) =>
         new ()
@@ -180,6 +186,107 @@ public class FieldValidatorTests
         TeleportRequest msg = ValidTeleport(realm: new string('r', 17));
 
         Assert.That(v.ValidateTeleport(PEER, NewState(),msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
+    }
+
+    // ── Numeric finiteness (NaN/Inf) ─────────────────────────────────
+
+    private static PlayerStateInput InputWith(Action<PlayerState> mutate)
+    {
+        PlayerState s = ValidPlayerState();
+        mutate(s);
+        return new PlayerStateInput { State = s };
+    }
+
+    [Test]
+    public void NaNPosition_InInput_Rejects()
+    {
+        FieldValidator v = Create();
+        PlayerStateInput msg = InputWith(s => s.Position = new Vector3 { X = float.NaN, Y = 0, Z = 0 });
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_INPUT_FIELD);
+    }
+
+    [Test]
+    public void InfinityVelocity_InInput_Rejects()
+    {
+        FieldValidator v = Create();
+        PlayerStateInput msg = InputWith(s => s.Velocity = new Vector3 { X = 0, Y = float.PositiveInfinity, Z = 0 });
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_INPUT_FIELD);
+    }
+
+    [Test]
+    public void NaNRotationY_InInput_Rejects()
+    {
+        FieldValidator v = Create();
+        PlayerStateInput msg = InputWith(s => s.RotationY = float.NaN);
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+    }
+
+    [Test]
+    public void NaNMovementBlend_InInput_Rejects()
+    {
+        FieldValidator v = Create();
+        PlayerStateInput msg = InputWith(s => s.MovementBlend = float.NaN);
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+    }
+
+    [Test]
+    public void NaNHeadYaw_InInput_Rejects()
+    {
+        FieldValidator v = Create();
+        PlayerStateInput msg = InputWith(s => s.HeadYaw = float.NaN);
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+    }
+
+    [Test]
+    public void UnsetHeadYaw_IsIgnored()
+    {
+        // HasHeadYaw is false by default; finiteness check should skip it regardless of value.
+        FieldValidator v = Create();
+        var msg = new PlayerStateInput { State = ValidPlayerState() };
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.True);
+    }
+
+    [Test]
+    public void NullPosition_InInput_Rejects()
+    {
+        // Malformed proto with unset Position would NRE in the handler; validator must reject.
+        FieldValidator v = Create();
+        var msg = new PlayerStateInput
+        {
+            State = new PlayerState { ParcelIndex = 100, Velocity = new Vector3() },
+        };
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+    }
+
+    [Test]
+    public void NaNPosition_InEmote_RejectsWithEmoteField()
+    {
+        FieldValidator v = Create();
+        EmoteStart msg = ValidEmoteStart();
+        msg.PlayerState.Position = new Vector3 { X = float.NaN, Y = 0, Z = 0 };
+
+        Assert.That(v.ValidateEmoteStart(PEER, NewState(), msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_EMOTE_FIELD);
+    }
+
+    [Test]
+    public void NaNPosition_InTeleport_RejectsWithTeleportField()
+    {
+        FieldValidator v = Create();
+        TeleportRequest msg = ValidTeleport();
+        msg.Position = new Vector3 { X = float.NaN, Y = 0, Z = 0 };
+
+        Assert.That(v.ValidateTeleport(PEER, NewState(), msg), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
     }
 

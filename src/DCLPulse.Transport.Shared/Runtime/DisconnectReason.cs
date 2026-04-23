@@ -27,6 +27,18 @@ namespace Pulse.Transport
         ///     Admin Kick
         /// </summary>
         KICKED = 5,
+
         SERVER_FULL = 6,
+
+        /// <summary>
+        ///     Per-source-IP pre-auth connection cap exceeded. Only PENDING_AUTH connections
+        ///     count against the per-IP quota; once a peer authenticates it no longer counts.
+        /// </summary>
+        PRE_AUTH_IP_LIMIT_EXHAUSTED = 7,
+
+        /// <summary>
+        ///     Global pre-auth budget exhausted — too many connections currently in PENDING_AUTH
+        /// </summary>
+        PRE_AUTH_BUDGET_EXHAUSTED = 8
     }
 }

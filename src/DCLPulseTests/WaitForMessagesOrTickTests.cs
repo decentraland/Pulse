@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
 using Pulse.InterestManagement;
@@ -9,6 +10,7 @@ using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 using static Pulse.Messaging.MessagePipe;
 
 namespace DCLPulseTests;
@@ -48,7 +50,11 @@ public class WorkerSignalTests
             new ProfileBoard(100),
             new ClientMessageCounters(8),
             new EmoteCompleter(snapshotBoard, timeProvider),
-            Substitute.For<IPeerIndexAllocator>());
+            Substitute.For<IPeerIndexAllocator>(),
+            new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
+            {
+                PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
+            })));
 
         eventChannel = Channel.CreateUnbounded<IncomingEvent>();
         signal = new ManualResetEventSlim();
@@ -196,7 +202,11 @@ public class WorkerSignalTests
             new ProfileBoard(100),
             new ClientMessageCounters(8),
             new EmoteCompleter(localSnapshotBoard, timeProvider),
-            Substitute.For<IPeerIndexAllocator>());
+            Substitute.For<IPeerIndexAllocator>(),
+            new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
+            {
+                PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
+            })));
 
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(5000u);

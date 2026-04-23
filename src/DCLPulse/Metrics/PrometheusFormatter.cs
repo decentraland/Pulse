@@ -47,6 +47,11 @@ internal static class PrometheusFormatter
         WriteGauge(writer, "dcl_pulse_incoming_queue_depth", "Pending messages in incoming channel", snap.Transport.IncomingQueueDepth);
         WriteGauge(writer, "dcl_pulse_outgoing_queue_depth", "Pending messages in outgoing channel", snap.Transport.OutgoingQueueDepth);
 
+        WriteCounter(writer, "dcl_pulse_pre_auth_ip_limit_refused_total", "Connections refused by the per-IP pre-auth cap", snap.Hardening.TotalPreAuthIpLimitRefused);
+        WriteCounter(writer, "dcl_pulse_pre_auth_refused_total", "Connections refused by the global pre-auth budget", snap.Hardening.TotalPreAuthRefused);
+        WriteCounter(writer, "dcl_pulse_handshake_attempts_exceeded_total", "Peers disconnected after exceeding the handshake attempt limit", snap.Hardening.TotalHandshakeAttemptsExceeded);
+        WriteGauge(writer, "dcl_pulse_pre_auth_in_flight", "Current number of peers in PENDING_AUTH", snap.Hardening.PreAuthInFlight);
+
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);
         WriteEnumCounters(writer, "dcl_pulse_outgoing_messages_total", "Total outgoing messages by type",

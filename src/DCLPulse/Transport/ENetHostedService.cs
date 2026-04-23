@@ -5,16 +5,18 @@ using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport.Hardening;
 using Host = ENet.Host;
 
 namespace Pulse.Transport;
 
-public sealed class ENetHostedService(
+public sealed partial class ENetHostedService(
     IOptions<ENetTransportOptions> options,
     ILogger<ENetHostedService> logger,
     MessagePipe messagePipe,
     IPeerIndexAllocator peerIndexAllocator,
-    IdentityBoard identityBoard
+    IdentityBoard identityBoard,
+    PreAuthAdmission preAuthAdmission
 ) : BackgroundService,
     // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
     ITransport
@@ -143,6 +145,9 @@ public sealed class ENetHostedService(
                     break;
                 }
 
+                if (!TryAdmitOrRefuse(ref netEvent, peerIndex))
+                    break;
+
                 netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);
                 slotToPeerIndex[slotId] = peerIndex;
                 connectedPeers[peerIndex] = netEvent.Peer;
@@ -172,6 +177,8 @@ public sealed class ENetHostedService(
                 // Park the slot. The allocator won't reissue it until CleanupDisconnectedPeer
                 // releases it — that's the one place the simulation wipes every per-peer board,
                 // so allocation and cleanup stay in lockstep.
+                // PreAuthAdmission release is driven by the worker on the lifecycle Disconnected
+                // event, not here — keeping all admission accounting on one thread.
                 peerIndexAllocator.MarkPending(peerIndex);
 
                 string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);

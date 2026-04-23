@@ -4,6 +4,7 @@ using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 using System.Threading.Channels;
 using static Pulse.Messaging.MessagePipe;
 
@@ -50,6 +51,7 @@ public sealed class PeersManager : BackgroundService
     private readonly ClientMessageCounters incomingMessageCounters;
     private readonly EmoteCompleter emoteCompleter;
     private readonly IPeerIndexAllocator peerIndexAllocator;
+    private readonly PreAuthAdmission preAuthAdmission;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -67,7 +69,8 @@ public sealed class PeersManager : BackgroundService
         ProfileBoard profileBoard,
         ClientMessageCounters incomingMessageCounters,
         EmoteCompleter emoteCompleter,
-        IPeerIndexAllocator peerIndexAllocator)
+        IPeerIndexAllocator peerIndexAllocator,
+        PreAuthAdmission preAuthAdmission)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -85,6 +88,7 @@ public sealed class PeersManager : BackgroundService
         this.identityBoard = identityBoard;
         this.peerOptions = peerOptions;
         this.peerIndexAllocator = peerIndexAllocator;
+        this.preAuthAdmission = preAuthAdmission;
 
         workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
@@ -241,6 +245,10 @@ public sealed class PeersManager : BackgroundService
         {
             if (!peers.TryGetValue(from, out PeerState? peerState))
                 peerState = peerStateFactory.Create();
+
+            // Idempotent: frees the global + per-IP pre-auth slots if the peer was still
+            // PENDING_AUTH; no-op if the handshake path already released them on promotion.
+            preAuthAdmission.ReleaseOnDisconnect(from);
 
             peerState.ConnectionState = PeerConnectionState.DISCONNECTING;
 

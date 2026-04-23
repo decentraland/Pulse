@@ -1,8 +1,10 @@
 using DCL.Auth;
 using Decentraland.Pulse;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 using System.Text.Json;
 
 namespace Pulse.Messaging;
@@ -13,10 +15,21 @@ public class HandshakeHandler(MessagePipe messagePipe,
     SnapshotBoard snapshotBoard,
     IdentityBoard identityBoard,
     ITransport transport,
+    HandshakeAttemptPolicy attemptPolicy,
+    PreAuthAdmission preAuthAdmission,
     ILogger<HandshakeHandler> logger) : IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
+        // Throttle before any parsing/crypto work — attempt counter is per-peer on PeerState.
+        if (peers.TryGetValue(from, out PeerState? existingState)
+         && !attemptPolicy.TryRecordAttempt(existingState))
+        {
+            logger.LogInformation("Handshake attempts exceeded for peer {Peer} — disconnecting", from);
+            transport.Disconnect(from, DisconnectReason.AUTH_FAILED);
+            return;
+        }
+
         HandshakeRequest handshakeRequest = message.Handshake;
         string authChainJson = handshakeRequest.AuthChain.ToStringUtf8();
         Dictionary<string, string>? headers = JsonSerializer.Deserialize(authChainJson, HandshakeJsonContext.Default.DictionaryStringString);
@@ -61,6 +74,10 @@ public class HandshakeHandler(MessagePipe messagePipe,
             peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
 
             peers[from] = peer;
+
+            // Promotion out of PENDING_AUTH — frees both the global pre-auth budget and the
+            // per-IP pre-auth slot in one call.
+            preAuthAdmission.ReleaseOnPromotion(from);
 
             if (identityBoard.TryGetPeerIndexByWallet(peer.WalletId, out PeerIndex duplicatedPeer))
             {

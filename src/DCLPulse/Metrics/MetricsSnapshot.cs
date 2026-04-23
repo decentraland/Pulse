@@ -3,6 +3,7 @@ namespace Pulse.Metrics;
 public readonly record struct MetricsSnapshot
 {
     public TransportSnapshot Transport { get; init; }
+    public HardeningSnapshot Hardening { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
@@ -19,5 +20,13 @@ public readonly record struct MetricsSnapshot
         public long TotalSendFailures { get; init; }
         public int IncomingQueueDepth { get; init; }
         public int OutgoingQueueDepth { get; init; }
+    }
+
+    public readonly record struct HardeningSnapshot
+    {
+        public long TotalPreAuthIpLimitRefused { get; init; }
+        public long TotalPreAuthRefused { get; init; }
+        public long TotalHandshakeAttemptsExceeded { get; init; }
+        public int PreAuthInFlight { get; init; }
     }
 }

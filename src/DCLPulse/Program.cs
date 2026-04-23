@@ -4,11 +4,13 @@ using Microsoft.Extensions.Options;
 using Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Messaging.Hardening;
 using Pulse.Metrics;
 using Pulse.Metrics.Console;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 using XenoAtom.Terminal.UI.Controls;
 using ZLogger;
 
@@ -18,6 +20,15 @@ builder.Logging.ClearProviders();
 
 builder.Services.Configure<ENetTransportOptions>(
     builder.Configuration.GetSection(ENetTransportOptions.SECTION_NAME));
+
+builder.Services.Configure<PreAuthAdmissionOptions>(
+    builder.Configuration.GetSection(PreAuthAdmissionOptions.SECTION_NAME));
+
+builder.Services.Configure<HandshakeAttemptPolicyOptions>(
+    builder.Configuration.GetSection(HandshakeAttemptPolicyOptions.SECTION_NAME));
+
+builder.Services.AddSingleton<PreAuthAdmission>();
+builder.Services.AddSingleton<HandshakeAttemptPolicy>();
 
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));

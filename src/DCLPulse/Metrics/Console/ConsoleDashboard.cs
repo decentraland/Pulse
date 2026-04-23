@@ -97,6 +97,12 @@ public sealed class ConsoleDashboard(
     private readonly GaugeTracker incomingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker outgoingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
 
+    // Hardening trackers.
+    private readonly RateTracker preAuthIpLimitRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker preAuthRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker handshakeAttemptsExceededTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker preAuthInFlightTracker = new (SPARKLINE_MAX_SAMPLES);
+
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
         INCOMING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
@@ -123,6 +129,10 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView sendFailures = new ();
     private readonly RateStatsView incomingQueue = new ();
     private readonly RateStatsView outgoingQueue = new ();
+    private readonly RateStatsView preAuthIpLimitRefused = new ();
+    private readonly RateStatsView preAuthRefused = new ();
+    private readonly RateStatsView handshakeAttemptsExceeded = new ();
+    private readonly RateStatsView preAuthInFlight = new ();
 
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
@@ -138,6 +148,10 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline sendFailuresSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline incomingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline outgoingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline preAuthIpLimitRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline preAuthRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline handshakeAttemptsExceededSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline preAuthInFlightSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -226,6 +240,22 @@ public sealed class ConsoleDashboard(
         ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth);
         ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth);
 
+        // Hardening rates + gauge.
+        RateStats ipLimitRefusedRate = preAuthIpLimitRefusedTracker.Update(snap.Hardening.TotalPreAuthIpLimitRefused, elapsed);
+        RateStats preAuthRefusedRate = preAuthRefusedTracker.Update(snap.Hardening.TotalPreAuthRefused, elapsed);
+        RateStats handshakeExceededRate = handshakeAttemptsExceededTracker.Update(snap.Hardening.TotalHandshakeAttemptsExceeded, elapsed);
+        RateStats preAuthInFlightStats = preAuthInFlightTracker.Record(snap.Hardening.PreAuthInFlight);
+
+        preAuthIpLimitRefused.Apply(ipLimitRefusedRate, v => v.ToString("N0"));
+        preAuthRefused.Apply(preAuthRefusedRate, v => v.ToString("N0"));
+        handshakeAttemptsExceeded.Apply(handshakeExceededRate, v => v.ToString("N0"));
+        preAuthInFlight.Apply(preAuthInFlightStats, v => v.ToString("N0"));
+
+        ShiftSample(preAuthIpLimitRefusedSparkline.Values, ipLimitRefusedRate.PerSec);
+        ShiftSample(preAuthRefusedSparkline.Values, preAuthRefusedRate.PerSec);
+        ShiftSample(handshakeAttemptsExceededSparkline.Values, handshakeExceededRate.PerSec);
+        ShiftSample(preAuthInFlightSparkline.Values, snap.Hardening.PreAuthInFlight);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -256,6 +286,17 @@ public sealed class ConsoleDashboard(
 
         var transport = new Group("Transport", metricsTable);
 
+        var hardeningTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Pre-Auth In-Flight", preAuthInFlight, preAuthInFlightSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Pre-Auth Refused", preAuthRefused, preAuthRefusedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Per-IP Limit Refused", preAuthIpLimitRefused, preAuthIpLimitRefusedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Handshake Attempts Exceeded", handshakeAttemptsExceeded, handshakeAttemptsExceededSparkline.Style(STYLE_BACKPRESSURE)),
+            ]);
+
+        var hardening = new Group("Hardening", hardeningTable);
+
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
             ).MaxHeight(() => Math.Max(5, System.Console.WindowHeight * 30 / 100))
@@ -263,6 +304,7 @@ public sealed class ConsoleDashboard(
 
         ScrollViewer metricsArea = new VStack(
                 transport,
+                hardening,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()
             ).Spacing(1)

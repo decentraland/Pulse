@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
 using Pulse.InterestManagement;
@@ -7,6 +8,7 @@ using Pulse.Messaging;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 using System.Threading.Channels;
 
 namespace DCLPulseTests;
@@ -43,7 +45,11 @@ public class WorkerAsyncTests
             new ProfileBoard(100),
             new ClientMessageCounters(8),
             new EmoteCompleter(snapshotBoard, timeProvider),
-            Substitute.For<IPeerIndexAllocator>());
+            Substitute.For<IPeerIndexAllocator>(),
+            new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
+            {
+                PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
+            })));
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         signal = new ManualResetEventSlim();

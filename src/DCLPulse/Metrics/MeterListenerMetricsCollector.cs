@@ -29,6 +29,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long unauthMessagesSkipped;
     private long sendFailures;
 
+    // Hardening totals.
+    private long preAuthIpLimitRefused;
+    private long preAuthRefused;
+    private long handshakeAttemptsExceeded;
+    private int preAuthInFlight;
+
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
         ClientMessageCounters incomingMessageCounters,
@@ -77,6 +83,13 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 IncomingQueueDepth = messagePipe.IncomingQueueDepth,
                 OutgoingQueueDepth = messagePipe.OutgoingQueueDepth,
             },
+            Hardening = new MetricsSnapshot.HardeningSnapshot
+            {
+                TotalPreAuthIpLimitRefused = Interlocked.Read(ref preAuthIpLimitRefused),
+                TotalPreAuthRefused = Interlocked.Read(ref preAuthRefused),
+                TotalHandshakeAttemptsExceeded = Interlocked.Read(ref handshakeAttemptsExceeded),
+                PreAuthInFlight = Volatile.Read(ref preAuthInFlight),
+            },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
         };
@@ -112,6 +125,15 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.transport.send_failures":
                 Interlocked.Add(ref sendFailures, value);
                 break;
+            case "pulse.hardening.pre_auth_ip_limit_refused":
+                Interlocked.Add(ref preAuthIpLimitRefused, value);
+                break;
+            case "pulse.hardening.pre_auth_refused":
+                Interlocked.Add(ref preAuthRefused, value);
+                break;
+            case "pulse.hardening.handshake_attempts_exceeded":
+                Interlocked.Add(ref handshakeAttemptsExceeded, value);
+                break;
         }
     }
 
@@ -119,8 +141,15 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
         Instrument instrument, int value,
         ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
     {
-        if (instrument.Name == "pulse.transport.active_peers")
-            Interlocked.Add(ref activePeers, value);
+        switch (instrument.Name)
+        {
+            case "pulse.transport.active_peers":
+                Interlocked.Add(ref activePeers, value);
+                break;
+            case "pulse.hardening.pre_auth_in_flight":
+                Interlocked.Add(ref preAuthInFlight, value);
+                break;
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

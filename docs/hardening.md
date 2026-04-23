@@ -396,12 +396,33 @@ the packet was captured and replayed from elsewhere, or the client is reusing a 
 handshake packet (bug). UI copy: "Session rejected: please sign in again." Do not auto-retry
 with the same handshake; always rebuild the auth chain with a fresh timestamp.
 
-#### What this does NOT cover
+#### Known gap — the signed payload does not bind the server instance
 
-Cross-server replay (victim handshake sent to instance A, attacker replays to instance B in
-the same fleet). That's what **E1** addresses — binding `server_id` into the signed payload
-so a handshake for one instance fails the signature check on another. E1 + E2 are
-complementary: E2 blocks same-server replay, E1 blocks cross-server replay.
+`SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata)` produces the
+exact string the client signs:
+
+```
+connect:/:<timestamp>:<metadata>
+```
+
+The payload covers the peer's identity material only — method, path, timestamp, and
+client-supplied metadata. **There is nothing server-side baked into it.** In particular,
+no server instance identifier is required or checked.
+
+Consequence: a handshake captured from instance A can be replayed to instance B of the same
+fleet and, if instance B hasn't seen that `(wallet, timestamp)` pair (which it won't —
+`HandshakeReplayPolicy` is per-instance, in-memory), the replay succeeds. The replay
+policy in this doc blocks **same-instance** replay only.
+
+Closing this gap requires:
+1. The client including a `server_id` in the signed `metadata`, or
+2. A dedicated `server_id` field in the signed payload shape (proto change), or
+3. A shared replay store (Redis etc.) backing `HandshakeReplayPolicy` across the fleet.
+
+None of these are implemented today. Tracked as a known limitation rather than a scheduled
+item because single-instance deployments are the common case and multi-instance fleets
+behind sticky-session load balancers are naturally immune (a victim and their attacker
+don't land on different instances).
 
 #### Metrics to watch
 

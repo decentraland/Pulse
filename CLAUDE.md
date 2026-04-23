@@ -105,7 +105,9 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **No proactive STATE_FULL mid-session.** The client drives resync, the server never anticipates it.
 
-**Snapshot History.** The server keeps a small rolling history of snapshots per subject (`SnapshotBoard` ring buffer). Each snapshot carries positional/animation state and optional `EmoteState` metadata (emote ID, start tick, duration, stop reason). The ring is the single source of truth for all per-peer state — there is no separate emote board.
+**Snapshot History.** The server keeps a small rolling history of snapshots per subject (`SnapshotBoard` ring buffer). Each snapshot carries positional/animation state plus nullable ledger columns (`EmoteState`, `Realm`, …) that `Publish` carries forward from the previous slot when the incoming snapshot leaves them null — so the latest ring entry is always self-sufficient, regardless of ring depth.
+
+**Prefer extending the `SnapshotBoard` ledger over introducing parallel per-peer boards.** When adding new per-peer state that's mutated by the owning worker and read by other workers (AoI, simulation), the default is a new nullable field on `PeerSnapshot` with carry-forward in `Publish` — same pattern as `EmoteState` and `Realm`. A separate board is only justified when the data has a fundamentally different lifecycle (e.g. set once at auth and never mutated, like `IdentityBoard`) or a radically different read pattern. Don't spin up a fresh shared board just because the data is "new"; one ring seqlock + one inheritance line in `Publish` is cheaper to reason about than N parallel stores that all have to agree on lifetime and recycling.
 
 **Intermediate snapshot scanning.** Between two simulation ticks, multiple snapshots may be published (movement, teleports, emote starts/stops). The simulation scans all intermediates from `lastSentSeq+1` to `latestSeq`, collecting the **last** of each discrete event type (teleport, emote start, emote stop). Earlier events of the same type are superseded. An emote that started and stopped in the same batch is invisible to the observer.
 

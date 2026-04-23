@@ -54,16 +54,23 @@ public sealed class SnapshotBoard
     ///     <c>null</c>) so post-stop snapshots are correctly idle. Consequence: the latest snapshot
     ///     is self-sufficient for "is this peer emoting, since when, for how long" — independent of
     ///     ring depth. See <see cref="PeerSnapshotExtensions.IsEmoting" />.
+    ///     <para />
+    ///     Realm-ledger invariant: same carry-forward pattern. <see cref="TeleportHandler" /> is
+    ///     the only publisher that sets <c>snapshot.Realm</c> explicitly; every other publish
+    ///     inherits the previous snapshot's realm so AoI lookups read the latest ring slot and
+    ///     never see a null realm after the peer has teleported once.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Publish(PeerIndex id, in PeerSnapshot snapshot)
     {
         var index = (int)id.Value;
 
-        // Ledger inheritance for non-event snapshots (movement, teleport with Emote == null).
-        PeerSnapshot toWrite = snapshot.Emote is null
-            ? snapshot with { Emote = InheritEmoteState(index) }
-            : snapshot;
+        // Ledger inheritance for fields the caller didn't set explicitly.
+        PeerSnapshot toWrite = snapshot with
+        {
+            Emote = snapshot.Emote ?? InheritEmoteState(index),
+            Realm = snapshot.Realm ?? InheritRealm(index),
+        };
 
         // Increment to odd (write in progress)
         Volatile.Write(ref versions[index], Volatile.Read(ref versions[index]) + 1);
@@ -96,6 +103,22 @@ public sealed class SnapshotBoard
         EmoteState? prev = rings[index][lastSeq % ringCapacity].Emote;
 
         return prev is { StopReason: not null } ? null : prev;
+    }
+
+    /// <summary>
+    ///     Resolve the realm for a non-teleport publish from the previous ring slot. Returns null
+    ///     when the peer has never been assigned a realm (no prior snapshot, or all prior snapshots
+    ///     are themselves null-realm). TeleportHandler is the only publisher that writes a non-null
+    ///     realm; this carry-forward makes every subsequent ring slot self-sufficient for AoI.
+    /// </summary>
+    private string? InheritRealm(int index)
+    {
+        uint lastSeq = lastSeqs[index];
+
+        if (lastSeq == uint.MaxValue)
+            return null;
+
+        return rings[index][lastSeq % ringCapacity].Realm;
     }
 
     /// <summary>

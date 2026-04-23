@@ -10,6 +10,12 @@ namespace Pulse.InterestManagement;
 ///     maintained incrementally on the write path. Queries only check the observer's cell
 ///     and its neighbors — no full scan of all active peers.
 ///     <para />
+///     Realm partitioning: each <see cref="PeerSnapshot" /> carries the peer's realm (set by
+///     <see cref="Pulse.Messaging.TeleportHandler" />, carried forward by
+///     <see cref="SnapshotBoard.Publish" />). A peer whose latest snapshot has no realm — i.e.
+///     no TeleportRequest has been processed yet — is invisible to every observer and sees
+///     nobody. Same-realm observers see each other; cross-realm peers never.
+///     <para />
 ///     Thread-safe: all reads are lock-free. The grid is updated by workers on the write path.
 /// </summary>
 public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
@@ -37,6 +43,11 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
+        string? observerRealm = observerSnapshot.Realm;
+
+        if (observerRealm == null)
+            return;
+
         Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         for (int dx = -1; dx <= 1; dx++)
@@ -44,11 +55,11 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
         {
             var cell = new Vector3(observerPos.X + (dx * cellSize), 0, observerPos.Z + (dz * cellSize));
 
-            Collect(observer, observerPos, collector, grid.GetPeers(cell));
+            Collect(observer, observerRealm, observerPos, collector, grid.GetPeers(cell));
         }
     }
 
-    private void Collect(PeerIndex observer, Vector3 observerPos, IInterestCollector collector, HashSet<PeerIndex>? peers)
+    private void Collect(PeerIndex observer, string observerRealm, Vector3 observerPos, IInterestCollector collector, HashSet<PeerIndex>? peers)
     {
         if (peers == null)
             return;
@@ -59,6 +70,9 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
                 continue;
 
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
+                continue;
+
+            if (!string.Equals(subjectSnapshot.Realm, observerRealm, StringComparison.Ordinal))
                 continue;
 
             float distX = subjectSnapshot.GlobalPosition.X - observerPos.X;

@@ -33,7 +33,13 @@ public static class PeerSnapshotExtensions
 }
 
 /// <summary>
-///     Contains positional and animation state for at a given moment of time
+///     Contains positional and animation state for at a given moment of time.
+///     <para />
+///     <see cref="Realm" /> is the AoI partition the peer belongs to. Carried forward by
+///     <see cref="Simulation.SnapshotBoard.Publish" /> onto every snapshot, same as
+///     <see cref="Emote" /> — the first TeleportRequest seeds it, subsequent teleports may
+///     change it. Snapshots from before the first TeleportRequest have <c>Realm == null</c>,
+///     which makes the peer invisible to every observer and unable to observe anyone.
 /// </summary>
 public record struct PeerSnapshot(
 
@@ -61,5 +67,10 @@ public record struct PeerSnapshot(
     bool IsTeleport = false,
 
     // Emote — non-null means emote start or stop activity on this snapshot
-    EmoteState? Emote = null
+    EmoteState? Emote = null,
+
+    // Realm — non-null means this snapshot explicitly sets the realm (TeleportHandler). Null on
+    // non-teleport publishes; the SnapshotBoard inherits the prior snapshot's realm so the latest
+    // ring slot is always self-sufficient for AoI partitioning.
+    string? Realm = null
 );

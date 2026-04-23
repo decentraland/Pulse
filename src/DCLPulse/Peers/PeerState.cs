@@ -11,6 +11,8 @@ public class PeerState(PeerConnectionState connectionState)
 
     public PeerTransportState TransportState { get; set; }
 
+    public PeerThrottleState Throttle { get; set; }
+
     /// <summary>
     ///     Pending resync requests keyed by subject. Allocated on first resync request.
     ///     Dictionary because the peer can send multiple resync requests for the same subject

@@ -185,3 +185,83 @@ Alert rules to consider:
 - `rate(pre_auth_refused) > 0 for 1m` — server is hitting its global budget; investigate.
 - `rate(pre_auth_ip_limit_refused) > 10/s for 5m` — CGNAT/VPN block, or targeted single-IP flood.
 - `pre_auth_in_flight / PreAuthBudget > 0.8` — near saturation, consider raising the budget.
+
+---
+
+## Group B — Post-Auth Message Rate Limiting
+
+### Threat model
+
+Once authenticated, a peer can flood the server with protocol messages for which the cost
+asymmetry favours the attacker:
+
+1. **Input flood.** `PlayerStateInput` at 1000+ Hz — each message triggers snapshot publish,
+   spatial-grid update, and per-observer diff work on the simulation tick. One peer can
+   saturate a worker thread.
+2. **Discrete-event fan-out.** `EmoteStart`, `EmoteStop`, `TeleportRequest` each cause
+   O(observers) reliable broadcasts. A peer spamming emote starts multiplies their send rate
+   by the observer count in their interest set.
+
+### Defenses
+
+Two dedicated limiters in `src/DCLPulse/Messaging/Hardening/`:
+
+| Component | Cap | Enforcement |
+|---|---|---|
+| `MovementInputRateLimiter` | `MaxHz` (default 20) on `PlayerStateInput` | Interval-based — min `1000/MaxHz` ms between accepted inputs |
+| `DiscreteEventRateLimiter` | Token bucket, `RatePerSecond` refill (default 5) + `BurstCapacity` (default 10) | Shared across emote start/stop + teleport |
+
+Per-peer state lives on `PeerThrottleState` hanging off `PeerState`. Mutated exclusively on
+the owning worker thread, so no synchronisation is required.
+
+**Violation response:** the peer is disconnected with a specific `DisconnectReason`. This is
+not graceful back-pressure — clients that sustain message rates above the cap are either
+buggy or malicious, and staying connected lets them keep probing.
+
+### Config
+
+```json
+{
+  "Messaging": {
+    "Hardening": {
+      "MovementInput": { "MaxHz": 20 },
+      "DiscreteEvent": { "RatePerSecond": 5.0, "BurstCapacity": 10 }
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `MovementInput.MaxHz` | 20 | Max `PlayerStateInput` messages per peer per second. Matches the base simulation tick rate — faster sends have no game-state benefit. `0` disables. |
+| `DiscreteEvent.RatePerSecond` | 5.0 | Sustained rate of discrete events per peer. `0` disables. |
+| `DiscreteEvent.BurstCapacity` | 10 | Burst allowance. Stored as `byte`, clamped to 255. |
+
+Dev (`appsettings.Development.json`) sets all to `0` so load tests aren't throttled.
+
+### DisconnectReason values
+
+| Value | Meaning |
+|---|---|
+| `INPUT_RATE_EXCEEDED = 9` | Peer sent `PlayerStateInput` faster than `MaxHz`. |
+| `DISCRETE_EVENT_RATE_EXCEEDED = 10` | Peer exceeded the token bucket for discrete events. |
+
+### Client recovery
+
+Both codes are **terminal, not retryable**. A well-behaved Unity client sending at the server
+tick rate will never trigger them; seeing one means the client has a bug or is compromised.
+
+Recommended client behaviour:
+- **Do not auto-reconnect.** Retry would hit the same cap and the server would disconnect
+  again, creating a reconnect loop that looks like a different attack.
+- Log the reason locally and surface it to telemetry; the server did its job, the client is
+  wrong.
+- UI copy: "Connection closed: the client sent data faster than the server allows. Please
+  restart the game or contact support."
+
+### Metrics to watch
+
+| Metric | Type | Signal |
+|---|---|---|
+| `input_rate_throttled` | counter | Non-zero ⇒ at least one client is bursting `PlayerStateInput`. Investigate per-client traffic before suspecting the cap is too tight. |
+| `discrete_event_throttled` | counter | Non-zero ⇒ a peer is spamming emote/teleport. Almost always a buggy client; rarely a real attacker. |

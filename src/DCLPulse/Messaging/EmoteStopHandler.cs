@@ -1,15 +1,23 @@
 using Decentraland.Pulse;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 
 namespace Pulse.Messaging;
 
-public class EmoteStopHandler(SnapshotBoard snapshotBoard, ITimeProvider timeProvider, ILogger<EmoteStopHandler> logger)
+public class EmoteStopHandler(
+    SnapshotBoard snapshotBoard,
+    ITimeProvider timeProvider,
+    ILogger<EmoteStopHandler> logger,
+    DiscreteEventRateLimiter rateLimiter)
     : RuntimePacketHandlerBase<EmoteStopHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
-        if (SkipFromUnauthorizedPeer(peers, from, message, out _))
+        if (SkipFromUnauthorizedPeer(peers, from, message, out PeerState? peerState))
+            return;
+
+        if (!rateLimiter.TryAccept(from, peerState))
             return;
 
         // The emote ledger in SnapshotBoard carries the active emote onto every snapshot, so

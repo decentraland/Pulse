@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Numerics;
@@ -12,12 +13,16 @@ public class PlayerStateInputHandler(
     SnapshotBoard snapshotBoard,
     SpatialGrid spatialGrid,
     ILogger<PlayerStateInputHandler> logger,
-    ParcelEncoder parcelEncoder)
+    ParcelEncoder parcelEncoder,
+    MovementInputRateLimiter rateLimiter)
     : RuntimePacketHandlerBase<PlayerStateInputHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
-        if (SkipFromUnauthorizedPeer(peers, from, message, out _))
+        if (SkipFromUnauthorizedPeer(peers, from, message, out PeerState? peerState))
+            return;
+
+        if (!rateLimiter.TryAccept(from, peerState))
             return;
 
         PlayerStateInput input = message.Input;

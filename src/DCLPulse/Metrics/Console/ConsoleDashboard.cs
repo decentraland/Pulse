@@ -102,6 +102,8 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker preAuthRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker handshakeAttemptsExceededTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker preAuthInFlightTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker inputRateThrottledTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker discreteEventThrottledTracker = new (SPARKLINE_MAX_SAMPLES);
 
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
@@ -133,6 +135,8 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView preAuthRefused = new ();
     private readonly RateStatsView handshakeAttemptsExceeded = new ();
     private readonly RateStatsView preAuthInFlight = new ();
+    private readonly RateStatsView inputRateThrottled = new ();
+    private readonly RateStatsView discreteEventThrottled = new ();
 
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
@@ -152,6 +156,8 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline preAuthRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline handshakeAttemptsExceededSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline preAuthInFlightSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline inputRateThrottledSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline discreteEventThrottledSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -256,6 +262,15 @@ public sealed class ConsoleDashboard(
         ShiftSample(handshakeAttemptsExceededSparkline.Values, handshakeExceededRate.PerSec);
         ShiftSample(preAuthInFlightSparkline.Values, snap.Hardening.PreAuthInFlight);
 
+        RateStats inputThrottledRate = inputRateThrottledTracker.Update(snap.Hardening.TotalInputRateThrottled, elapsed);
+        RateStats discreteThrottledRate = discreteEventThrottledTracker.Update(snap.Hardening.TotalDiscreteEventThrottled, elapsed);
+
+        inputRateThrottled.Apply(inputThrottledRate, v => v.ToString("N0"));
+        discreteEventThrottled.Apply(discreteThrottledRate, v => v.ToString("N0"));
+
+        ShiftSample(inputRateThrottledSparkline.Values, inputThrottledRate.PerSec);
+        ShiftSample(discreteEventThrottledSparkline.Values, discreteThrottledRate.PerSec);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -293,6 +308,8 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Pre-Auth Refused", preAuthRefused, preAuthRefusedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Per-IP Limit Refused", preAuthIpLimitRefused, preAuthIpLimitRefusedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Handshake Attempts Exceeded", handshakeAttemptsExceeded, handshakeAttemptsExceededSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Input Rate Throttled", inputRateThrottled, inputRateThrottledSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Discrete Event Throttled", discreteEventThrottled, discreteEventThrottledSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
 
         var hardening = new Group("Hardening", hardeningTable);

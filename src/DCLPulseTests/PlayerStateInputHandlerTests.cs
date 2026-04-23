@@ -5,8 +5,10 @@ using NSubstitute;
 using Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Numerics;
 
 namespace DCLPulseTests;
@@ -40,7 +42,11 @@ public class PlayerStateInputHandlerTests
             snapshotBoard,
             spatialGrid,
             Substitute.For<ILogger<PlayerStateInputHandler>>(),
-            parcelEncoder);
+            parcelEncoder,
+            new MovementInputRateLimiter(
+                Options.Create(new MovementInputRateLimiterOptions { MaxHz = 0 }),
+                timeProvider,
+                Substitute.For<ITransport>()));
 
         peers = new Dictionary<PeerIndex, PeerState>();
     }

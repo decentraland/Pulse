@@ -5,8 +5,10 @@ using NSubstitute;
 using Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Numerics;
 
 namespace DCLPulseTests;
@@ -38,7 +40,11 @@ public class TeleportHandlerTests
             timeProvider,
             snapshotBoard,
             spatialGrid,
-            parcelEncoder);
+            parcelEncoder,
+            new DiscreteEventRateLimiter(
+                Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }),
+                timeProvider,
+                Substitute.For<ITransport>()));
 
         peers = new Dictionary<PeerIndex, PeerState>();
     }

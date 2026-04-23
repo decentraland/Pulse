@@ -1,6 +1,7 @@
 using Decentraland.Common;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 
@@ -10,12 +11,16 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
     ITimeProvider timeProvider,
     SnapshotBoard snapshotBoard,
     SpatialGrid spatialGrid,
-    ParcelEncoder parcelEncoder)
+    ParcelEncoder parcelEncoder,
+    DiscreteEventRateLimiter rateLimiter)
     : RuntimePacketHandlerBase<TeleportHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
-        if (SkipFromUnauthorizedPeer(peers, from, message, out _))
+        if (SkipFromUnauthorizedPeer(peers, from, message, out PeerState? peerState))
+            return;
+
+        if (!rateLimiter.TryAccept(from, peerState))
             return;
 
         TeleportRequest request = message.Teleport;

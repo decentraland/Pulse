@@ -17,5 +17,11 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> HANDSHAKE_ATTEMPTS_EXCEEDED =
             METER.CreateCounter<long>("pulse.hardening.handshake_attempts_exceeded");
+
+        public static readonly Counter<long> INPUT_RATE_THROTTLED =
+            METER.CreateCounter<long>("pulse.hardening.input_rate_throttled");
+
+        public static readonly Counter<long> DISCRETE_EVENT_THROTTLED =
+            METER.CreateCounter<long>("pulse.hardening.discrete_event_throttled");
     }
 }

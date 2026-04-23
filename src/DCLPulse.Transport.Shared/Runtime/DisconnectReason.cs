@@ -39,6 +39,18 @@ namespace Pulse.Transport
         /// <summary>
         ///     Global pre-auth budget exhausted — too many connections currently in PENDING_AUTH
         /// </summary>
-        PRE_AUTH_BUDGET_EXHAUSTED = 8
+        PRE_AUTH_BUDGET_EXHAUSTED = 8,
+
+        /// <summary>
+        ///     Client sent PlayerStateInput faster than the server's MaxHz cap. Indicates a
+        ///     misbehaving or malicious client — legitimate clients should not retry blindly.
+        /// </summary>
+        INPUT_RATE_EXCEEDED = 9,
+
+        /// <summary>
+        ///     Client exceeded the token-bucket cap on discrete events (emote start/stop,
+        ///     teleport). Indicates a misbehaving or malicious client.
+        /// </summary>
+        DISCRETE_EVENT_RATE_EXCEEDED = 10
     }
 }

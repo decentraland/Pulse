@@ -150,6 +150,26 @@ Counter of peers disconnected after burning their handshake attempt budget. `dcl
 | Sporadic | Clients with a bug in auth-chain generation, or transient MetaForge issues |
 | Spiking | Targeted replay attempt or broken client build |
 
+### Input Rate Throttled
+
+Counter of `PlayerStateInput` messages dropped because the peer exceeded `MovementInput.MaxHz`. The peer is also disconnected with `INPUT_RATE_EXCEEDED`. `dcl_pulse_input_rate_throttled_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — legitimate Unity clients send at the server tick rate or slower |
+| Sporadic | A client briefly burst before the rate check fired; may indicate a bug in the client's send loop |
+| Sustained | Targeted input flood or a broken client build sending every frame |
+
+### Discrete Event Throttled
+
+Counter of emote/teleport messages dropped because the peer exceeded the token bucket. The peer is also disconnected with `DISCRETE_EVENT_RATE_EXCEEDED`. `dcl_pulse_discrete_event_throttled_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — real players do not chain emotes at >5 Hz sustained |
+| Sporadic | One user triggering many emotes in a burst (likely a bug in emote UI, rarely an attack) |
+| Sustained | Scripted client spamming emotes to amplify fan-out load |
+
 ---
 
 ## Incoming Messages

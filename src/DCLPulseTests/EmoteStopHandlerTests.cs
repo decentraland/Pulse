@@ -1,10 +1,13 @@
 using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
 using Pulse.Messaging;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport;
 using System.Numerics;
 
 namespace DCLPulseTests;
@@ -27,7 +30,11 @@ public class EmoteStopHandlerTests
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(STOP_TIME);
 
-        handler = new EmoteStopHandler(snapshotBoard, timeProvider, Substitute.For<ILogger<EmoteStopHandler>>());
+        handler = new EmoteStopHandler(snapshotBoard, timeProvider, Substitute.For<ILogger<EmoteStopHandler>>(),
+            new DiscreteEventRateLimiter(
+                Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }),
+                timeProvider,
+                Substitute.For<ITransport>()));
         peers = new Dictionary<PeerIndex, PeerState>();
     }
 

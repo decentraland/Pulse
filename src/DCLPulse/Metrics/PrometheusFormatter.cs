@@ -51,6 +51,8 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_pre_auth_refused_total", "Connections refused by the global pre-auth budget", snap.Hardening.TotalPreAuthRefused);
         WriteCounter(writer, "dcl_pulse_handshake_attempts_exceeded_total", "Peers disconnected after exceeding the handshake attempt limit", snap.Hardening.TotalHandshakeAttemptsExceeded);
         WriteGauge(writer, "dcl_pulse_pre_auth_in_flight", "Current number of peers in PENDING_AUTH", snap.Hardening.PreAuthInFlight);
+        WriteCounter(writer, "dcl_pulse_input_rate_throttled_total", "PlayerStateInput messages dropped for exceeding MaxHz", snap.Hardening.TotalInputRateThrottled);
+        WriteCounter(writer, "dcl_pulse_discrete_event_throttled_total", "Discrete events (emote start/stop, teleport) dropped by the token bucket", snap.Hardening.TotalDiscreteEventThrottled);
 
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);

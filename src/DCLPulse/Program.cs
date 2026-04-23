@@ -27,8 +27,16 @@ builder.Services.Configure<PreAuthAdmissionOptions>(
 builder.Services.Configure<HandshakeAttemptPolicyOptions>(
     builder.Configuration.GetSection(HandshakeAttemptPolicyOptions.SECTION_NAME));
 
+builder.Services.Configure<MovementInputRateLimiterOptions>(
+    builder.Configuration.GetSection(MovementInputRateLimiterOptions.SECTION_NAME));
+
+builder.Services.Configure<DiscreteEventRateLimiterOptions>(
+    builder.Configuration.GetSection(DiscreteEventRateLimiterOptions.SECTION_NAME));
+
 builder.Services.AddSingleton<PreAuthAdmission>();
 builder.Services.AddSingleton<HandshakeAttemptPolicy>();
+builder.Services.AddSingleton<MovementInputRateLimiter>();
+builder.Services.AddSingleton<DiscreteEventRateLimiter>();
 
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));

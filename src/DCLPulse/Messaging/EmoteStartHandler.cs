@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Numerics;
@@ -11,12 +12,16 @@ public class EmoteStartHandler(
     SpatialGrid spatialGrid,
     ITimeProvider timeProvider,
     ILogger<EmoteStartHandler> logger,
-    ParcelEncoder parcelEncoder)
+    ParcelEncoder parcelEncoder,
+    DiscreteEventRateLimiter rateLimiter)
     : RuntimePacketHandlerBase<EmoteStartHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
-        if (SkipFromUnauthorizedPeer(peers, from, message, out _))
+        if (SkipFromUnauthorizedPeer(peers, from, message, out PeerState? peerState))
+            return;
+
+        if (!rateLimiter.TryAccept(from, peerState))
             return;
 
         EmoteStart emoteStart = message.EmoteStart;

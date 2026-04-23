@@ -34,6 +34,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long preAuthRefused;
     private long handshakeAttemptsExceeded;
     private int preAuthInFlight;
+    private long inputRateThrottled;
+    private long discreteEventThrottled;
 
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
@@ -89,6 +91,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalPreAuthRefused = Interlocked.Read(ref preAuthRefused),
                 TotalHandshakeAttemptsExceeded = Interlocked.Read(ref handshakeAttemptsExceeded),
                 PreAuthInFlight = Volatile.Read(ref preAuthInFlight),
+                TotalInputRateThrottled = Interlocked.Read(ref inputRateThrottled),
+                TotalDiscreteEventThrottled = Interlocked.Read(ref discreteEventThrottled),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -133,6 +137,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.handshake_attempts_exceeded":
                 Interlocked.Add(ref handshakeAttemptsExceeded, value);
+                break;
+            case "pulse.hardening.input_rate_throttled":
+                Interlocked.Add(ref inputRateThrottled, value);
+                break;
+            case "pulse.hardening.discrete_event_throttled":
+                Interlocked.Add(ref discreteEventThrottled, value);
                 break;
         }
     }

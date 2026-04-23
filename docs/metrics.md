@@ -170,6 +170,16 @@ Counter of emote/teleport messages dropped because the peer exceeded the token b
 | Sporadic | One user triggering many emotes in a burst (likely a bug in emote UI, rarely an attack) |
 | Sustained | Scripted client spamming emotes to amplify fan-out load |
 
+### Field Validation Failed
+
+Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`). `dcl_pulse_field_validation_failed_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — well-formed clients don't produce invalid fields |
+| Sporadic | Specific buggy client build; check server logs for the DisconnectReason per peer |
+| Spiking | Coordinated fuzz / exploit probing |
+
 ---
 
 ## Incoming Messages

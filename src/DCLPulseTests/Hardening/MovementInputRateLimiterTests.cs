@@ -105,6 +105,21 @@ public class MovementInputRateLimiterTests
     }
 
     [Test]
+    public void Rejection_FlipsStateToPendingDisconnect()
+    {
+        MovementInputRateLimiter limiter = Create(maxHz: 20);
+        var state = new PeerState(PeerConnectionState.AUTHENTICATED);
+
+        timeProvider.MonotonicTime.Returns(1000u);
+        limiter.TryAccept(PEER, state);
+
+        timeProvider.MonotonicTime.Returns(1010u);
+        limiter.TryAccept(PEER, state);
+
+        Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
+    }
+
+    [Test]
     public void Acceptance_DoesNotTouchTransport()
     {
         MovementInputRateLimiter limiter = Create(maxHz: 20);

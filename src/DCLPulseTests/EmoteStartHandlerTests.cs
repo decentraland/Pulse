@@ -39,6 +39,13 @@ public class EmoteStartHandlerTests
             new DiscreteEventRateLimiter(
                 Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }),
                 timeProvider,
+                Substitute.For<ITransport>()),
+            new FieldValidator(
+                Options.Create(new FieldValidatorOptions
+                {
+                    MaxEmoteIdLength = 0, MaxRealmLength = 0, MaxEmoteDurationMs = 0,
+                }),
+                parcelEncoder,
                 Substitute.For<ITransport>()));
         peers = new Dictionary<PeerIndex, PeerState>();
     }

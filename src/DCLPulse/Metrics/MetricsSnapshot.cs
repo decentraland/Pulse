@@ -30,5 +30,6 @@ public readonly record struct MetricsSnapshot
         public int PreAuthInFlight { get; init; }
         public long TotalInputRateThrottled { get; init; }
         public long TotalDiscreteEventThrottled { get; init; }
+        public long TotalFieldValidationFailed { get; init; }
     }
 }

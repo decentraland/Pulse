@@ -14,7 +14,8 @@ public class PlayerStateInputHandler(
     SpatialGrid spatialGrid,
     ILogger<PlayerStateInputHandler> logger,
     ParcelEncoder parcelEncoder,
-    MovementInputRateLimiter rateLimiter)
+    MovementInputRateLimiter rateLimiter,
+    FieldValidator fieldValidator)
     : RuntimePacketHandlerBase<PlayerStateInputHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -23,6 +24,9 @@ public class PlayerStateInputHandler(
             return;
 
         if (!rateLimiter.TryAccept(from, peerState))
+            return;
+
+        if (!fieldValidator.ValidatePlayerStateInput(from, peerState, message.Input))
             return;
 
         PlayerStateInput input = message.Input;

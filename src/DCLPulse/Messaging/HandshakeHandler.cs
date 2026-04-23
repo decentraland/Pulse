@@ -22,13 +22,10 @@ public class HandshakeHandler(MessagePipe messagePipe,
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
         // Throttle before any parsing/crypto work — attempt counter is per-peer on PeerState.
+        // Policy owns the disconnect on violation.
         if (peers.TryGetValue(from, out PeerState? existingState)
-         && !attemptPolicy.TryRecordAttempt(existingState))
-        {
-            logger.LogInformation("Handshake attempts exceeded for peer {Peer} — disconnecting", from);
-            transport.Disconnect(from, DisconnectReason.AUTH_FAILED);
+         && !attemptPolicy.TryRecordAttempt(from, existingState))
             return;
-        }
 
         HandshakeRequest handshakeRequest = message.Handshake;
         string authChainJson = handshakeRequest.AuthChain.ToStringUtf8();

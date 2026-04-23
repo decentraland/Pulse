@@ -12,7 +12,8 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
     SnapshotBoard snapshotBoard,
     SpatialGrid spatialGrid,
     ParcelEncoder parcelEncoder,
-    DiscreteEventRateLimiter rateLimiter)
+    DiscreteEventRateLimiter rateLimiter,
+    FieldValidator fieldValidator)
     : RuntimePacketHandlerBase<TeleportHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -23,14 +24,11 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
         if (!rateLimiter.TryAccept(from, peerState))
             return;
 
+        if (!fieldValidator.ValidateTeleport(from, peerState, message.Teleport))
+            return;
+
         TeleportRequest request = message.Teleport;
         string realm = request.Realm;
-
-        if (string.IsNullOrEmpty(realm))
-        {
-            logger.LogWarning("Teleport from {Peer} rejected: empty realm", from);
-            return;
-        }
 
         Vector3 localPosition = request.Position;
         int parcelIndex = request.ParcelIndex;

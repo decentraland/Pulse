@@ -13,7 +13,8 @@ public class EmoteStartHandler(
     ITimeProvider timeProvider,
     ILogger<EmoteStartHandler> logger,
     ParcelEncoder parcelEncoder,
-    DiscreteEventRateLimiter rateLimiter)
+    DiscreteEventRateLimiter rateLimiter,
+    FieldValidator fieldValidator)
     : RuntimePacketHandlerBase<EmoteStartHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -22,6 +23,9 @@ public class EmoteStartHandler(
             return;
 
         if (!rateLimiter.TryAccept(from, peerState))
+            return;
+
+        if (!fieldValidator.ValidateEmoteStart(from, peerState, message.EmoteStart))
             return;
 
         EmoteStart emoteStart = message.EmoteStart;

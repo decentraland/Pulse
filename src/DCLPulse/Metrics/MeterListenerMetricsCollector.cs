@@ -36,6 +36,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private int preAuthInFlight;
     private long inputRateThrottled;
     private long discreteEventThrottled;
+    private long fieldValidationFailed;
 
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
@@ -93,6 +94,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 PreAuthInFlight = Volatile.Read(ref preAuthInFlight),
                 TotalInputRateThrottled = Interlocked.Read(ref inputRateThrottled),
                 TotalDiscreteEventThrottled = Interlocked.Read(ref discreteEventThrottled),
+                TotalFieldValidationFailed = Interlocked.Read(ref fieldValidationFailed),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -143,6 +145,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.discrete_event_throttled":
                 Interlocked.Add(ref discreteEventThrottled, value);
+                break;
+            case "pulse.hardening.field_validation_failed":
+                Interlocked.Add(ref fieldValidationFailed, value);
                 break;
         }
     }

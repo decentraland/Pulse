@@ -33,10 +33,14 @@ builder.Services.Configure<MovementInputRateLimiterOptions>(
 builder.Services.Configure<DiscreteEventRateLimiterOptions>(
     builder.Configuration.GetSection(DiscreteEventRateLimiterOptions.SECTION_NAME));
 
+builder.Services.Configure<FieldValidatorOptions>(
+    builder.Configuration.GetSection(FieldValidatorOptions.SECTION_NAME));
+
 builder.Services.AddSingleton<PreAuthAdmission>();
 builder.Services.AddSingleton<HandshakeAttemptPolicy>();
 builder.Services.AddSingleton<MovementInputRateLimiter>();
 builder.Services.AddSingleton<DiscreteEventRateLimiter>();
+builder.Services.AddSingleton<FieldValidator>();
 
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));

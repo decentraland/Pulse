@@ -51,6 +51,24 @@ namespace Pulse.Transport
         ///     Client exceeded the token-bucket cap on discrete events (emote start/stop,
         ///     teleport). Indicates a misbehaving or malicious client.
         /// </summary>
-        DISCRETE_EVENT_RATE_EXCEEDED = 10
+        DISCRETE_EVENT_RATE_EXCEEDED = 10,
+
+        /// <summary>
+        ///     PlayerStateInput carried an invalid field (e.g. out-of-range parcel index).
+        ///     Terminal — client bug or attack, should not auto-retry.
+        /// </summary>
+        INVALID_INPUT_FIELD = 11,
+
+        /// <summary>
+        ///     EmoteStart carried an invalid field (oversized EmoteId, excessive DurationMs,
+        ///     out-of-range parcel index). Terminal.
+        /// </summary>
+        INVALID_EMOTE_FIELD = 12,
+
+        /// <summary>
+        ///     TeleportRequest carried an invalid field (oversized Realm, out-of-range parcel
+        ///     index, empty realm). Terminal.
+        /// </summary>
+        INVALID_TELEPORT_FIELD = 13
     }
 }

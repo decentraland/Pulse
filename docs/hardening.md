@@ -265,3 +265,78 @@ Recommended client behaviour:
 |---|---|---|
 | `input_rate_throttled` | counter | Non-zero ⇒ at least one client is bursting `PlayerStateInput`. Investigate per-client traffic before suspecting the cap is too tight. |
 | `discrete_event_throttled` | counter | Non-zero ⇒ a peer is spamming emote/teleport. Almost always a buggy client; rarely a real attacker. |
+
+---
+
+## Group B (field validation) — Post-Auth Input Sanitisation
+
+### Threat model
+
+Authenticated peers can embed oversized strings, out-of-range indices, or absurd durations in
+game messages. The server stores them in snapshots and re-broadcasts to every observer in the
+AoI, so one bad packet costs the attacker O(1) and the server O(observers). Parcel indices
+that fall outside the encoder's grid produce garbage global positions downstream.
+
+### Defense
+
+`src/DCLPulse/Messaging/Hardening/FieldValidator.cs` — one class, three per-message methods
+(`ValidatePlayerStateInput`, `ValidateEmoteStart`, `ValidateTeleport`). Parcel bounds come
+from the existing `ParcelEncoderOptions` (`ParcelEncoder.IsValidIndex`). On any violation the
+peer is disconnected with a message-type-specific `DisconnectReason`.
+
+### Config
+
+```json
+{
+  "Messaging": {
+    "Hardening": {
+      "FieldValidator": {
+        "MaxEmoteIdLength": 64,
+        "MaxRealmLength": 128,
+        "MaxEmoteDurationMs": 60000
+      }
+    }
+  }
+}
+```
+
+Zero disables each individual check; parcel-index validation is always on (its bounds are the
+server's own configured realm size, not a per-defense knob).
+
+### DisconnectReason values
+
+| Value | Meaning |
+|---|---|
+| `INVALID_INPUT_FIELD = 11` | PlayerStateInput carried an out-of-range parcel index. |
+| `INVALID_EMOTE_FIELD = 12` | EmoteStart had an oversized EmoteId, excessive DurationMs, or invalid parcel index. |
+| `INVALID_TELEPORT_FIELD = 13` | TeleportRequest had an empty or oversized Realm, or invalid parcel index. |
+
+### Client recovery
+
+All three are **terminal, not retryable** — a well-formed client never produces invalid
+fields. Same client guidance as the rate-limit codes: do not auto-reconnect, log the reason,
+surface to telemetry.
+
+### Metrics to watch
+
+| Metric | Type | Signal |
+|---|---|---|
+| `field_validation_failed` | counter | Non-zero ⇒ a client is sending malformed fields. Check server logs for the specific DisconnectReason per peer. |
+
+---
+
+## Shared `PeerDefense` base class
+
+`MovementInputRateLimiter`, `DiscreteEventRateLimiter`, `FieldValidator`, and
+`HandshakeAttemptPolicy` all inherit from `PeerDefense`, which provides the common
+`Reject(PeerIndex, PeerState, DisconnectReason)` helper: bumps the violation counter, flips
+`PeerState.ConnectionState` to `PENDING_DISCONNECT`, and calls `transport.Disconnect`.
+
+The `PENDING_DISCONNECT` state closes the window between "server decided to disconnect" and
+"ENet's Disconnect event actually fires" — during that window, subsequent queued messages from
+the peer fail `SkipFromUnauthorizedPeer` (which only lets `AUTHENTICATED` through), so no
+handler work runs, no metrics inflate, and no further redundant disconnect envelopes are
+enqueued.
+
+`PreAuthAdmission` is not a `PeerDefense`: it returns an `AdmitResult` enum, runs on the ENet
+thread, and uses `DisconnectNow` rather than the queued `Disconnect` path.

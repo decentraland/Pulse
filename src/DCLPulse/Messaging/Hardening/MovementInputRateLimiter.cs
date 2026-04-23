@@ -16,6 +16,7 @@ public sealed class MovementInputRateLimiter(
     IOptions<MovementInputRateLimiterOptions> options,
     ITimeProvider timeProvider,
     ITransport transport)
+    : PeerDefense(transport, PulseMetrics.Hardening.INPUT_RATE_THROTTLED)
 {
     private readonly int maxHz = options.Value.MaxHz;
     private readonly uint minIntervalMs = options.Value.MaxHz > 0 ? (uint)(1000 / options.Value.MaxHz) : 0u;
@@ -35,11 +36,7 @@ public sealed class MovementInputRateLimiter(
         uint last = state.Throttle.LastInputMs;
 
         if (last != 0 && now - last < minIntervalMs)
-        {
-            PulseMetrics.Hardening.INPUT_RATE_THROTTLED.Add(1);
-            transport.Disconnect(from, DisconnectReason.INPUT_RATE_EXCEEDED);
-            return false;
-        }
+            return Reject(from, state, DisconnectReason.INPUT_RATE_EXCEEDED);
 
         // 0 is reserved as the "never" sentinel — clamp the stamp so a peer whose first input
         // arrives at server time 0 can't re-use the sentinel on subsequent calls.

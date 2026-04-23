@@ -137,6 +137,21 @@ public class DiscreteEventRateLimiterTests
     }
 
     [Test]
+    public void Rejection_FlipsStateToPendingDisconnect()
+    {
+        DiscreteEventRateLimiter limiter = Create(ratePerSecond: 5, burstCapacity: 1);
+        var state = new PeerState(PeerConnectionState.AUTHENTICATED);
+
+        timeProvider.MonotonicTime.Returns(1000u);
+        limiter.TryAccept(PEER, state);
+
+        timeProvider.MonotonicTime.Returns(1010u);
+        limiter.TryAccept(PEER, state);
+
+        Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
+    }
+
+    [Test]
     public void Acceptance_DoesNotTouchTransport()
     {
         DiscreteEventRateLimiter limiter = Create(ratePerSecond: 5, burstCapacity: 5);

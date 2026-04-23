@@ -23,5 +23,8 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> DISCRETE_EVENT_THROTTLED =
             METER.CreateCounter<long>("pulse.hardening.discrete_event_throttled");
+
+        public static readonly Counter<long> FIELD_VALIDATION_FAILED =
+            METER.CreateCounter<long>("pulse.hardening.field_validation_failed");
     }
 }

@@ -8,6 +8,7 @@ public class ParcelEncoder
     private readonly int minX;
     private readonly int minZ;
     private readonly int width;
+    private readonly int height;
     private readonly int parcelSize;
 
     public ParcelEncoder(IOptions<ParcelEncoderOptions> optionsContainer)
@@ -17,9 +18,19 @@ public class ParcelEncoder
         minX = options.MinParcelX - padding;
         minZ = options.MinParcelZ - padding;
         int maxX = options.MaxParcelX + padding;
+        int maxZ = options.MaxParcelZ + padding;
         width = maxX - minX + 1;
+        height = maxZ - minZ + 1;
         parcelSize =  options.ParcelSize;
     }
+
+    /// <summary>
+    ///     Maximum valid index (exclusive) — <c>width * height</c>. A parcel index from the
+    ///     client is valid iff <c>0 &lt;= index &lt; MaxIndexExclusive</c>.
+    /// </summary>
+    public int MaxIndexExclusive => width * height;
+
+    public bool IsValidIndex(int index) => (uint)index < (uint)MaxIndexExclusive;
 
     public int EncodeFromGlobalPosition(Vector3 globalPosition, out Vector3 localPosition)
     {

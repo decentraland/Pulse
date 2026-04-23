@@ -104,6 +104,7 @@ public sealed class ConsoleDashboard(
     private readonly GaugeTracker preAuthInFlightTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker inputRateThrottledTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker discreteEventThrottledTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker fieldValidationFailedTracker = new (SPARKLINE_MAX_SAMPLES);
 
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
@@ -137,6 +138,7 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView preAuthInFlight = new ();
     private readonly RateStatsView inputRateThrottled = new ();
     private readonly RateStatsView discreteEventThrottled = new ();
+    private readonly RateStatsView fieldValidationFailed = new ();
 
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
@@ -158,6 +160,7 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline preAuthInFlightSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline inputRateThrottledSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline discreteEventThrottledSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline fieldValidationFailedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -264,12 +267,15 @@ public sealed class ConsoleDashboard(
 
         RateStats inputThrottledRate = inputRateThrottledTracker.Update(snap.Hardening.TotalInputRateThrottled, elapsed);
         RateStats discreteThrottledRate = discreteEventThrottledTracker.Update(snap.Hardening.TotalDiscreteEventThrottled, elapsed);
+        RateStats fieldValidationRate = fieldValidationFailedTracker.Update(snap.Hardening.TotalFieldValidationFailed, elapsed);
 
         inputRateThrottled.Apply(inputThrottledRate, v => v.ToString("N0"));
         discreteEventThrottled.Apply(discreteThrottledRate, v => v.ToString("N0"));
+        fieldValidationFailed.Apply(fieldValidationRate, v => v.ToString("N0"));
 
         ShiftSample(inputRateThrottledSparkline.Values, inputThrottledRate.PerSec);
         ShiftSample(discreteEventThrottledSparkline.Values, discreteThrottledRate.PerSec);
+        ShiftSample(fieldValidationFailedSparkline.Values, fieldValidationRate.PerSec);
 
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
@@ -310,6 +316,7 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Handshake Attempts Exceeded", handshakeAttemptsExceeded, handshakeAttemptsExceededSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Input Rate Throttled", inputRateThrottled, inputRateThrottledSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Discrete Event Throttled", discreteEventThrottled, discreteEventThrottledSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Field Validation Failed", fieldValidationFailed, fieldValidationFailedSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
 
         var hardening = new Group("Hardening", hardeningTable);

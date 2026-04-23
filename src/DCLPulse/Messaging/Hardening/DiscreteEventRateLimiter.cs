@@ -14,20 +14,19 @@ namespace Pulse.Messaging.Hardening;
 ///     tokens + uint timestamp); invoked on the owning worker thread so there is no
 ///     concurrent access.
 /// </summary>
-public sealed class DiscreteEventRateLimiter
+public sealed class DiscreteEventRateLimiter : PeerDefense
 {
     private readonly byte burstCapacity;
     private readonly uint refillIntervalMs;
     private readonly ITimeProvider timeProvider;
-    private readonly ITransport transport;
 
     public DiscreteEventRateLimiter(
         IOptions<DiscreteEventRateLimiterOptions> options,
         ITimeProvider timeProvider,
         ITransport transport)
+        : base(transport, PulseMetrics.Hardening.DISCRETE_EVENT_THROTTLED)
     {
         this.timeProvider = timeProvider;
-        this.transport = transport;
 
         int cap = options.Value.BurstCapacity;
         burstCapacity = (byte)Math.Clamp(cap, 0, byte.MaxValue);
@@ -84,9 +83,7 @@ public sealed class DiscreteEventRateLimiter
                 DiscreteEventTokens = 0,
                 DiscreteEventLastRefillMs = newLast,
             };
-            PulseMetrics.Hardening.DISCRETE_EVENT_THROTTLED.Add(1);
-            transport.Disconnect(from, DisconnectReason.DISCRETE_EVENT_RATE_EXCEEDED);
-            return false;
+            return Reject(from, state, DisconnectReason.DISCRETE_EVENT_RATE_EXCEEDED);
         }
 
         state.Throttle = t with

@@ -53,6 +53,7 @@ internal static class PrometheusFormatter
         WriteGauge(writer, "dcl_pulse_pre_auth_in_flight", "Current number of peers in PENDING_AUTH", snap.Hardening.PreAuthInFlight);
         WriteCounter(writer, "dcl_pulse_input_rate_throttled_total", "PlayerStateInput messages dropped for exceeding MaxHz", snap.Hardening.TotalInputRateThrottled);
         WriteCounter(writer, "dcl_pulse_discrete_event_throttled_total", "Discrete events (emote start/stop, teleport) dropped by the token bucket", snap.Hardening.TotalDiscreteEventThrottled);
+        WriteCounter(writer, "dcl_pulse_field_validation_failed_total", "Post-auth messages rejected for invalid fields (oversized strings, out-of-range indices, excessive durations)", snap.Hardening.TotalFieldValidationFailed);
 
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);

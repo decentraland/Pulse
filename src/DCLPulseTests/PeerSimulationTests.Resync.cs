@@ -11,6 +11,49 @@ namespace DCLPulseTests;
 
 public partial class PeerSimulationTests
 {
+    /// <summary>
+    ///     Pins the AoI-visibility invariant for resync requests: a request pointing at a
+    ///     subject outside the observer's current AoI must never produce a STATE_FULL (else
+    ///     the handler would double as a reconnaissance channel around interest management).
+    ///     The simulation enforces this by processing resync entries only for subjects in the
+    ///     per-tick visible collector, and clearing <c>ResyncRequests</c> at end-of-tick.
+    /// </summary>
+    [Test]
+    public void Resync_ForNonVisibleSubject_ProducesNoStateFull()
+    {
+        var hiddenSubject = new PeerIndex(42);
+        PublishSnapshot(hiddenSubject, seq: 5, position: new Vector3(100f, 0f, 0f));
+
+        // Observer can see nothing — an empty visible set.
+        SetVisibleSubjects();
+
+        AddResyncRequest(observer, hiddenSubject, knownSeq: 1);
+
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        List<OutgoingMessage> messages = DrainAllMessages();
+
+        Assert.That(messages.Any(m => m.Message?.MessageCase == ServerMessage.MessageOneofCase.PlayerStateFull), Is.False,
+            "Resync for a subject outside the observer's AoI must not produce STATE_FULL");
+    }
+
+    [Test]
+    public void Resync_ForNonVisibleSubject_ClearedOnTick()
+    {
+        var hiddenSubject = new PeerIndex(42);
+        PublishSnapshot(hiddenSubject, seq: 5);
+        SetVisibleSubjects();
+
+        AddResyncRequest(observer, hiddenSubject, knownSeq: 1);
+        Assert.That(peers[observer].ResyncRequests, Is.Not.Null);
+        Assert.That(peers[observer].ResyncRequests!.Count, Is.EqualTo(1));
+
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        Assert.That(peers[observer].ResyncRequests!.Count, Is.EqualTo(0),
+            "Dict must be cleared at end-of-tick regardless of whether entries produced output");
+    }
+
     [Test]
     public void Resync_SendsFullStateWhenKnownSeqEvictedFromRing()
     {

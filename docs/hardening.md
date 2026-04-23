@@ -340,3 +340,18 @@ enqueued.
 
 `PreAuthAdmission` is not a `PeerDefense`: it returns an `AdmitResult` enum, runs on the ENet
 thread, and uses `DisconnectNow` rather than the queued `Disconnect` path.
+
+---
+
+## Resync-request AoI invariant
+
+`RESYNC_REQUEST` could in principle be used to reconnoitre peers outside the observer's AoI
+("send me a full snapshot of subject X"). The handler itself does no visibility check —
+validation happens in `PeerSimulation.ProcessVisibleSubjects`, which only consumes resync
+entries for subjects in the per-tick visible collector. Entries for non-visible subjects are
+discarded by the end-of-tick `ResyncRequests.Clear()` without ever producing a `STATE_FULL`.
+
+Pinned by `PeerSimulationTests.Resync_ForNonVisibleSubject_ProducesNoStateFull` and
+`Resync_ForNonVisibleSubject_ClearedOnTick`. A future batched `RESYNC_REQUEST` (multiple
+subject IDs per packet) will supersede the per-peer dict and let us enforce a single
+per-packet cap; no handler-time defense needed in the meantime.

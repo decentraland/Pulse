@@ -54,6 +54,7 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_input_rate_throttled_total", "PlayerStateInput messages dropped for exceeding MaxHz", snap.Hardening.TotalInputRateThrottled);
         WriteCounter(writer, "dcl_pulse_discrete_event_throttled_total", "Discrete events (emote start/stop, teleport) dropped by the token bucket", snap.Hardening.TotalDiscreteEventThrottled);
         WriteCounter(writer, "dcl_pulse_field_validation_failed_total", "Post-auth messages rejected for invalid fields (oversized strings, out-of-range indices, excessive durations)", snap.Hardening.TotalFieldValidationFailed);
+        WriteCounter(writer, "dcl_pulse_handshake_replay_rejected_total", "Handshakes rejected because the (wallet, timestamp) pair was already accepted within the anti-replay window", snap.Hardening.TotalHandshakeReplayRejected);
 
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);

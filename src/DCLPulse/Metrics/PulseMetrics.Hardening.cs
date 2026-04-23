@@ -26,5 +26,8 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> FIELD_VALIDATION_FAILED =
             METER.CreateCounter<long>("pulse.hardening.field_validation_failed");
+
+        public static readonly Counter<long> HANDSHAKE_REPLAY_REJECTED =
+            METER.CreateCounter<long>("pulse.hardening.handshake_replay_rejected");
     }
 }

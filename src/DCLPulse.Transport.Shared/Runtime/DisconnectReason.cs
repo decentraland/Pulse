@@ -69,6 +69,13 @@ namespace Pulse.Transport
         ///     TeleportRequest carried an invalid field (oversized Realm, out-of-range parcel
         ///     index, empty realm). Terminal.
         /// </summary>
-        INVALID_TELEPORT_FIELD = 13
+        INVALID_TELEPORT_FIELD = 13,
+
+        /// <summary>
+        ///     A handshake with the same (wallet, timestamp) was already accepted within the
+        ///     server's anti-replay window. Terminal — indicates a replayed capture, not a
+        ///     legitimate client scenario.
+        /// </summary>
+        HANDSHAKE_REPLAY_REJECTED = 14
     }
 }

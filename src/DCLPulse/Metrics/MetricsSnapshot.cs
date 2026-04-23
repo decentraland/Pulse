@@ -31,5 +31,6 @@ public readonly record struct MetricsSnapshot
         public long TotalInputRateThrottled { get; init; }
         public long TotalDiscreteEventThrottled { get; init; }
         public long TotalFieldValidationFailed { get; init; }
+        public long TotalHandshakeReplayRejected { get; init; }
     }
 }

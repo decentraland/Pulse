@@ -334,6 +334,83 @@ surface to telemetry.
 
 ---
 
+## Group E — Auth Hardening
+
+### E2 — Handshake replay cache
+
+#### Threat model
+
+The handshake validator accepts any well-formed `connect_sig` whose `timestamp` is within
+the server's 60 s anti-replay window. Within that window, a captured handshake packet can be
+**replayed as many times as the attacker wants**. Capture sources:
+
+- Passive sniffing on shared WiFi / corporate NAT / coffee-shop networks.
+- Malicious router or ISP hop between client and server.
+- UDP duplication from broken middleboxes (non-malicious but same effect).
+
+An attacker who captures one successful handshake packet and replays it within 60 s is
+admitted as the victim's wallet.
+
+#### Defense
+
+`src/DCLPulse/Messaging/Hardening/HandshakeReplayPolicy.cs` — sliding-window
+`Dictionary<(wallet, timestamp), expiry>` guarded by one `Lock`, called once per handshake
+after `AuthChainValidator.Validate` succeeds. On duplicate `(wallet, timestamp)` pair within
+the TTL, the peer is disconnected with `HANDSHAKE_REPLAY_REJECTED` and the metric fires.
+
+Memory footprint is bounded by handshake rate × TTL. At peak ~50 connects/s × 60 s TTL =
+3000 entries, well under the 4096 hard cap.
+
+#### Config
+
+```json
+{
+  "Messaging": {
+    "Hardening": {
+      "HandshakeReplay": {
+        "Enabled": true
+      }
+    }
+  }
+}
+```
+
+No numeric knobs — both are derived to avoid duplicated sources of truth:
+- **TTL** = `PeerOptions.PendingAuthCleanTimeoutMs` (single source of truth for "how long
+  we remember a PENDING_AUTH fact").
+- **Memory cap** = `ENetTransportOptions.MaxPeers` (concurrent handshakes can't exceed the
+  PeerIndex pool, so the cache needs no more).
+
+`Enabled = false` disables the check (dev / load tests).
+
+#### DisconnectReason
+
+| Value | Meaning |
+|---|---|
+| `HANDSHAKE_REPLAY_REJECTED = 14` | Same (wallet, timestamp) pair was already accepted within the TTL. Terminal — legitimate clients rebuild the handshake with a fresh timestamp on every connect. |
+
+#### Client recovery
+
+**Terminal, not retryable.** A legitimate client will never see this code — it means either
+the packet was captured and replayed from elsewhere, or the client is reusing a cached
+handshake packet (bug). UI copy: "Session rejected: please sign in again." Do not auto-retry
+with the same handshake; always rebuild the auth chain with a fresh timestamp.
+
+#### What this does NOT cover
+
+Cross-server replay (victim handshake sent to instance A, attacker replays to instance B in
+the same fleet). That's what **E1** addresses — binding `server_id` into the signed payload
+so a handshake for one instance fails the signature check on another. E1 + E2 are
+complementary: E2 blocks same-server replay, E1 blocks cross-server replay.
+
+#### Metrics to watch
+
+| Metric | Type | Signal |
+|---|---|---|
+| `handshake_replay_rejected` | counter | Non-zero ⇒ active replay attempt or a misbehaving client reusing packets. Forensic priority — log + investigate source IPs. |
+
+---
+
 ## Shared `PeerDefense` base class
 
 `MovementInputRateLimiter`, `DiscreteEventRateLimiter`, `FieldValidator`, and

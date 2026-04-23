@@ -36,11 +36,15 @@ builder.Services.Configure<DiscreteEventRateLimiterOptions>(
 builder.Services.Configure<FieldValidatorOptions>(
     builder.Configuration.GetSection(FieldValidatorOptions.SECTION_NAME));
 
+builder.Services.Configure<HandshakeReplayPolicyOptions>(
+    builder.Configuration.GetSection(HandshakeReplayPolicyOptions.SECTION_NAME));
+
 builder.Services.AddSingleton<PreAuthAdmission>();
 builder.Services.AddSingleton<HandshakeAttemptPolicy>();
 builder.Services.AddSingleton<MovementInputRateLimiter>();
 builder.Services.AddSingleton<DiscreteEventRateLimiter>();
 builder.Services.AddSingleton<FieldValidator>();
+builder.Services.AddSingleton<HandshakeReplayPolicy>();
 
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));

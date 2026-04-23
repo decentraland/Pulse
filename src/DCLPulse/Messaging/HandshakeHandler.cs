@@ -17,14 +17,16 @@ public class HandshakeHandler(MessagePipe messagePipe,
     ITransport transport,
     HandshakeAttemptPolicy attemptPolicy,
     PreAuthAdmission preAuthAdmission,
+    HandshakeReplayPolicy replayPolicy,
     ILogger<HandshakeHandler> logger) : IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
+        peers.TryGetValue(from, out PeerState? existingState);
+
         // Throttle before any parsing/crypto work — attempt counter is per-peer on PeerState.
         // Policy owns the disconnect on violation.
-        if (peers.TryGetValue(from, out PeerState? existingState)
-         && !attemptPolicy.TryRecordAttempt(from, existingState))
+        if (existingState != null && !attemptPolicy.TryRecordAttempt(from, existingState))
             return;
 
         HandshakeRequest handshakeRequest = message.Handshake;
@@ -65,6 +67,12 @@ public class HandshakeHandler(MessagePipe messagePipe,
 
             string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
             AuthChainValidationResult result = authChainValidator.Validate(chain, expectedPayload);
+
+            // Replay guard — a valid signature alone isn't enough. Reject handshakes whose
+            // (wallet, timestamp) pair has already been accepted within the anti-replay window.
+            // The cache owns the disconnect; state flips to PENDING_DISCONNECT via PeerDefense.
+            if (existingState != null && !replayPolicy.TryAdmit(from, existingState, result.UserAddress, timestamp))
+                return;
 
             PeerState peer = peerStateFactory.Create();
             peer.WalletId = result.UserAddress;

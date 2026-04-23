@@ -1,6 +1,6 @@
 ---
 name: add-metric
-description: Add a new metric to the Pulse analytics layer — instrument, collect, snapshot, and display on the dashboard. Use when the user wants to track a new server metric.
+description: Add a new metric to the Pulse analytics layer — instrument, accumulate, snapshot, export to Prometheus, and display on the console dashboard. Use when the user wants to track a new server metric.
 user-invocable: true
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 argument-hint: <metric description, e.g. "tick duration histogram per worker">
@@ -8,167 +8,220 @@ argument-hint: <metric description, e.g. "tick duration histogram per worker">
 
 # Add a Metric to Pulse
 
-Follow this checklist to add a new metric end-to-end. There are two patterns depending on the data source.
+End-to-end checklist. Three patterns depending on the data source.
 
-## Pattern A: Counter-based metric (uses System.Diagnostics.Metrics)
+## Pipeline overview
 
-For values recorded on hot paths (ENet thread, worker threads) via `Interlocked` counters.
-
-**Examples:** bytes sent, packets received, peers connected.
-
-### 1. Define the instrument — `src/DCLPulse/Metrics/PulseMetrics.*.cs`
-
-Add to the appropriate nested class (e.g. `PulseMetrics.Transport`), or create a new partial file (`PulseMetrics.Simulation.cs`) for a new domain.
-
-```csharp
-// PulseMetrics.Transport.cs
-public static readonly Counter<long> MY_METRIC =
-    METER.CreateCounter<long>("pulse.transport.my_metric");
+```
+Hot path              MeterListenerMetricsCollector       Two consumers
+─────────────────     ───────────────────────────────     ────────────────────────────
+ENet / worker thread  OnLongMeasurement / OnIntMeasurement  PrometheusFormatter → /metrics
+ PulseMetrics.Add() ► Interlocked accumulation into field   (HTTP endpoint)
+                      TakeSnapshot() builds MetricsSnapshot
+                                                            ConsoleDashboard → dev TUI
+                                                            (RateTracker / GaugeTracker
+                                                             compute P50/P95/P99 locally)
 ```
 
-Naming: `UPPER_SNAKE_CASE` for the field, `pulse.<domain>.<name>` for the instrument name.
+The collector only holds **raw totals** (`long`, `int`). Rates and percentiles are computed
+downstream in the dashboard. Prometheus emits raw totals.
+
+---
+
+## Pattern A: Counter-based metric
+
+For values recorded on hot paths via `System.Diagnostics.Metrics`. Most common pattern.
+
+**Examples:** bytes sent, packets received, peers connected, handshake attempts exceeded.
+
+### 1. Declare the instrument — `src/DCLPulse/Metrics/PulseMetrics.*.cs`
+
+Add to the appropriate nested class (e.g. `PulseMetrics.Transport`, `PulseMetrics.Hardening`), or create a new partial (`PulseMetrics.Simulation.cs`) for a new domain.
+
+```csharp
+// PulseMetrics.Hardening.cs
+public static readonly Counter<long> MY_METRIC =
+    METER.CreateCounter<long>("pulse.hardening.my_metric");
+
+// For gauges (current value that goes up and down), use UpDownCounter:
+public static readonly UpDownCounter<int> MY_GAUGE =
+    METER.CreateUpDownCounter<int>("pulse.hardening.my_gauge");
+```
+
+Naming: `UPPER_SNAKE_CASE` field, `pulse.<domain>.<snake_name>` instrument name.
 
 ### 2. Record at the source
 
-Call `.Add()` on the hot path. This fires the MeterListener callback.
-
 ```csharp
-PulseMetrics.Transport.MY_METRIC.Add(value);
+PulseMetrics.Hardening.MY_METRIC.Add(1);
+// Or for gauges:
+PulseMetrics.Hardening.MY_GAUGE.Add(+1);  // on increase
+PulseMetrics.Hardening.MY_GAUGE.Add(-1);  // on decrease
 ```
 
-### 3. Accumulate in MetricsCollector — `src/DCLPulse/Metrics/MetricsCollector.cs`
+### 3. Accumulate in the collector — `src/DCLPulse/Metrics/MeterListenerMetricsCollector.cs`
 
-Add a `long` field for the accumulated total and handle it in `OnLongMeasurement`:
+- Add a `long` (or `int` for UpDownCounter) field next to the existing totals:
+  ```csharp
+  private long myMetric;
+  ```
+- Add a `case` in `OnLongMeasurement` (or `OnIntMeasurement` for `int`):
+  ```csharp
+  case "pulse.hardening.my_metric":
+      Interlocked.Add(ref myMetric, value);
+      break;
+  ```
+  Instrument name must match exactly. Missing a case = silent drop.
 
+### 4. Expose in the snapshot — `src/DCLPulse/Metrics/MetricsSnapshot.cs`
+
+Add a field to the nested struct (or create a new one for a new domain):
 ```csharp
-private long myMetric;
-
-// In OnLongMeasurement switch:
-case "pulse.transport.my_metric":
-    Interlocked.Add(ref myMetric, value);
-    break;
+public readonly record struct HardeningSnapshot
+{
+    public long TotalMyMetric { get; init; }
+    public int MyGauge { get; init; }
+}
+```
+And expose it:
+```csharp
+public HardeningSnapshot Hardening { get; init; }
 ```
 
-Add a `RateTracker` if you need rate + P95/P99:
+### 5. Populate the snapshot — `MeterListenerMetricsCollector.TakeSnapshot`
 
 ```csharp
-private readonly RateTracker myMetricTracker = new (PERCENTILE_WINDOW);
+return new MetricsSnapshot
+{
+    Transport = new MetricsSnapshot.TransportSnapshot { … },
+    Hardening = new MetricsSnapshot.HardeningSnapshot
+    {
+        TotalMyMetric = Interlocked.Read(ref myMetric),
+        MyGauge = Volatile.Read(ref myGauge),
+    },
+    …
+};
 ```
 
-In `Tick()`:
+### 6. Emit Prometheus — `src/DCLPulse/Metrics/PrometheusFormatter.cs`
 
+Add to `Write(StreamWriter, MetricsSnapshot)`:
 ```csharp
-MyMetric = myMetricTracker.Update(Interlocked.Read(ref myMetric), elapsedSec),
+WriteCounter(writer, "dcl_pulse_my_metric_total", "Human description", snap.Hardening.TotalMyMetric);
+WriteGauge  (writer, "dcl_pulse_my_gauge",       "Human description", snap.Hardening.MyGauge);
 ```
+Convention: `dcl_pulse_<snake_name>` + `_total` suffix for counters, no suffix for gauges.
 
-### 4. Add to snapshot — `src/DCLPulse/Metrics/MetricsSnapshot.cs`
+### 7. Display on the console dashboard — `src/DCLPulse/Metrics/Console/ConsoleDashboard.cs`
 
-Add the field to the appropriate nested struct:
+- Add a tracker field. `RateTracker` for rate-over-time counters, `GaugeTracker` for gauges:
+  ```csharp
+  private readonly RateTracker  myMetricTracker = new (SPARKLINE_MAX_SAMPLES);
+  private readonly GaugeTracker myGaugeTracker  = new (SPARKLINE_MAX_SAMPLES);
+  ```
+- Add a `RateStatsView` + `Sparkline`:
+  ```csharp
+  private readonly RateStatsView myMetric = new ();
+  private readonly Sparkline     myMetricSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+  ```
+- Update in `TryConsumeSnapshot`:
+  ```csharp
+  RateStats myMetricRate = myMetricTracker.Update(snap.Hardening.TotalMyMetric, elapsed);
+  myMetric.Apply(myMetricRate, v => v.ToString("N0"));
+  ShiftSample(myMetricSparkline.Values, myMetricRate.PerSec);
+  ```
+  For gauge:
+  ```csharp
+  RateStats myGaugeRate = myGaugeTracker.Record(snap.Hardening.MyGauge);
+  myGauge.Apply(myGaugeRate, v => v.ToString("N0"));
+  ShiftSample(myGaugeSparkline.Values, snap.Hardening.MyGauge);
+  ```
+- Add a row in `BuildVisualTree` (inside existing `metricsTable` or a new `Group`):
+  ```csharp
+  RateStatsRow("My Metric", myMetric, myMetricSparkline.Style(STYLE_BACKPRESSURE)),
+  ```
+- Choose sparkline style by semantic group:
+  - `STYLE_PEERS` (purple) — peer counts
+  - `STYLE_INBOUND` (blue) — incoming data
+  - `STYLE_OUTBOUND` (coral) — outgoing data
+  - `STYLE_BACKPRESSURE` (yellow) — queue depths, throttles, refusals
+  - `STYLE_ERROR` (red) — failures
 
-```csharp
-public RateStats MyMetric { get; init; }
-```
+### 8. Document in `docs/metrics.md`
 
-Use `RateStats` for rate + P95/P99. Use raw types (`long`, `int`) for simple totals.
-
-### 5. Display on dashboard — `src/DCLPulse/Dashboard/ConsoleDashboard.cs`
-
-Add a `RateStatsView` + `Sparkline`, update in `ConsumeSnapshot`, add a row in `BuildVisualTree`.
-
-See Pattern B step 4 for the exact code — it's the same for both patterns.
+Add a section under the appropriate domain heading (or create a new heading for a new domain). Describe what the metric means, the expected value range, and `Signal | Meaning` rows for operators reading the dashboard.
 
 ---
 
 ## Pattern B: Sampled metric (direct read, no Metrics API)
 
-For values read directly from shared state on the collector's timer tick. Avoids the MeterListener indirection.
+For values read directly from shared state on the collector's `TakeSnapshot` call. Avoids the `MeterListener` indirection.
 
-**Examples:** queue depths, gauge values, external counters.
+**Examples:** queue depths, in-flight counters already exposed as properties.
 
-### 1. Expose the value
-
-Add a property or method to the source class:
+### 1. Expose the value on the source class
 
 ```csharp
 // MessagePipe.cs
-public int MyQueueDepth => Volatile.Read(ref myDepth);
+public int IncomingQueueDepth => Volatile.Read(ref incomingDepth);
 ```
+If the source uses `Channel<T>` with `SingleWriter=true`, `Reader.Count` throws — track depth manually with `Interlocked.Increment/Decrement` on write/read.
 
-If the source uses `Channel<T>` with `SingleWriter=true`, `Reader.Count` throws `NotSupportedException`. Track depth manually with `Interlocked.Increment`/`Decrement` on write/read.
+### 2. Inject the source into `MeterListenerMetricsCollector`
 
-### 2. Sample in MetricsCollector — `src/DCLPulse/Metrics/MetricsCollector.cs`
+Add to constructor parameters. No field accumulation needed — the collector reads the property live on every `TakeSnapshot` call.
 
-Inject the source via constructor. Add a `PercentileBuffer`:
+### 3. Add to snapshot — `MetricsSnapshot.cs`
 
 ```csharp
-private readonly PercentileBuffer myDepthBuffer = new (PERCENTILE_WINDOW);
+public int IncomingQueueDepth { get; init; }
 ```
+Raw type (`int`/`long`), not `RateStats`. Percentiles are computed downstream.
 
-In `Tick()`, read the value and feed the buffer:
+### 4. Read in `TakeSnapshot`
 
 ```csharp
-int depth = source.MyQueueDepth;
-myDepthBuffer.Add(depth);
-// In snapshot init:
-MyDepth = myDepthBuffer.ToStats(depth),
+IncomingQueueDepth = messagePipe.IncomingQueueDepth,
 ```
 
-### 3. Add to snapshot — `src/DCLPulse/Metrics/MetricsSnapshot.cs`
+### 5. Emit Prometheus — `PrometheusFormatter.cs`
 
 ```csharp
-public RateStats MyDepth { get; init; }
+WriteGauge(writer, "dcl_pulse_incoming_queue_depth", "Pending messages in incoming channel", snap.Transport.IncomingQueueDepth);
 ```
 
-`RateStats` is reused for gauge-like metrics — `PerSec` holds the current value, `P95`/`P99` hold percentiles over the rolling window.
+### 6. Display on dashboard
 
-### 4. Display on dashboard — `src/DCLPulse/Dashboard/ConsoleDashboard.cs`
-
-Add state + sparkline:
-
+Same as Pattern A step 7, but use `GaugeTracker` instead of `RateTracker`:
 ```csharp
-private readonly RateStatsView myDepth = new ();
-private readonly Sparkline myDepthSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+private readonly GaugeTracker incomingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
 ```
-
-Update in `ConsumeSnapshot`:
-
+And in `TryConsumeSnapshot`:
 ```csharp
-myDepth.Apply(snap.Transport.MyDepth, v => v.ToString("N0"));
-ShiftSample(myDepthSparkline.Values, snap.Transport.MyDepth.PerSec);
+RateStats depthStats = incomingQueueDepthTracker.Record(snap.Transport.IncomingQueueDepth);
+incomingQueue.Apply(depthStats, v => v.ToString("N0"));
+ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth);
 ```
 
-Add a row in the table inside `BuildVisualTree`:
-
-```csharp
-RateStatsRow("My Depth", myDepth, myDepthSparkline.Style(STYLE_BACKPRESSURE)),
-```
-
-Choose the sparkline style by semantic group:
-- `STYLE_PEERS` (purple) — peer counts
-- `STYLE_INBOUND` (blue) — incoming data
-- `STYLE_OUTBOUND` (coral) — outgoing data
-- `STYLE_BACKPRESSURE` (yellow) — queue depths, health indicators
+### 7. Document in `docs/metrics.md`
 
 ---
 
 ## Pattern C: Per-enum-value collection metric
 
-For counting occurrences per enum variant (e.g. per message type, per disconnect reason).
+For counting occurrences per enum variant.
 
-**Examples:** messages by type, disconnects by reason.
+**Examples:** messages by type (existing `ClientMessageCounters` / `ServerMessageCounters`), disconnects by reason.
 
 ### 1. Create a shared counter class — `src/DCLPulse/Metrics/`
 
 ```csharp
-public sealed class MyCounters
+public sealed class MyCounters : EnumCounters<MyEnum>
 {
-    private readonly long[] counts = new long[BUCKET_COUNT];
-    public void Increment(MyEnum value) => Interlocked.Increment(ref counts[(int)value]);
-    public long Read(MyEnum value) => Interlocked.Read(ref counts[(int)value]);
+    public MyCounters() : base((int)MyEnum.COUNT) { }
 }
 ```
-
-Register as singleton in `Program.cs`. Inject into the recording site and `MetricsCollector`.
+Or subclass/extend `EnumCounters<T>` directly. Register as singleton in `Program.cs`.
 
 ### 2. Record at the source
 
@@ -176,40 +229,35 @@ Register as singleton in `Program.cs`. Inject into the recording site and `Metri
 myCounters.Increment(item.SomeEnumValue);
 ```
 
-### 3. Track in MetricsCollector
-
-Define tracked values in one place:
+### 3. Expose on snapshot — `MetricsSnapshot.cs`
 
 ```csharp
-private static readonly MyEnum[] TRACKED_VALUES = [ MyEnum.A, MyEnum.B, ... ];
-private readonly Dictionary<MyEnum, RateTracker> myTrackers =
-    TRACKED_VALUES.ToDictionary(v => v, _ => new RateTracker(PERCENTILE_WINDOW));
+public MyCounters MyStats { get; init; }
 ```
+The counters class itself is the snapshot — consumers call `Read(value)` on demand.
 
-In `Tick()`, build a dictionary:
+### 4. Inject into collector and add to `TakeSnapshot`
 
 ```csharp
-var myStats = new Dictionary<MyEnum, RateStats>(myTrackers.Count);
-foreach (var (val, tracker) in myTrackers)
-    myStats[val] = tracker.Update(myCounters.Read(val), elapsedSec);
-snapshot = snapshot with { MyStats = myStats };
+MyStats = myCounters,
 ```
 
-### 4. Add to snapshot
+### 5. Emit Prometheus — `PrometheusFormatter.cs`
 
+Define the list of tracked values + call `WriteEnumCounters`:
 ```csharp
-public Dictionary<MyEnum, RateStats> MyStats { get; init; }
+private static readonly MyEnum[] MY_ENUM_VALUES = [ MyEnum.A, MyEnum.B, … ];
+// In Write:
+WriteEnumCounters(writer, "dcl_pulse_my_metric_total", "description", snap.MyStats, MY_ENUM_VALUES);
 ```
 
-### 5. Display on dashboard
+### 6. Display on dashboard
 
-Define display config in one place:
+Use `MessageTableConfig<MyEnum>` + `MessageTableState<MyEnum>` — see the existing
+`INCOMING_MESSAGES_CONFIG` / `OUTGOING_MESSAGES_CONFIG` wiring in `ConsoleDashboard.cs`. Add a
+per-type `RateTracker` dictionary and iterate in `TryConsumeSnapshot`.
 
-```csharp
-private static readonly (MyEnum Value, string Label, SparklineStyle Style)[] MY_CONFIG = [ ... ];
-```
-
-Create a `Dictionary<MyEnum, MessageTypeView>` from the config. In `ConsumeSnapshot`, iterate and apply. In `BuildVisualTree`, use LINQ `.Select()` to build table rows.
+### 7. Document in `docs/metrics.md`
 
 ---
 
@@ -217,15 +265,19 @@ Create a `Dictionary<MyEnum, MessageTypeView>` from the config. In `ConsumeSnaps
 
 | Type | Location | Purpose |
 |---|---|---|
-| `RateStats` | `Metrics/RateStats.cs` | Bundles `PerSec`, `P95`, `P99` |
-| `RateTracker` | `Metrics/RateTracker.cs` | Counter → rate + percentiles (uses `PercentileBuffer`) |
-| `PercentileBuffer` | `Metrics/PercentileBuffer.cs` | Ring buffer with percentile computation |
-| `RateStatsView` | `Dashboard/ConsoleDashboard.cs` | Three `State<string>` + `Apply(RateStats, format)` |
-| `MessageTypeView` | `Dashboard/ConsoleDashboard.cs` | `RateStatsView` + `Sparkline` + `Apply(RateStats)` |
-| `ByteFormat` | `Formatting/ByteFormat.cs` | `Format(bytes)` / `FormatRate(bytes/s)` |
+| `RateStats` | `Metrics/Console/RateStats.cs` | Bundles `PerSec`, `Window` (P50/P95/P99), `Lifetime` (P50/P95/P99) |
+| `RateTracker` | `Metrics/Console/RateTracker.cs` | Counter → rate + percentiles. `Update(total, elapsedSec) : RateStats` |
+| `GaugeTracker` | `Metrics/Console/GaugeTracker.cs` | Gauge value → percentiles. `Record(value) : RateStats` |
+| `PercentileBuffer` | `Metrics/Console/PercentileBuffer.cs` | Ring buffer with percentile computation |
+| `LifetimePercentileBuffer` | `Metrics/Console/LifetimePercentileBuffer.cs` | Lifetime P-squared percentile estimator |
+| `RateStatsView` | `Metrics/Console/ConsoleDashboard.cs` (nested) | Reactive `State<string>` bundle + `Apply(RateStats, format)` |
+| `MessageTypeView` | `Metrics/Console/ConsoleDashboard.cs` (nested) | `RateStatsView` + `Sparkline` for per-enum tables |
+| `EnumCounters<T>` | `Metrics/EnumCounters.cs` | Generic per-enum atomic counters |
+| `ByteFormat` | `Metrics/Console/ByteFormat.cs` | `Format(bytes)` / `FormatRate(bytes/s)` |
 
 ## After adding the metric
 
 1. Build: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
 2. Run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
-3. If `PeersManager` constructor changed, update test files that construct it (`WorkerAsyncTests.cs`, `DrainPeerLifeCycleEventsTests.cs`, `WaitForMessagesOrTickTests.cs`).
+3. If `MeterListenerMetricsCollector` or `ConsoleDashboard` ctor signatures changed, update DI in `Program.cs` and any tests that construct them.
+4. If Rider MCP is available, run `mcp__rider__get_file_problems` on each touched file to catch convention warnings before reporting done.

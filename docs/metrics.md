@@ -105,6 +105,53 @@ Pending messages in the outgoing channel (`MessagePipe.outgoingChannel`) waiting
 
 ---
 
+## Hardening metrics
+
+Pre-auth admission control and handshake throttling — see `docs/hardening.md` for the full threat model.
+
+### Pre-Auth In-Flight
+
+Gauge of connections currently in `PENDING_AUTH`. Read from `PreAuthAdmission.InFlight`.
+
+| Signal | Meaning |
+|---|---|
+| Stable low | Normal — peers complete handshake within ~1 s and drop out of pending |
+| Climbing toward `PreAuthBudget` | Flash crowd (event start) or pre-auth flood — watch `Pre-Auth Refused` |
+| Near or at `PreAuthBudget` | Budget is saturated — further legitimate connections are being refused |
+| Stuck high after admission traffic stops | Likely a counter leak — file a bug |
+
+### Pre-Auth Refused
+
+Counter of connections refused by the global `PreAuthBudget` check. `dcl_pulse_pre_auth_refused_total` in Prometheus.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Budget is not hit |
+| Rare bursts during events | Normal flash-crowd back-pressure — clients retry with jitter |
+| Sustained non-zero | Budget is undersized for peak connect rate, or a genuine pre-auth flood is active |
+
+### Per-IP Limit Refused
+
+Counter of connections refused by the per-source-IP pre-auth cap. `dcl_pulse_pre_auth_ip_limit_refused_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No IP is saturating its quota |
+| Sporadic from known CGNAT / corporate egress | Legitimate IP is shared by many users — consider raising `MaxConcurrentPreAuthPerIP` |
+| High rate from one IP | Single-IP pre-auth flood; infrastructure-level block is probably warranted |
+
+### Handshake Attempts Exceeded
+
+Counter of peers disconnected after burning their handshake attempt budget. `dcl_pulse_handshake_attempts_exceeded_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — legitimate clients succeed on the first attempt |
+| Sporadic | Clients with a bug in auth-chain generation, or transient MetaForge issues |
+| Spiking | Targeted replay attempt or broken client build |
+
+---
+
 ## Incoming Messages
 
 Per-message-type rates for `ClientMessage` variants. Shows how many of each message type the server processes per second.

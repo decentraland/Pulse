@@ -83,6 +83,20 @@ public class PlayerStateInputHandlerTests
     }
 
     [Test]
+    public void Handle_PendingDisconnectPeer_SkipsProcessing()
+    {
+        // Queued messages arriving after a defense already condemned the peer must be dropped
+        // silently — no snapshot publish, no re-triggering of defenses.
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.PENDING_DISCONNECT);
+
+        handler.Handle(peers, peerIndex, CreateInputMessage());
+
+        Assert.That(snapshotBoard.LastSeq(peerIndex), Is.EqualTo(uint.MaxValue),
+            "PENDING_DISCONNECT peer's input must not advance the snapshot sequence");
+    }
+
+    [Test]
     public void Handle_AuthenticatedPeer_PublishesSnapshot()
     {
         var peerIndex = new PeerIndex(1);

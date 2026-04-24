@@ -86,7 +86,32 @@ public sealed partial class ENetHostedService(
             FlushOutgoing();
         }
 
-        host.Flush();
+        ShutdownGracefully();
+    }
+
+    private void ShutdownGracefully() =>
+        ShutdownGracefully(connectedPeers.Values, logger);
+
+    /// <summary>
+    ///     Notify every peer in the collection with <see cref="DisconnectReason.GRACEFUL" /> and
+    ///     return. Fire-and-forget: <see cref="Peer.DisconnectNow" /> emits the disconnect on the
+    ///     spot and resets the peer locally, so no further ENet servicing is required. Any peer
+    ///     that doesn't receive the single UDP notification falls back to its own ENet timeout —
+    ///     same outcome as a hard kill, which is the worst case we have to tolerate anyway.
+    ///     <para>
+    ///         Internal so the test project can drive it directly against a real ENet peer pair
+    ///         without constructing the whole hosted service.
+    ///     </para>
+    /// </summary>
+    internal static void ShutdownGracefully(IReadOnlyCollection<Peer> peers, ILogger logger)
+    {
+        if (peers.Count == 0)
+            return;
+
+        logger.LogInformation("Graceful shutdown: notifying {Count} peer(s) with GRACEFUL.", peers.Count);
+
+        foreach (Peer peer in peers)
+            peer.DisconnectNow((uint)DisconnectReason.GRACEFUL);
     }
 
     /// <summary>

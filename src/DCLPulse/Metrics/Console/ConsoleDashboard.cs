@@ -337,8 +337,7 @@ public sealed class ConsoleDashboard(
 
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
-            ).MaxHeight(() => Math.Max(5, System.Console.WindowHeight * 30 / 100))
-             .HorizontalAlignment(Align.Stretch);
+            ).HorizontalAlignment(Align.Stretch);
 
         ScrollViewer metricsArea = new VStack(
                 transport,
@@ -348,7 +347,13 @@ public sealed class ConsoleDashboard(
             ).Spacing(1)
              .Scrollable();
 
-        return new VStack(metricsArea, logs).Spacing(1);
+        return new Grid()
+            .Rows(
+                new RowDefinition().Height(GridLength.Star(7)),
+                new RowDefinition().Height(GridLength.Star(3)))
+            .RowGap(1)
+            .Cell(metricsArea, row: 0, column: 0, rowSpan: 1, columnSpan: 1)
+            .Cell(logs, row: 1, column: 0, rowSpan: 1, columnSpan: 1);
     }
 
     /// <summary>

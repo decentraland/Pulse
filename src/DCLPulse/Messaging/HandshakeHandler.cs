@@ -1,6 +1,7 @@
 using DCL.Auth;
 using Decentraland.Pulse;
 using Pulse.Messaging.Hardening;
+using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
@@ -18,6 +19,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
     HandshakeAttemptPolicy attemptPolicy,
     PreAuthAdmission preAuthAdmission,
     HandshakeReplayPolicy replayPolicy,
+    BanList banList,
     ILogger<HandshakeHandler> logger) : IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -67,6 +69,16 @@ public class HandshakeHandler(MessagePipe messagePipe,
 
             string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
             AuthChainValidationResult result = authChainValidator.Validate(chain, expectedPayload);
+
+            // Platform ban list — checked before the replay cache so a banned wallet doesn't
+            // consume an anti-replay slot. The ban list is populated by BansPollingHttpService on a
+            // background timer; when the poller is disabled (no moderator token) the list is
+            // empty and this check is a constant-time no-op.
+            if (existingState != null && banList.IsBanned(result.UserAddress))
+            {
+                RejectBanned(from, existingState, result.UserAddress);
+                return;
+            }
 
             // Replay guard — a valid signature alone isn't enough. Reject handshakes whose
             // (wallet, timestamp) pair has already been accepted within the anti-replay window.
@@ -119,5 +131,23 @@ public class HandshakeHandler(MessagePipe messagePipe,
 
             logger.LogInformation("Handshake validation failed: {Error}", e.Message);
         }
+    }
+
+    private void RejectBanned(PeerIndex from, PeerState state, string wallet)
+    {
+        messagePipe.Send(new MessagePipe.OutgoingMessage(from, new ServerMessage
+        {
+            Handshake = new HandshakeResponse
+            {
+                Success = false,
+                Error = "banned",
+            },
+        }, PacketMode.RELIABLE));
+
+        state.ConnectionState = PeerConnectionState.PENDING_DISCONNECT;
+        PulseMetrics.Hardening.BANNED_REFUSED.Add(1);
+        transport.Disconnect(from, DisconnectReason.BANNED);
+
+        logger.LogInformation("Handshake rejected: wallet {Wallet} is banned", wallet);
     }
 }

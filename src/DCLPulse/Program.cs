@@ -39,12 +39,17 @@ builder.Services.Configure<FieldValidatorOptions>(
 builder.Services.Configure<HandshakeReplayPolicyOptions>(
     builder.Configuration.GetSection(HandshakeReplayPolicyOptions.SECTION_NAME));
 
+builder.Services.Configure<BansOptions>(
+    builder.Configuration.GetSection(BansOptions.SECTION_NAME));
+
 builder.Services.AddSingleton<PreAuthAdmission>();
 builder.Services.AddSingleton<HandshakeAttemptPolicy>();
 builder.Services.AddSingleton<MovementInputRateLimiter>();
 builder.Services.AddSingleton<DiscreteEventRateLimiter>();
 builder.Services.AddSingleton<FieldValidator>();
 builder.Services.AddSingleton<HandshakeReplayPolicy>();
+builder.Services.AddSingleton<BanList>();
+builder.Services.AddSingleton<BanEnforcer>();
 
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));
@@ -159,8 +164,12 @@ else
 
 builder.Services.Configure<HttpServiceOptions>(
     builder.Configuration.GetSection(HttpServiceOptions.SECTION_NAME));
-builder.Services.AddSingleton(new MetricsBearerToken(Environment.GetEnvironmentVariable(MetricsBearerToken.ENV_VAR)));
+
+builder.Services.AddSingleton<MetricsBearerToken>();
+builder.Services.AddSingleton<CommsBearerToken>();
+builder.Services.AddSingleton<EnvName>();
 builder.Services.AddHostedService<HttpService>();
+builder.Services.AddHostedService<BansPollingHttpService>();
 
 builder.Services.Configure<ParcelEncoderOptions>(
     builder.Configuration.GetSection(ParcelEncoderOptions.SECTION_NAME));

@@ -29,5 +29,8 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> HANDSHAKE_REPLAY_REJECTED =
             METER.CreateCounter<long>("pulse.hardening.handshake_replay_rejected");
+
+        public static readonly Counter<long> BANNED_REFUSED =
+            METER.CreateCounter<long>("pulse.hardening.banned_refused");
     }
 }

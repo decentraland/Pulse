@@ -38,6 +38,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long discreteEventThrottled;
     private long fieldValidationFailed;
     private long handshakeReplayRejected;
+    private long bannedRefused;
 
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
@@ -97,6 +98,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalDiscreteEventThrottled = Interlocked.Read(ref discreteEventThrottled),
                 TotalFieldValidationFailed = Interlocked.Read(ref fieldValidationFailed),
                 TotalHandshakeReplayRejected = Interlocked.Read(ref handshakeReplayRejected),
+                TotalBannedRefused = Interlocked.Read(ref bannedRefused),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -153,6 +155,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.handshake_replay_rejected":
                 Interlocked.Add(ref handshakeReplayRejected, value);
+                break;
+            case "pulse.hardening.banned_refused":
+                Interlocked.Add(ref bannedRefused, value);
                 break;
         }
     }

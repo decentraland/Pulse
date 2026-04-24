@@ -179,6 +179,17 @@ Counter of handshakes rejected because the `(wallet, timestamp)` pair had alread
 | Zero | Normal — legitimate clients rebuild the handshake each time |
 | Non-zero | Replay attack or buggy client reusing cached packets; treat as forensic priority |
 
+### Banned Refused
+
+Counter of handshake rejections and active-peer evictions caused by the platform ban list. Combines two enforcement paths: a banned wallet attempting a fresh handshake (rejected with `BANNED`) and a connected peer whose wallet appears in a newly-polled ban list (evicted via `MessagePipe.SendDisconnect`). `dcl_pulse_banned_refused_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — nobody on the platform ban list is trying to connect. |
+| Occasional | Banned user attempted to reconnect; moderation working as intended. |
+| Bursts matching a ban wave | Expected immediately after moderators ban many wallets at once — each connected victim triggers one increment per poll. |
+| Sustained high | Banned user auto-reconnecting; check client is honouring the terminal-code guidance. |
+
 ### Field Validation Failed
 
 Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`). `dcl_pulse_field_validation_failed_total`.

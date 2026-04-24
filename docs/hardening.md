@@ -432,6 +432,112 @@ don't land on different instances).
 
 ---
 
+## Group F — Platform Ban List
+
+### Threat model
+
+Decentraland moderation maintains a central list of banned wallet addresses served by
+`comms-gatekeeper`. Two enforcement windows matter:
+
+1. **New connection by a banned wallet.** A user who was banned between sessions reconnects
+   with a valid auth chain — the cryptography checks out, but the wallet is on the moderation
+   list. Without enforcement at the server, the user rejoins the same realm they were
+   moderated out of.
+2. **Wallet banned mid-session.** A user is already connected and misbehaving when a
+   moderator issues the ban. If the server only checks on handshake, the banned user stays in
+   place until they disconnect voluntarily.
+
+### Defense
+
+Two components in `src/DCLPulse/Messaging/Hardening/`:
+
+| Component | Role |
+|---|---|
+| `BanList` | Shared, atomically-swappable `HashSet<string>` (case-insensitive). Readers never lock. |
+| `BansPollingHttpService` | `BackgroundService` that polls `https://comms-gatekeeper.decentraland.{HttpSuffix}/bans` every `PollIntervalSeconds` with the `COMMS_MODERATOR_TOKEN` bearer, replaces the list, and evicts newly-banned connected peers via `MessagePipe.SendDisconnect(..., DisconnectReason.BANNED)`. |
+
+The handshake path (`HandshakeHandler`) consults `BanList.IsBanned(walletAddress)` after
+`AuthChainValidator.Validate` succeeds and before `HandshakeReplayPolicy.TryAdmit` — a banned
+wallet never burns a replay-window slot. On a hit, the handler sends `HandshakeResponse
+{ Success = false, Error = "banned" }`, flips the peer to `PENDING_DISCONNECT`, bumps the
+`banned_refused` metric, and calls `transport.Disconnect(from, DisconnectReason.BANNED)`.
+
+The poller's eviction scan runs on the poller thread and never touches any `PeerState` — it
+only enqueues disconnects through `MessagePipe`, which is the documented cross-thread entry
+point. The owning worker receives the lifecycle Disconnected event and performs its usual
+cleanup. This preserves the worker-shard isolation rule.
+
+### Pass-through mode (local dev / CI)
+
+`BansPollingHttpService.ExecuteAsync` checks two conditions on startup and returns without scheduling any
+work when either fails:
+
+1. `CommsBearerToken.Value` is empty (`COMMS_MODERATOR_TOKEN` env var not set).
+2. `Bans:PollIntervalSeconds` is zero.
+
+In both cases the `BanList` singleton stays empty for the process lifetime, so the
+handshake-time `IsBanned` check is a constant-time hash lookup that always returns `false`.
+The feature has zero runtime cost and zero network traffic outside production deployments.
+
+### Config
+
+`appsettings.json`:
+
+```json
+{
+  "Messaging": {
+    "Hardening": {
+      "Bans": {
+        "PollIntervalSeconds": 30,
+        "HttpTimeoutSeconds": 10
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `PollIntervalSeconds` | 30 | How often to refresh the ban list. `0` disables the poller. |
+| `HttpTimeoutSeconds` | 10 | Per-request HTTP timeout. `0` means no timeout. |
+
+`appsettings.Development.json` sets `PollIntervalSeconds: 0` so dev runs never hit the
+gatekeeper even if a token leaks into the local env.
+
+### Unban semantics
+
+When a wallet is removed upstream, `BanList.Replace` drops it on the next poll cycle. No
+active notification is sent — a previously-banned wallet is simply re-admitted on its next
+connection attempt. This matches how every other policy in the codebase handles removal of
+state: silent and eventual.
+
+### DisconnectReason
+
+`BANNED = 5` (already existed before this group). Used for both enforcement paths.
+
+### Client recovery
+
+**Terminal, not retryable.** A banned user rejoining lands on `BANNED` both at handshake and
+on active-session eviction. Client UI copy should surface a moderation-specific message
+("Your account has been suspended — contact support") rather than the generic
+"reconnecting…" treatment used for retryable codes. Auto-retry must be suppressed — a retry
+loop would hammer the gatekeeper with refused connections.
+
+### HTTP error handling
+
+The poller keeps the previous ban list on any transient error (non-2xx response, timeout,
+malformed JSON, DNS failure). Worst case during a gatekeeper outage: the list goes stale but
+continues enforcing the last known good snapshot. A first-boot failure before any successful
+poll leaves the list empty — identical to pass-through mode.
+
+### Metrics to watch
+
+| Metric | Type | Signal |
+|---|---|---|
+| `banned_refused` | counter | Non-zero ⇒ at least one banned wallet attempted to connect, or was evicted mid-session. Combines both paths — a spike without corresponding handshake traffic indicates a fresh ban wave causing evictions. |
+
+---
+
 ## Shared `PeerDefense` base class
 
 `MovementInputRateLimiter`, `DiscreteEventRateLimiter`, `FieldValidator`, and

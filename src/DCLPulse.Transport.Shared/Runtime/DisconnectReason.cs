@@ -24,9 +24,9 @@ namespace Pulse.Transport
         DUPLICATE_SESSION = 4,
 
         /// <summary>
-        ///     Admin Kick
+        ///     Banned platform-wide
         /// </summary>
-        KICKED = 5,
+        BANNED = 5,
 
         SERVER_FULL = 6,
 

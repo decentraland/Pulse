@@ -1,3 +1,4 @@
+using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.Messaging;
@@ -41,8 +42,8 @@ public class MessagePipeDisconnectTests
     [Test]
     public void SendDisconnect_CountsTowardOutgoingDepth()
     {
-        pipe.SendDisconnect(new PeerIndex(1), DisconnectReason.KICKED);
-        pipe.SendDisconnect(new PeerIndex(2), DisconnectReason.KICKED);
+        pipe.SendDisconnect(new PeerIndex(1), DisconnectReason.BANNED);
+        pipe.SendDisconnect(new PeerIndex(2), DisconnectReason.BANNED);
 
         Assert.That(pipe.OutgoingQueueDepth, Is.EqualTo(2));
 
@@ -60,8 +61,8 @@ public class MessagePipeDisconnectTests
 
         localPipe.SendDisconnect(new PeerIndex(1), DisconnectReason.AUTH_FAILED);
 
-        foreach (Decentraland.Pulse.ServerMessage.MessageOneofCase kind
-                 in Enum.GetValues(typeof(Decentraland.Pulse.ServerMessage.MessageOneofCase)))
+        foreach (ServerMessage.MessageOneofCase kind
+                 in Enum.GetValues(typeof(ServerMessage.MessageOneofCase)))
         {
             Assert.That(counters.Read(kind), Is.EqualTo(0),
                 $"Disconnect envelope must not bump ServerMessageCounters[{kind}]");
@@ -74,7 +75,7 @@ public class MessagePipeDisconnectTests
         // Single outgoing channel → FIFO. A reliable response sent before a disconnect must
         // arrive at FlushOutgoing before the disconnect so ENet's DISCONNECT_LATER flushes it.
         var peer = new PeerIndex(3);
-        var response = new Decentraland.Pulse.ServerMessage { Handshake = new Decentraland.Pulse.HandshakeResponse { Success = false } };
+        var response = new ServerMessage { Handshake = new HandshakeResponse { Success = false } };
 
         pipe.Send(new MessagePipe.OutgoingMessage(peer, response, PacketMode.RELIABLE));
         pipe.SendDisconnect(peer, DisconnectReason.AUTH_FAILED);

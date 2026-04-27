@@ -76,6 +76,13 @@ namespace Pulse.Transport
         ///     server's anti-replay window. Terminal — indicates a replayed capture, not a
         ///     legitimate client scenario.
         /// </summary>
-        HANDSHAKE_REPLAY_REJECTED = 14
+        HANDSHAKE_REPLAY_REJECTED = 14,
+
+        /// <summary>
+        ///     HandshakeRequest carried a malformed PlayerInitialState (out-of-range parcel,
+        ///     non-finite floats, oversized emote id, excessive duration). Terminal — the auth
+        ///     chain itself was valid, but the asserted starting state isn't usable.
+        /// </summary>
+        INVALID_HANDSHAKE_FIELD = 15,
     }
 }

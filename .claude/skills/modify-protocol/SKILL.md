@@ -15,7 +15,7 @@ The protocol is the single source of truth for the wire format. It lives in a **
 | Thing | Path | Notes |
 |---|---|---|
 | Proto sources | `../protocol/proto/decentraland/` | **Sibling repo** — edit these |
-| Pulse-specific protos | `../protocol/proto/decentraland/pulse/pulse_comms.proto` | `ClientMessage` / `ServerMessage` envelopes + all game messages |
+| Pulse-specific protos | `../protocol/proto/decentraland/pulse/` | Three files: `pulse_client.proto` (C→S messages + `ClientMessage` envelope), `pulse_server.proto` (S→C messages + `ServerMessage` envelope), `pulse_shared.proto` (types referenced by both directions: `PlayerState`, `GlideState`, `PlayerAnimationFlags`) |
 | Shared primitives | `../protocol/proto/decentraland/common/` | `vectors.proto`, `options.proto` (custom `quantized` / `bit_packed`), etc. |
 | Bitwise plugin | `../protocol/protoc-gen-bitwise/plugin.py` | Python protoc plugin — emits C# `Encode`/`Decode` partials |
 | Plugin runtime | `../protocol/protoc-gen-bitwise/runtime/cs/{BitReader,BitWriter,Quantize}.cs` | `Quantize.cs` is copied into `Generated/` at build time |
@@ -34,8 +34,11 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
 ## Change workflow
 
 1. **Edit the `.proto` file(s)** in `../protocol/proto/decentraland/...`
-   - For new top-level game messages, add to the `ClientMessage` / `ServerMessage` `oneof` in `pulse_comms.proto`.
-   - For shared primitives, edit the appropriate file in `common/`.
+   - **Pick the right pulse file by direction:**
+     - Client→server message → add it to `pulse_client.proto`, then add the variant to the `ClientMessage` `oneof` at the bottom of that file.
+     - Server→client message → add it to `pulse_server.proto`, then add the variant to the `ServerMessage` `oneof` at the bottom of that file.
+     - Type referenced from **both** directions (e.g. another shared state struct like `PlayerState`) → put it in `pulse_shared.proto`. Both `pulse_client.proto` and `pulse_server.proto` import it. Don't cross-import client↔server.
+   - For shared primitives across protocols (vectors, etc.), edit the appropriate file in `common/`.
    - Filenames are `snake_case.proto`; message types are `PascalCase`; fields are `snake_case`.
    - **Keep comments minimal** — at most one short line above a message or field. No multi-paragraph docblocks, bullet-list "contracts", or lifecycle prose. The proto is a schema vendored into every client repo; invariants belong in the server handler that enforces them or in the PR description, not here.
 
@@ -49,7 +52,7 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
    // Integer packed into fewer than 32 bits:
    uint32 entity_id = 4 [(decentraland.common.bit_packed) = { bits: 20 }];
    ```
-   Rules of thumb: match existing tiering in `pulse_comms.proto`; `optional` on a quantized field means it participates in the plugin-generated field_mask (absent fields don't hit the wire).
+   Rules of thumb: match existing tiering in `pulse_server.proto` (`PlayerStateDeltaTier0`); `optional` on a quantized field means it participates in the plugin-generated field_mask (absent fields don't hit the wire).
 
 3. **Rebuild** — proto regen runs automatically:
    ```bash
@@ -95,7 +98,7 @@ After regeneration:
 
 1. Build: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln`
 2. Run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
-3. Verify the new/changed C# types show up in `src/Protocol/Generated/PulseComms.cs` (data class) and `PulseComms.Bitwise.cs` (if the message has `quantized` / `bit_packed` fields).
+3. Verify the new/changed C# types show up in the generated file matching the source proto: `src/Protocol/Generated/PulseClient.cs`, `PulseServer.cs`, or `PulseShared.cs` (data classes), plus `PulseServer.Bitwise.cs` etc. (if the message has `quantized` / `bit_packed` fields). All three live in the same `Decentraland.Pulse` namespace, so callers don't need to know which file a type came from.
 4. If you changed `ClientMessage` / `ServerMessage` oneofs, confirm the new `MessageOneofCase` enum value appears and your handler is registered.
 
 ## Troubleshooting

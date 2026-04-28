@@ -69,6 +69,12 @@ Sent on **channel 0 (reliable)** immediately after ENet transport connect:
 
 `player_id = chain[0].payload` (Ethereum wallet address, globally unique, no registration needed)
 
+### Initial-State Seed
+
+`HandshakeRequest.PlayerInitialState` is **the state the client authenticates with** — not a server-side fallback. The client always sends it on (re-)connect because it can't observe whether its prior session is still on the server (worker-shard isolation prevents cross-slot preservation; every fresh ENet connection lands on an empty slot). The handshake handler validates it via `FieldValidator.ValidateHandshakeInitialState` **before** transitioning to `AUTHENTICATED`; a malformed seed disconnects the peer with `INVALID_HANDSHAKE_FIELD` rather than letting half-validated state into the snapshot ring.
+
+If `InitialState.emote_id` is set the seeded snapshot also carries an `EmoteState` with `start_tick = now − emote_start_offset_ms` (underflow-clamped) so the next `EmoteStarted` broadcast scrubs the animation forward by the elapsed-since-real-start delta. The seed is published with `Realm = null`; the first follow-up `TeleportRequest` sets the realm and inherits the seeded emote via the SnapshotBoard ledger carry-forward.
+
 ### Peer State Machine
 
 ```
@@ -195,6 +201,10 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 **Simulation loop: scan → broadcast → stop → delta.** Each tick, the simulation scans intermediate snapshots and collects the last teleport, emote start, and emote stop. Only the final event of each type is broadcast — intermediate positions or superseded emotes are discarded. An emote that started and stopped in the same batch is invisible to the observer. Discrete events (teleport, emote start) suppress the unreliable delta for that tick to prevent baseline races. Emote stop does not suppress delta — the client needs the position update on resume.
 
 **Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
+
+**Snapshot publishing goes through `PeerSnapshotPublisher`.** Every handler that mutates peer state (`PlayerStateInputHandler`, `EmoteStartHandler`, `TeleportHandler`, the handshake initial-state seed) calls one of two methods on the publisher: `PublishFromPlayerState(from, state, EmoteInput?)` for `PlayerState`-shaped events, or `PublishTeleport(from, parcelIndex, localPosition, realm)` for teleports. The publisher owns Seq numbering (`LastSeq + 1`), parcel→global decoding, head-IK lifting from `PlayerState`, the `SnapshotBoard.Publish` + `SpatialGrid.Set` pair, and emote-ledger bookkeeping (`StartSeq` is stamped to the new snapshot's `Seq`, `StartTick` defaults to `ServerTick` when caller leaves it null). Don't reconstruct a `PeerSnapshot` inline in a handler — add it to the publisher.
+
+`EmoteInput(EmoteId, DurationMs?, StartTick?)` is the caller-facing emote-start descriptor. Callers pass only what's semantically theirs (the emote identity, its duration, optionally a backdated start tick for reconnect resume); ledger fields like `StartSeq` are not part of the API. `EmoteStart` callers omit `StartTick` (defaults to "started right now"); the handshake reconnect path passes a backdated `StartTick` so observers scrub forward by the elapsed-since-real-start delta.
 
 ---
 

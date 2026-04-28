@@ -4,6 +4,7 @@ using XenoAtom.Terminal;
 using XenoAtom.Terminal.UI;
 using XenoAtom.Terminal.UI.Collections;
 using XenoAtom.Terminal.UI.Controls;
+using XenoAtom.Terminal.UI.Input;
 using XenoAtom.Terminal.UI.Styling;
 
 namespace Pulse.Metrics.Console;
@@ -20,7 +21,8 @@ namespace Pulse.Metrics.Console;
 public sealed class ConsoleDashboard(
     LogControl logControl,
     DashboardLoggerProvider loggerProvider,
-    IMetricsCollector metricsCollector) : IHostedService
+    IMetricsCollector metricsCollector,
+    IHostApplicationLifetime applicationLifetime) : IHostedService
 {
     private const int SPARKLINE_MAX_SAMPLES = 120; // 60 seconds at 500ms interval
     private const long SNAPSHOT_INTERVAL_MS = 500;
@@ -197,15 +199,30 @@ public sealed class ConsoleDashboard(
     {
         Visual visual = BuildVisualTree();
 
-        Terminal.Run(visual, () =>
+        // Ctrl+C arrives as ETX (0x03) under raw mode + TreatControlCAsInput, not the literal 'c'.
+        var runOptions = new TerminalRunOptions
         {
-            if (stopping)
-                return TerminalLoopResult.Stop;
+            ExitGesture = new KeyGesture('\x03', TerminalModifiers.Ctrl),
+        };
 
-            TryConsumeSnapshot();
-            loggerProvider.DrainTo(logControl);
-            return TerminalLoopResult.Continue;
-        });
+        try
+        {
+            Terminal.Run(visual, _ =>
+            {
+                if (stopping)
+                    return TerminalLoopResult.Stop;
+
+                TryConsumeSnapshot();
+                loggerProvider.DrainTo(logControl);
+                return TerminalLoopResult.Continue;
+            }, runOptions);
+        }
+        finally
+        {
+            // Exit gesture (Ctrl+C) — propagate to the host so the rest of the
+            // service graph shuts down. No-op if shutdown was initiated elsewhere.
+            applicationLifetime.StopApplication();
+        }
     }
 
     private void TryConsumeSnapshot()

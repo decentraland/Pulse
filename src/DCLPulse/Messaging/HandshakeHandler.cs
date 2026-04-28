@@ -20,6 +20,9 @@ public class HandshakeHandler(MessagePipe messagePipe,
     PreAuthAdmission preAuthAdmission,
     HandshakeReplayPolicy replayPolicy,
     BanList banList,
+    FieldValidator fieldValidator,
+    PeerSnapshotPublisher snapshotPublisher,
+    ITimeProvider timeProvider,
     ILogger<HandshakeHandler> logger) : IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -86,6 +89,14 @@ public class HandshakeHandler(MessagePipe messagePipe,
             if (existingState != null && !replayPolicy.TryAdmit(from, existingState, result.UserAddress, timestamp))
                 return;
 
+            // Initial-state validation runs before the AUTHENTICATED transition: a malformed
+            // asserted state aborts the handshake cleanly via FieldValidator.Reject (peer is
+            // disconnected with INVALID_HANDSHAKE_FIELD), no half-authenticated state survives.
+            if (existingState != null
+                && handshakeRequest.InitialState != null
+                && !fieldValidator.ValidateHandshakeInitialState(from, existingState, handshakeRequest.InitialState))
+                return;
+
             PeerState peer = peerStateFactory.Create();
             peer.WalletId = result.UserAddress;
             peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
@@ -107,6 +118,8 @@ public class HandshakeHandler(MessagePipe messagePipe,
 
             identityBoard.Set(from, result.UserAddress);
             snapshotBoard.SetActive(from);
+
+            SeedInitialState(from, handshakeRequest.InitialState);
 
             messagePipe.Send(new MessagePipe.OutgoingMessage(from, new ServerMessage
             {
@@ -131,6 +144,46 @@ public class HandshakeHandler(MessagePipe messagePipe,
 
             logger.LogInformation("Handshake validation failed: {Error}", e.Message);
         }
+    }
+
+    /// <summary>
+    ///     Apply the asserted starting state the client carried through authentication. The
+    ///     client always sends <see cref="PlayerInitialState" /> on (re-)connect because it
+    ///     can't observe whether the server still holds its prior session — but on the server
+    ///     side this is unconditional: a freshly authenticated slot has no state of its own to
+    ///     defer to (cross-slot preservation isn't part of the architecture), and the
+    ///     authenticated state is whatever the client just signed for.
+    ///     <para />
+    ///     Realm stays null on the seed — the next <c>TeleportRequest</c> establishes it and
+    ///     inherits the seeded <see cref="EmoteState" /> via the SnapshotBoard ledger
+    ///     carry-forward, so a reconnecting client mid-emote keeps animating without
+    ///     re-sending <c>EmoteStart</c>.
+    /// </summary>
+    private void SeedInitialState(PeerIndex from, PlayerInitialState? initialState)
+    {
+        if (initialState == null)
+            return;
+
+        PeerSnapshotPublisher.EmoteInput? emote = null;
+
+        if (initialState.HasEmoteId && !string.IsNullOrEmpty(initialState.EmoteId))
+        {
+            uint now = timeProvider.MonotonicTime;
+            uint offset = initialState.HasEmoteStartOffsetMs ? initialState.EmoteStartOffsetMs : 0u;
+
+            // Backdate StartTick by the reported offset so observers scrub the animation
+            // forward by the elapsed-since-real-start delta on the next EmoteStarted broadcast.
+            // Underflow guard keeps the start tick from wrapping if the offset overstates now.
+            uint startTick = offset > now ? 0u : now - offset;
+            uint? duration = initialState.HasEmoteDurationMs ? initialState.EmoteDurationMs : null;
+
+            emote = new PeerSnapshotPublisher.EmoteInput(initialState.EmoteId, DurationMs: duration, StartTick: startTick);
+        }
+
+        snapshotPublisher.PublishFromPlayerState(from, initialState.State, emote);
+
+        logger.LogInformation("Seeded initial snapshot for peer {Peer} at parcel {Parcel} (emote='{Emote}')",
+            from, initialState.State.ParcelIndex, emote?.EmoteId ?? "<none>");
     }
 
     private void RejectBanned(PeerIndex from, PeerState state, string wallet)

@@ -54,6 +54,34 @@ public sealed class FieldValidator(
         return true;
     }
 
+    /// <summary>
+    ///     Validates the optional <see cref="PlayerInitialState" /> the client carries through
+    ///     the handshake. The auth-chain itself was already accepted upstream — this gate keeps
+    ///     a malformed asserted-state from poisoning the snapshot ring on the seed publish.
+    ///     Mirrors <see cref="ValidatePlayerStateInput" /> + <see cref="ValidateEmoteStart" />:
+    ///     same parcel and float checks for the embedded <see cref="PlayerState" />, same
+    ///     length / duration caps for the optional emote fields.
+    /// </summary>
+    public bool ValidateHandshakeInitialState(PeerIndex from, PeerState state, PlayerInitialState initial)
+    {
+        if (initial.State == null)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (!IsValidParcel(initial.State.ParcelIndex))
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (!IsValidPlayerStateFloats(initial.State))
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (maxEmoteIdLength > 0 && initial.HasEmoteId && initial.EmoteId.Length > maxEmoteIdLength)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (maxEmoteDurationMs > 0 && initial.HasEmoteDurationMs && initial.EmoteDurationMs > maxEmoteDurationMs)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        return true;
+    }
+
     public bool ValidateTeleport(PeerIndex from, PeerState state, TeleportRequest request)
     {
         if (string.IsNullOrEmpty(request.Realm))

@@ -1,5 +1,4 @@
 using Decentraland.Pulse;
-using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
@@ -9,11 +8,9 @@ using static Pulse.Peers.DiffComparison;
 namespace Pulse.Messaging;
 
 public class PlayerStateInputHandler(
-    ITimeProvider timeProvider,
     SnapshotBoard snapshotBoard,
-    SpatialGrid spatialGrid,
+    PeerSnapshotPublisher snapshotPublisher,
     ILogger<PlayerStateInputHandler> logger,
-    ParcelEncoder parcelEncoder,
     MovementInputRateLimiter rateLimiter,
     FieldValidator fieldValidator)
     : RuntimePacketHandlerBase<PlayerStateInputHandler>(logger), IMessageHandler
@@ -38,26 +35,7 @@ public class PlayerStateInputHandler(
         if (snapshotBoard.TryRead(from, out PeerSnapshot current) && IsSameState(current, state))
             return;
 
-        Vector3 globalPeerPosition = parcelEncoder.DecodeToGlobalPosition(state.ParcelIndex, state.Position);
-
-        var snapshot = new PeerSnapshot(
-            snapshotBoard.LastSeq(from) + 1,
-            timeProvider.MonotonicTime,
-            state.ParcelIndex,
-            state.Position,
-            globalPeerPosition,
-            state.Velocity,
-            state.RotationY,
-            state.JumpCount,
-            state.MovementBlend,
-            state.SlideBlend,
-            state.GetHeadYaw(),
-            state.GetHeadPitch(),
-            (PlayerAnimationFlags)state.StateFlags,
-            state.GlideState);
-
-        snapshotBoard.Publish(from, in snapshot);
-        spatialGrid.Set(from, snapshot.GlobalPosition);
+        PeerSnapshot snapshot = snapshotPublisher.PublishFromPlayerState(from, state);
 
         logger.LogDebug("Received input from {Peer} with position {GlobalPosition}, rotation {RotationY}, velocity {Velocity}, movement blend {MovementBlend}, anim state {AnimationFlags}",
             from.Value, snapshot.GlobalPosition, snapshot.RotationY, snapshot.Velocity, snapshot.MovementBlend, snapshot.AnimationFlags);

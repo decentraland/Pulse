@@ -128,6 +128,8 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
 
+builder.Services.AddSingleton<PeerSnapshotPublisher>();
+
 var dashboardType = builder.Configuration.GetSection(MetricsOptions.SECTION_NAME)
                           .GetValue<DashboardType>(nameof(MetricsOptions.Type));
 

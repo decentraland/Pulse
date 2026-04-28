@@ -1,6 +1,5 @@
 using Decentraland.Common;
 using Decentraland.Pulse;
-using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
@@ -8,10 +7,8 @@ using Pulse.Peers.Simulation;
 namespace Pulse.Messaging;
 
 public class TeleportHandler(ILogger<TeleportHandler> logger,
-    ITimeProvider timeProvider,
     SnapshotBoard snapshotBoard,
-    SpatialGrid spatialGrid,
-    ParcelEncoder parcelEncoder,
+    PeerSnapshotPublisher snapshotPublisher,
     DiscreteEventRateLimiter rateLimiter,
     FieldValidator fieldValidator)
     : RuntimePacketHandlerBase<TeleportHandler>(logger), IMessageHandler
@@ -29,47 +26,26 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
 
         TeleportRequest request = message.Teleport;
         string realm = request.Realm;
-
         Vector3 localPosition = request.Position;
         int parcelIndex = request.ParcelIndex;
-        System.Numerics.Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(parcelIndex, localPosition);
 
-        float rotationY = 0;
-        float? headYaw = null, headPitch = null;
-        string? previousRealm = null;
+        // Read the prior realm before publishing so the realm-change log can compare against
+        // the pre-teleport state. The publisher does its own snapshot read internally for
+        // rotation/head-IK inheritance — minor double-read, single-writer per slot guarantees
+        // they observe the same prior snapshot.
+        string? previousRealm = snapshotBoard.TryRead(from, out PeerSnapshot prev) ? prev.Realm : null;
 
-        if (snapshotBoard.TryRead(from, out PeerSnapshot prevSnapshot))
-        {
-            rotationY = prevSnapshot.RotationY;
-            headYaw = prevSnapshot.HeadYaw;
-            headPitch = prevSnapshot.HeadPitch;
-            previousRealm = prevSnapshot.Realm;
-        }
-
-        var snapshot = new PeerSnapshot(snapshotBoard.LastSeq(from) + 1,
-            timeProvider.MonotonicTime,
-            parcelIndex, localPosition, globalPosition,
-            System.Numerics.Vector3.Zero,
-            rotationY,
-            JumpCount: 0, MovementBlend: 0, SlideBlend: 0,
-            headYaw, headPitch,
-            PlayerAnimationFlags.Grounded,
-            GlideState.PropClosed,
-            IsTeleport: true,
-            Realm: realm);
-
-        snapshotBoard.Publish(from, snapshot);
-        spatialGrid.Set(from, snapshot.GlobalPosition);
+        PeerSnapshot snapshot = snapshotPublisher.PublishTeleport(from, parcelIndex, localPosition, realm);
 
         if (!string.Equals(previousRealm, realm, StringComparison.Ordinal))
         {
             logger.LogInformation("Peer {Peer} teleported to realm '{Realm}' (was '{Previous}') at {Position}",
-                from, realm, previousRealm ?? "<none>", globalPosition);
+                from, realm, previousRealm ?? "<none>", snapshot.GlobalPosition);
         }
         else
         {
             logger.LogInformation("Teleport requested by {Peer} at {Position} (realm '{Realm}')",
-                from, globalPosition, realm);
+                from, snapshot.GlobalPosition, realm);
         }
     }
 }

@@ -35,12 +35,12 @@ public class TeleportHandlerTests
         spatialGrid = new SpatialGrid(100, 100);
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
 
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+
         handler = new TeleportHandler(
             Substitute.For<ILogger<TeleportHandler>>(),
-            timeProvider,
             snapshotBoard,
-            spatialGrid,
-            parcelEncoder,
+            publisher,
             new DiscreteEventRateLimiter(
                 Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }),
                 timeProvider,

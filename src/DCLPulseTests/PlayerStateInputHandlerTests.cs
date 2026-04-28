@@ -37,12 +37,12 @@ public class PlayerStateInputHandlerTests
         var options = Options.Create(new ParcelEncoderOptions());
         parcelEncoder = new ParcelEncoder(options);
 
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+
         handler = new PlayerStateInputHandler(
-            timeProvider,
             snapshotBoard,
-            spatialGrid,
+            publisher,
             Substitute.For<ILogger<PlayerStateInputHandler>>(),
-            parcelEncoder,
             new MovementInputRateLimiter(
                 Options.Create(new MovementInputRateLimiterOptions { MaxHz = 0 }),
                 timeProvider,

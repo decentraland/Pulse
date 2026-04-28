@@ -34,8 +34,10 @@ public class EmoteStartHandlerTests
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
 
-        handler = new EmoteStartHandler(snapshotBoard, spatialGrid, timeProvider,
-            Substitute.For<ILogger<EmoteStartHandler>>(), parcelEncoder,
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+
+        handler = new EmoteStartHandler(publisher,
+            Substitute.For<ILogger<EmoteStartHandler>>(),
             new DiscreteEventRateLimiter(
                 Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }),
                 timeProvider,

@@ -256,6 +256,24 @@ public class FieldValidatorTests
     }
 
     [Test]
+    public void NaNPointAt_InInput_Rejects()
+    {
+        FieldValidator v = Create();
+        PlayerStateInput msg = InputWith(s => s.PointAt = new Vector3 { X = float.NaN, Y = 0, Z = 0 });
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+    }
+
+    [Test]
+    public void UnsetPointAt_IsIgnored()
+    {
+        FieldValidator v = Create();
+        var msg = new PlayerStateInput { State = ValidPlayerState() };
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.True);
+    }
+
+    [Test]
     public void NullPosition_InInput_Rejects()
     {
         // Malformed proto with unset Position would NRE in the handler; validator must reject.

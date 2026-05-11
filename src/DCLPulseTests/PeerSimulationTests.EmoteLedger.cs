@@ -234,6 +234,7 @@ public partial class PeerSimulationTests
             LocalPosition: new Vector3(1f, 0f, 0f), GlobalPosition: new Vector3(1f, 0f, 0f), Velocity: Vector3.Zero,
             RotationY: 0f, JumpCount: 0, MovementBlend: 0f, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed));
 
@@ -242,6 +243,7 @@ public partial class PeerSimulationTests
             LocalPosition: new Vector3(2f, 0f, 0f), GlobalPosition: new Vector3(2f, 0f, 0f), Velocity: Vector3.Zero,
             RotationY: 0f, JumpCount: 0, MovementBlend: 0f, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
             Emote: new EmoteState("wave", StartSeq: 3, StartTick: 100)));
@@ -253,6 +255,7 @@ public partial class PeerSimulationTests
             LocalPosition: new Vector3(3f, 0f, 0f), GlobalPosition: new Vector3(3f, 0f, 0f), Velocity: Vector3.Zero,
             RotationY: 0f, JumpCount: 0, MovementBlend: 0f, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed));
 

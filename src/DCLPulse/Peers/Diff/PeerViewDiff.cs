@@ -35,6 +35,18 @@ public static class PeerViewDiff
             {
                 delta.HeadPitchQuantized = to.HeadPitch.Value;
             }
+
+            if (to.PointAt.HasValue)
+            {
+                if (!from.PointAt.HasValue || !FloatEquals(from.PointAt.Value.X, to.PointAt.Value.X))
+                    delta.PointAtXQuantized = to.PointAt.Value.X;
+
+                if (!from.PointAt.HasValue || !FloatEquals(from.PointAt.Value.Y, to.PointAt.Value.Y))
+                    delta.PointAtYQuantized = to.PointAt.Value.Y;
+
+                if (!from.PointAt.HasValue || !FloatEquals(from.PointAt.Value.Z, to.PointAt.Value.Z))
+                    delta.PointAtZQuantized = to.PointAt.Value.Z;
+            }
         }
 
         if (from.AnimationFlags != to.AnimationFlags)

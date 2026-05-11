@@ -21,6 +21,7 @@ public class PeerViewDiffTests
         float slideBlend = 0f,
         float? headYaw = null,
         float? headPitch = null,
+        Vector3? pointAt = null,
         PlayerAnimationFlags animationFlags = PlayerAnimationFlags.None,
         GlideState glideState = GlideState.PropClosed) =>
         new (
@@ -36,6 +37,7 @@ public class PeerViewDiffTests
             SlideBlend: slideBlend,
             HeadYaw: headYaw,
             HeadPitch: headPitch,
+            PointAt: pointAt,
             AnimationFlags: animationFlags,
             GlideState: glideState);
 
@@ -280,6 +282,75 @@ public class PeerViewDiffTests
 
         Assert.That(delta.HasJumpCount, Is.True);
         Assert.That(delta.JumpCount, Is.EqualTo(3));
+    }
+
+    // ── PointAt tier gating + null-to-null ──────────────────────────
+
+    [Test]
+    public void CreateMessage_Tier0_IncludesPointAt()
+    {
+        PeerSnapshot from = MakeSnapshot();
+        PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: new Vector3(5f, 6f, 7f));
+
+        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_0);
+
+        Assert.That(delta.HasPointAtX, Is.True);
+        Assert.That(delta.HasPointAtY, Is.True);
+        Assert.That(delta.HasPointAtZ, Is.True);
+    }
+
+    [Test]
+    public void CreateMessage_Tier1_ExcludesPointAt()
+    {
+        PeerSnapshot from = MakeSnapshot();
+        PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: new Vector3(5f, 6f, 7f));
+
+        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_1);
+
+        Assert.That(delta.HasPointAtX, Is.False);
+        Assert.That(delta.HasPointAtY, Is.False);
+        Assert.That(delta.HasPointAtZ, Is.False);
+    }
+
+    [Test]
+    public void CreateMessage_PointAtBothNull_DoesNotSet()
+    {
+        PeerSnapshot from = MakeSnapshot(pointAt: null);
+        PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: null);
+
+        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_0);
+
+        Assert.That(delta.HasPointAtX, Is.False);
+        Assert.That(delta.HasPointAtY, Is.False);
+        Assert.That(delta.HasPointAtZ, Is.False);
+    }
+
+    [Test]
+    public void CreateMessage_PointAtToNull_DoesNotSet()
+    {
+        PeerSnapshot from = MakeSnapshot(pointAt: new Vector3(1f, 2f, 3f));
+        PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: null);
+
+        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_0);
+
+        // to.PointAt.HasValue is false → guard prevents setting. The POINTING_AT bit in
+        // state_flags is what tells the client to stop rendering the pointer indicator.
+        Assert.That(delta.HasPointAtX, Is.False);
+        Assert.That(delta.HasPointAtY, Is.False);
+        Assert.That(delta.HasPointAtZ, Is.False);
+    }
+
+    [Test]
+    public void CreateMessage_PointAtPartialChange_SetsOnlyChangedComponent()
+    {
+        PeerSnapshot from = MakeSnapshot(pointAt: new Vector3(1f, 2f, 3f));
+        PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: new Vector3(5f, 2f, 3f));
+
+        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_0);
+
+        Assert.That(delta.HasPointAtX, Is.True);
+        Assert.That(delta.HasPointAtY, Is.False);
+        Assert.That(delta.HasPointAtZ, Is.False);
     }
 
     // ── HeadYaw/HeadPitch null-to-null stays unset ──────────────────

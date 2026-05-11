@@ -118,7 +118,8 @@ public sealed class FieldValidator(
      && float.IsFinite(s.MovementBlend)
      && float.IsFinite(s.SlideBlend)
      && (!s.HasHeadYaw || float.IsFinite(s.HeadYaw))
-     && (!s.HasHeadPitch || float.IsFinite(s.HeadPitch));
+     && (!s.HasHeadPitch || float.IsFinite(s.HeadPitch))
+     && (s.PointAt == null || IsFinite(s.PointAt));
 
     private static bool IsFinite(Vector3Proto? v) =>
         v is not null && float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);

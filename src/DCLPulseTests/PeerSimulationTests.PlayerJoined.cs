@@ -37,6 +37,7 @@ public partial class PeerSimulationTests
             MovementBlend: 0.8f, SlideBlend: 0.2f,
             JumpCount: 0,
             HeadYaw: 0.3f, HeadPitch: -0.1f,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.Grounded,
             GlideState: GlideState.PropClosed);
 

@@ -370,6 +370,7 @@ public class SpatialHashAreaOfInterestTests
             SlideBlend: 0f,
             HeadYaw: null,
             HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
             Realm: realm));
@@ -381,6 +382,7 @@ public class SpatialHashAreaOfInterestTests
             GlobalPosition: position,
             RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
             Realm: realm);

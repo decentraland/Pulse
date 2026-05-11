@@ -60,6 +60,7 @@ public record struct PeerSnapshot(
     float SlideBlend,
     float? HeadYaw,
     float? HeadPitch,
+    Vector3? PointAt,
     PlayerAnimationFlags AnimationFlags,
     GlideState GlideState,
 

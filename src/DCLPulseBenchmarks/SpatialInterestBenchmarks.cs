@@ -100,6 +100,7 @@ public class SpatialInterestBenchmarks
                 GlobalPosition: pos,
                 RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
                 HeadYaw: null, HeadPitch: null,
+                PointAt: null,
                 AnimationFlags: PlayerAnimationFlags.None,
                 GlideState: GlideState.PropClosed,
                 Realm: "benchmark"));
@@ -111,6 +112,7 @@ public class SpatialInterestBenchmarks
             GlobalPosition: Vector3.Zero,
             RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
             Realm: "benchmark");

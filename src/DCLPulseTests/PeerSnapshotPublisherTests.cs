@@ -67,6 +67,7 @@ public class PeerSnapshotPublisherTests
             LocalPosition: default(Vector3), GlobalPosition: default(Vector3), Velocity: default(Vector3), RotationY: 0,
             JumpCount: 0, MovementBlend: 0, SlideBlend: 0,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: default(PlayerAnimationFlags), GlideState: default(GlideState)));
 
         // EmoteInput exposes only the fields the caller owns — StartSeq is bookkeeping that the
@@ -129,7 +130,7 @@ public class PeerSnapshotPublisherTests
     }
 
     [Test]
-    public void PublishTeleport_WithoutPriorSnapshot_DefaultsRotationAndHeadIK()
+    public void PublishTeleport_WithoutPriorSnapshot_DefaultsRotationAndHeadIKAndPointAt()
     {
         publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(1f, 0f, 1f), realm: "realm-a");
 
@@ -139,13 +140,14 @@ public class PeerSnapshotPublisherTests
         Assert.That(snapshot.RotationY, Is.EqualTo(0f));
         Assert.That(snapshot.HeadYaw, Is.Null);
         Assert.That(snapshot.HeadPitch, Is.Null);
+        Assert.That(snapshot.PointAt, Is.Null);
         Assert.That(snapshot.Velocity, Is.EqualTo(Vector3.Zero));
         Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
         Assert.That(snapshot.GlideState, Is.EqualTo(GlideState.PropClosed));
     }
 
     [Test]
-    public void PublishTeleport_WithPriorSnapshot_InheritsRotationAndHeadIK()
+    public void PublishTeleport_WithPriorSnapshot_InheritsRotationAndHeadIKAndPointAt()
     {
         snapshotBoard.Publish(peer, new PeerSnapshot(
             Seq: 0, ServerTick: NOW, Parcel: 0,
@@ -153,6 +155,7 @@ public class PeerSnapshotPublisherTests
             RotationY: 1.5f,
             JumpCount: 0, MovementBlend: 0, SlideBlend: 0,
             HeadYaw: 0.4f, HeadPitch: -0.2f,
+            PointAt: new Vector3(7f, 8f, 9f),
             AnimationFlags: default(PlayerAnimationFlags), GlideState: default(GlideState),
             Realm: "realm-prior"));
 
@@ -162,6 +165,7 @@ public class PeerSnapshotPublisherTests
         Assert.That(snapshot.RotationY, Is.EqualTo(1.5f));
         Assert.That(snapshot.HeadYaw, Is.EqualTo(0.4f));
         Assert.That(snapshot.HeadPitch, Is.EqualTo(-0.2f));
+        Assert.That(snapshot.PointAt, Is.EqualTo(new Vector3(7f, 8f, 9f)));
 
         Assert.That(snapshot.Realm, Is.EqualTo("realm-b"),
             "Realm is set from the teleport request — never inherited.");
@@ -175,6 +179,33 @@ public class PeerSnapshotPublisherTests
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(spatialGrid.GetPeers(snapshot.GlobalPosition), Does.Contain(peer));
+    }
+
+    [Test]
+    public void PublishFromPlayerState_PointAtWithoutPointingAtFlag_IsIgnored()
+    {
+        // point_at is "only meaningful when POINTING_AT is set in state_flags" per the proto.
+        // A client that sends a vector without the flag must be treated as not pointing.
+        PlayerState state = MakeState();
+        state.PointAt = new Decentraland.Common.Vector3 { X = 5f, Y = 6f, Z = 7f };
+
+        publisher.PublishFromPlayerState(peer, state);
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.PointAt, Is.Null);
+    }
+
+    [Test]
+    public void PublishFromPlayerState_PointAtWithPointingAtFlag_IsLifted()
+    {
+        PlayerState state = MakeState();
+        state.PointAt = new Decentraland.Common.Vector3 { X = 5f, Y = 6f, Z = 7f };
+        state.StateFlags = (uint)PlayerAnimationFlags.PointingAt;
+
+        publisher.PublishFromPlayerState(peer, state);
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.PointAt, Is.EqualTo(new Vector3(5f, 6f, 7f)));
     }
 
     private static PlayerState MakeState(int parcelIndex = 0, Vector3? position = null, Vector3? velocity = null)

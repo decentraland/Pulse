@@ -132,7 +132,7 @@ public class EmoteStartHandlerTests
         snapshotBoard.SetActive(peer);
 
         snapshotBoard.Publish(peer, new PeerSnapshot(Seq: 5, ServerTick: 4000, Parcel: 0,
-            default, default, default, 0f, 0, 0f, 0f, null, null, default, default));
+            default, default, default, 0f, 0, 0f, 0f, null, null, null, default, default));
 
         handler.Handle(peers, peer, CreateEmoteMessage("wave", durationMs: 3000));
 

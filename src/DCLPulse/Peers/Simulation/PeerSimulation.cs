@@ -750,6 +750,9 @@ public sealed class PeerSimulation : IPeerSimulation
         if (snapshot.HeadPitch.HasValue)
             state.HeadPitch = snapshot.HeadPitch.Value;
 
+        if (snapshot.PointAt.HasValue)
+            state.PointAt = new Vector3 { X = snapshot.PointAt.Value.X, Y = snapshot.PointAt.Value.Y, Z = snapshot.PointAt.Value.Z };
+
         return state;
     }
 }

@@ -30,7 +30,7 @@ namespace Decentraland.Pulse {
             "ChFIYW5kc2hha2VSZXNwb25zZRIPCgdzdWNjZXNzGAEgASgIEhIKBWVycm9y",
             "GAIgASgJSACIAQFCCAoGX2Vycm9yIkUKHlBsYXllclByb2ZpbGVWZXJzaW9u",
             "c0Fubm91bmNlZBISCgpzdWJqZWN0X2lkGAEgASgNEg8KB3ZlcnNpb24YAiAB",
-            "KAUiiwcKFVBsYXllclN0YXRlRGVsdGFUaWVyMBISCgpzdWJqZWN0X2lkGAEg",
+            "KAUiuQgKFVBsYXllclN0YXRlRGVsdGFUaWVyMBISCgpzdWJqZWN0X2lkGAEg",
             "ASgNEhQKDGJhc2VsaW5lX3NlcRgCIAEoDRIPCgduZXdfc2VxGAMgASgNEhMK",
             "C3NlcnZlcl90aWNrGAQgASgNEhkKDHBhcmNlbF9pbmRleBgFIAEoBUgAiAEB",
             "EiQKCnBvc2l0aW9uX3gYBiABKA1CC4q1GAcVAACAQRgISAGIAQESJAoKcG9z",
@@ -45,49 +45,53 @@ namespace Decentraland.Pulse {
             "ZF9waXRjaBgQIAEoDUILirUYBxUAADRDGAZIC4gBARIYCgtzdGF0ZV9mbGFn",
             "cxgRIAEoDUgMiAEBEjgKC2dsaWRlX3N0YXRlGBIgASgOMh4uZGVjZW50cmFs",
             "YW5kLnB1bHNlLkdsaWRlU3RhdGVIDYgBARIXCgpqdW1wX2NvdW50GBMgASgF",
-            "SA6IAQFCDwoNX3BhcmNlbF9pbmRleEINCgtfcG9zaXRpb25feEINCgtfcG9z",
-            "aXRpb25feUINCgtfcG9zaXRpb25fekINCgtfdmVsb2NpdHlfeEINCgtfdmVs",
-            "b2NpdHlfeUINCgtfdmVsb2NpdHlfekINCgtfcm90YXRpb25feUIRCg9fbW92",
-            "ZW1lbnRfYmxlbmRCDgoMX3NsaWRlX2JsZW5kQgsKCV9oZWFkX3lhd0INCgtf",
-            "aGVhZF9waXRjaEIOCgxfc3RhdGVfZmxhZ3NCDgoMX2dsaWRlX3N0YXRlQg0K",
-            "C19qdW1wX2NvdW50InwKD1BsYXllclN0YXRlRnVsbBISCgpzdWJqZWN0X2lk",
-            "GAEgASgNEhAKCHNlcXVlbmNlGAIgASgNEhMKC3NlcnZlcl90aWNrGAMgASgN",
-            "Ei4KBXN0YXRlGAQgASgLMh8uZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0",
-            "YXRlImwKDFBsYXllckpvaW5lZBIPCgd1c2VyX2lkGAEgASgJEhcKD3Byb2Zp",
-            "bGVfdmVyc2lvbhgCIAEoBRIyCgVzdGF0ZRgDIAEoCzIjLmRlY2VudHJhbGFu",
-            "ZC5wdWxzZS5QbGF5ZXJTdGF0ZUZ1bGwiIAoKUGxheWVyTGVmdBISCgpzdWJq",
-            "ZWN0X2lkGAEgASgNIpIBCgxFbW90ZVN0YXJ0ZWQSEgoKc3ViamVjdF9pZBgB",
-            "IAEoDRIQCghzZXF1ZW5jZRgCIAEoDRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIQ",
-            "CghlbW90ZV9pZBgEIAEoCRI1CgxwbGF5ZXJfc3RhdGUYBSABKAsyHy5kZWNl",
-            "bnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGUitQEKDEVtb3RlU3RvcHBlZBIS",
-            "CgpzdWJqZWN0X2lkGAEgASgNEhMKC3NlcnZlcl90aWNrGAIgASgNEjMKBnJl",
-            "YXNvbhgDIAEoDjIjLmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0b3BSZWFz",
-            "b24SEAoIc2VxdWVuY2UYBCABKA0SNQoMcGxheWVyX3N0YXRlGAUgASgLMh8u",
-            "ZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlIn4KEVRlbGVwb3J0UGVy",
-            "Zm9ybWVkEhIKCnN1YmplY3RfaWQYASABKA0SEAoIc2VxdWVuY2UYAiABKA0S",
-            "EwoLc2VydmVyX3RpY2sYAyABKA0SLgoFc3RhdGUYBCABKAsyHy5kZWNlbnRy",
-            "YWxhbmQucHVsc2UuUGxheWVyU3RhdGUi5gQKDVNlcnZlck1lc3NhZ2USOgoJ",
-            "aGFuZHNoYWtlGAEgASgLMiUuZGVjZW50cmFsYW5kLnB1bHNlLkhhbmRzaGFr",
-            "ZVJlc3BvbnNlSAASQAoRcGxheWVyX3N0YXRlX2Z1bGwYAiABKAsyIy5kZWNl",
-            "bnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVGdWxsSAASRwoScGxheWVyX3N0",
-            "YXRlX2RlbHRhGAMgASgLMikuZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0",
-            "YXRlRGVsdGFUaWVyMEgAEjkKDXBsYXllcl9qb2luZWQYBCABKAsyIC5kZWNl",
-            "bnRyYWxhbmQucHVsc2UuUGxheWVySm9pbmVkSAASNQoLcGxheWVyX2xlZnQY",
-            "BSABKAsyHi5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyTGVmdEgAEl4KIHBs",
-            "YXllcl9wcm9maWxlX3ZlcnNpb25fYW5ub3VuY2VkGAYgASgLMjIuZGVjZW50",
-            "cmFsYW5kLnB1bHNlLlBsYXllclByb2ZpbGVWZXJzaW9uc0Fubm91bmNlZEgA",
-            "EjkKDWVtb3RlX3N0YXJ0ZWQYByABKAsyIC5kZWNlbnRyYWxhbmQucHVsc2Uu",
-            "RW1vdGVTdGFydGVkSAASOQoNZW1vdGVfc3RvcHBlZBgIIAEoCzIgLmRlY2Vu",
-            "dHJhbGFuZC5wdWxzZS5FbW90ZVN0b3BwZWRIABI7Cgp0ZWxlcG9ydGVkGAkg",
-            "ASgLMiUuZGVjZW50cmFsYW5kLnB1bHNlLlRlbGVwb3J0UGVyZm9ybWVkSABC",
-            "CQoHbWVzc2FnZSovCg9FbW90ZVN0b3BSZWFzb24SDQoJQ09NUExFVEVEEAAS",
-            "DQoJQ0FOQ0VMTEVEEAFiBnByb3RvMw=="));
+            "SA6IAQESKQoKcG9pbnRfYXRfeBgUIAEoDUIQirUYDA0AAMjCFQAAyEIYB0gP",
+            "iAEBEikKCnBvaW50X2F0X3kYFSABKA1CEIq1GAwNAADIwhUAAMhCGAdIEIgB",
+            "ARIpCgpwb2ludF9hdF96GBYgASgNQhCKtRgMDQAAyMIVAADIQhgHSBGIAQFC",
+            "DwoNX3BhcmNlbF9pbmRleEINCgtfcG9zaXRpb25feEINCgtfcG9zaXRpb25f",
+            "eUINCgtfcG9zaXRpb25fekINCgtfdmVsb2NpdHlfeEINCgtfdmVsb2NpdHlf",
+            "eUINCgtfdmVsb2NpdHlfekINCgtfcm90YXRpb25feUIRCg9fbW92ZW1lbnRf",
+            "YmxlbmRCDgoMX3NsaWRlX2JsZW5kQgsKCV9oZWFkX3lhd0INCgtfaGVhZF9w",
+            "aXRjaEIOCgxfc3RhdGVfZmxhZ3NCDgoMX2dsaWRlX3N0YXRlQg0KC19qdW1w",
+            "X2NvdW50Qg0KC19wb2ludF9hdF94Qg0KC19wb2ludF9hdF95Qg0KC19wb2lu",
+            "dF9hdF96InwKD1BsYXllclN0YXRlRnVsbBISCgpzdWJqZWN0X2lkGAEgASgN",
+            "EhAKCHNlcXVlbmNlGAIgASgNEhMKC3NlcnZlcl90aWNrGAMgASgNEi4KBXN0",
+            "YXRlGAQgASgLMh8uZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlImwK",
+            "DFBsYXllckpvaW5lZBIPCgd1c2VyX2lkGAEgASgJEhcKD3Byb2ZpbGVfdmVy",
+            "c2lvbhgCIAEoBRIyCgVzdGF0ZRgDIAEoCzIjLmRlY2VudHJhbGFuZC5wdWxz",
+            "ZS5QbGF5ZXJTdGF0ZUZ1bGwiIAoKUGxheWVyTGVmdBISCgpzdWJqZWN0X2lk",
+            "GAEgASgNIpIBCgxFbW90ZVN0YXJ0ZWQSEgoKc3ViamVjdF9pZBgBIAEoDRIQ",
+            "CghzZXF1ZW5jZRgCIAEoDRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIQCghlbW90",
+            "ZV9pZBgEIAEoCRI1CgxwbGF5ZXJfc3RhdGUYBSABKAsyHy5kZWNlbnRyYWxh",
+            "bmQucHVsc2UuUGxheWVyU3RhdGUitQEKDEVtb3RlU3RvcHBlZBISCgpzdWJq",
+            "ZWN0X2lkGAEgASgNEhMKC3NlcnZlcl90aWNrGAIgASgNEjMKBnJlYXNvbhgD",
+            "IAEoDjIjLmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0b3BSZWFzb24SEAoI",
+            "c2VxdWVuY2UYBCABKA0SNQoMcGxheWVyX3N0YXRlGAUgASgLMh8uZGVjZW50",
+            "cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlIn4KEVRlbGVwb3J0UGVyZm9ybWVk",
+            "EhIKCnN1YmplY3RfaWQYASABKA0SEAoIc2VxdWVuY2UYAiABKA0SEwoLc2Vy",
+            "dmVyX3RpY2sYAyABKA0SLgoFc3RhdGUYBCABKAsyHy5kZWNlbnRyYWxhbmQu",
+            "cHVsc2UuUGxheWVyU3RhdGUi5gQKDVNlcnZlck1lc3NhZ2USOgoJaGFuZHNo",
+            "YWtlGAEgASgLMiUuZGVjZW50cmFsYW5kLnB1bHNlLkhhbmRzaGFrZVJlc3Bv",
+            "bnNlSAASQAoRcGxheWVyX3N0YXRlX2Z1bGwYAiABKAsyIy5kZWNlbnRyYWxh",
+            "bmQucHVsc2UuUGxheWVyU3RhdGVGdWxsSAASRwoScGxheWVyX3N0YXRlX2Rl",
+            "bHRhGAMgASgLMikuZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlRGVs",
+            "dGFUaWVyMEgAEjkKDXBsYXllcl9qb2luZWQYBCABKAsyIC5kZWNlbnRyYWxh",
+            "bmQucHVsc2UuUGxheWVySm9pbmVkSAASNQoLcGxheWVyX2xlZnQYBSABKAsy",
+            "Hi5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyTGVmdEgAEl4KIHBsYXllcl9w",
+            "cm9maWxlX3ZlcnNpb25fYW5ub3VuY2VkGAYgASgLMjIuZGVjZW50cmFsYW5k",
+            "LnB1bHNlLlBsYXllclByb2ZpbGVWZXJzaW9uc0Fubm91bmNlZEgAEjkKDWVt",
+            "b3RlX3N0YXJ0ZWQYByABKAsyIC5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVT",
+            "dGFydGVkSAASOQoNZW1vdGVfc3RvcHBlZBgIIAEoCzIgLmRlY2VudHJhbGFu",
+            "ZC5wdWxzZS5FbW90ZVN0b3BwZWRIABI7Cgp0ZWxlcG9ydGVkGAkgASgLMiUu",
+            "ZGVjZW50cmFsYW5kLnB1bHNlLlRlbGVwb3J0UGVyZm9ybWVkSABCCQoHbWVz",
+            "c2FnZSovCg9FbW90ZVN0b3BSZWFzb24SDQoJQ09NUExFVEVEEAASDQoJQ0FO",
+            "Q0VMTEVEEAFiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Common.OptionsReflection.Descriptor, global::Decentraland.Pulse.PulseSharedReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Decentraland.Pulse.EmoteStopReason), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.HandshakeResponse), global::Decentraland.Pulse.HandshakeResponse.Parser, new[]{ "Success", "Error" }, new[]{ "Error" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerProfileVersionsAnnounced), global::Decentraland.Pulse.PlayerProfileVersionsAnnounced.Parser, new[]{ "SubjectId", "Version" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateDeltaTier0), global::Decentraland.Pulse.PlayerStateDeltaTier0.Parser, new[]{ "SubjectId", "BaselineSeq", "NewSeq", "ServerTick", "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, new[]{ "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateDeltaTier0), global::Decentraland.Pulse.PlayerStateDeltaTier0.Parser, new[]{ "SubjectId", "BaselineSeq", "NewSeq", "ServerTick", "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount", "PointAtX", "PointAtY", "PointAtZ" }, new[]{ "ParcelIndex", "PositionX", "PositionY", "PositionZ", "VelocityX", "VelocityY", "VelocityZ", "RotationY", "MovementBlend", "SlideBlend", "HeadYaw", "HeadPitch", "StateFlags", "GlideState", "JumpCount", "PointAtX", "PointAtY", "PointAtZ" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerStateFull), global::Decentraland.Pulse.PlayerStateFull.Parser, new[]{ "SubjectId", "Sequence", "ServerTick", "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerJoined), global::Decentraland.Pulse.PlayerJoined.Parser, new[]{ "UserId", "ProfileVersion", "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PlayerLeft), global::Decentraland.Pulse.PlayerLeft.Parser, new[]{ "SubjectId" }, null, null, null, null),
@@ -655,6 +659,9 @@ namespace Decentraland.Pulse {
       stateFlags_ = other.stateFlags_;
       glideState_ = other.glideState_;
       jumpCount_ = other.jumpCount_;
+      pointAtX_ = other.pointAtX_;
+      pointAtY_ = other.pointAtY_;
+      pointAtZ_ = other.pointAtZ_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1134,6 +1141,93 @@ namespace Decentraland.Pulse {
       _hasBits0 &= ~16384;
     }
 
+    /// <summary>Field number for the "point_at_x" field.</summary>
+    public const int PointAtXFieldNumber = 20;
+    private readonly static uint PointAtXDefaultValue = 0;
+
+    private uint pointAtX_;
+    /// <summary>
+    /// Hit position the player is pointing at, expressed relative to `position`.
+    /// Only meaningful when POINTING_AT is set in `state_flags`. Range matches the
+    /// gameplay raycast cutoff (CharacterControllerSettings.PointAtMaxDistance = 100m);
+    /// 7 bits keep each axis in a 1-byte varint at the cost of ~1.6m step size.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint PointAtX {
+      get { if ((_hasBits0 & 32768) != 0) { return pointAtX_; } else { return PointAtXDefaultValue; } }
+      set {
+        _hasBits0 |= 32768;
+        pointAtX_ = value;
+      }
+    }
+    /// <summary>Gets whether the "point_at_x" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasPointAtX {
+      get { return (_hasBits0 & 32768) != 0; }
+    }
+    /// <summary>Clears the value of the "point_at_x" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearPointAtX() {
+      _hasBits0 &= ~32768;
+    }
+
+    /// <summary>Field number for the "point_at_y" field.</summary>
+    public const int PointAtYFieldNumber = 21;
+    private readonly static uint PointAtYDefaultValue = 0;
+
+    private uint pointAtY_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint PointAtY {
+      get { if ((_hasBits0 & 65536) != 0) { return pointAtY_; } else { return PointAtYDefaultValue; } }
+      set {
+        _hasBits0 |= 65536;
+        pointAtY_ = value;
+      }
+    }
+    /// <summary>Gets whether the "point_at_y" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasPointAtY {
+      get { return (_hasBits0 & 65536) != 0; }
+    }
+    /// <summary>Clears the value of the "point_at_y" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearPointAtY() {
+      _hasBits0 &= ~65536;
+    }
+
+    /// <summary>Field number for the "point_at_z" field.</summary>
+    public const int PointAtZFieldNumber = 22;
+    private readonly static uint PointAtZDefaultValue = 0;
+
+    private uint pointAtZ_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint PointAtZ {
+      get { if ((_hasBits0 & 131072) != 0) { return pointAtZ_; } else { return PointAtZDefaultValue; } }
+      set {
+        _hasBits0 |= 131072;
+        pointAtZ_ = value;
+      }
+    }
+    /// <summary>Gets whether the "point_at_z" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasPointAtZ {
+      get { return (_hasBits0 & 131072) != 0; }
+    }
+    /// <summary>Clears the value of the "point_at_z" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearPointAtZ() {
+      _hasBits0 &= ~131072;
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1168,6 +1262,9 @@ namespace Decentraland.Pulse {
       if (StateFlags != other.StateFlags) return false;
       if (GlideState != other.GlideState) return false;
       if (JumpCount != other.JumpCount) return false;
+      if (PointAtX != other.PointAtX) return false;
+      if (PointAtY != other.PointAtY) return false;
+      if (PointAtZ != other.PointAtZ) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1194,6 +1291,9 @@ namespace Decentraland.Pulse {
       if (HasStateFlags) hash ^= StateFlags.GetHashCode();
       if (HasGlideState) hash ^= GlideState.GetHashCode();
       if (HasJumpCount) hash ^= JumpCount.GetHashCode();
+      if (HasPointAtX) hash ^= PointAtX.GetHashCode();
+      if (HasPointAtY) hash ^= PointAtY.GetHashCode();
+      if (HasPointAtZ) hash ^= PointAtZ.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1288,6 +1388,18 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(152, 1);
         output.WriteInt32(JumpCount);
       }
+      if (HasPointAtX) {
+        output.WriteRawTag(160, 1);
+        output.WriteUInt32(PointAtX);
+      }
+      if (HasPointAtY) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt32(PointAtY);
+      }
+      if (HasPointAtZ) {
+        output.WriteRawTag(176, 1);
+        output.WriteUInt32(PointAtZ);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1374,6 +1486,18 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(152, 1);
         output.WriteInt32(JumpCount);
       }
+      if (HasPointAtX) {
+        output.WriteRawTag(160, 1);
+        output.WriteUInt32(PointAtX);
+      }
+      if (HasPointAtY) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt32(PointAtY);
+      }
+      if (HasPointAtZ) {
+        output.WriteRawTag(176, 1);
+        output.WriteUInt32(PointAtZ);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1440,6 +1564,15 @@ namespace Decentraland.Pulse {
       }
       if (HasJumpCount) {
         size += 2 + pb::CodedOutputStream.ComputeInt32Size(JumpCount);
+      }
+      if (HasPointAtX) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(PointAtX);
+      }
+      if (HasPointAtY) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(PointAtY);
+      }
+      if (HasPointAtZ) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(PointAtZ);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1509,6 +1642,15 @@ namespace Decentraland.Pulse {
       }
       if (other.HasJumpCount) {
         JumpCount = other.JumpCount;
+      }
+      if (other.HasPointAtX) {
+        PointAtX = other.PointAtX;
+      }
+      if (other.HasPointAtY) {
+        PointAtY = other.PointAtY;
+      }
+      if (other.HasPointAtZ) {
+        PointAtZ = other.PointAtZ;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1605,6 +1747,18 @@ namespace Decentraland.Pulse {
             JumpCount = input.ReadInt32();
             break;
           }
+          case 160: {
+            PointAtX = input.ReadUInt32();
+            break;
+          }
+          case 168: {
+            PointAtY = input.ReadUInt32();
+            break;
+          }
+          case 176: {
+            PointAtZ = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -1698,6 +1852,18 @@ namespace Decentraland.Pulse {
           }
           case 152: {
             JumpCount = input.ReadInt32();
+            break;
+          }
+          case 160: {
+            PointAtX = input.ReadUInt32();
+            break;
+          }
+          case 168: {
+            PointAtY = input.ReadUInt32();
+            break;
+          }
+          case 176: {
+            PointAtZ = input.ReadUInt32();
             break;
           }
         }

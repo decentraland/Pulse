@@ -20,6 +20,7 @@ public partial class PeerSimulationTests
             GlobalPosition: globalPosition,
             RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
             HeadYaw: null, HeadPitch: null,
+            PointAt: null,
             AnimationFlags: PlayerAnimationFlags.Grounded,
             GlideState: GlideState.PropClosed,
             IsTeleport: true));

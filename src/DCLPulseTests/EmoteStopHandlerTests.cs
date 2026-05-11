@@ -48,7 +48,7 @@ public class EmoteStopHandlerTests
         // Publish an emote snapshot first
         snapshotBoard.Publish(peer, new PeerSnapshot(
             Seq: 1, ServerTick: START_TIME, Parcel: 0,
-            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, default(PlayerAnimationFlags), default(GlideState),
+            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, null, default(PlayerAnimationFlags), default(GlideState),
             Emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
@@ -70,7 +70,7 @@ public class EmoteStopHandlerTests
         // Publish a normal snapshot (no emote)
         snapshotBoard.Publish(peer, new PeerSnapshot(
             Seq: 1, ServerTick: START_TIME, Parcel: 0,
-            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, default(PlayerAnimationFlags), default(GlideState)));
+            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, null, default(PlayerAnimationFlags), default(GlideState)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 
@@ -88,7 +88,7 @@ public class EmoteStopHandlerTests
         // Publish an emote snapshot
         snapshotBoard.Publish(peer, new PeerSnapshot(
             Seq: 1, ServerTick: START_TIME, Parcel: 0,
-            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, default(PlayerAnimationFlags), default(GlideState),
+            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, null, default(PlayerAnimationFlags), default(GlideState),
             Emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });

@@ -50,9 +50,17 @@ public class PlayerStateInputHandler(
         && FloatEquals(current.SlideBlend, incoming.SlideBlend)
         && FloatEquals(current.HeadYaw, incoming.GetHeadYaw(), 0.5f)
         && FloatEquals(current.HeadPitch, incoming.GetHeadPitch(), 0.5f)
+        && Vector3Equals(current.PointAt, incoming.GetPointAt(), 0.5f)
         && current.AnimationFlags == (PlayerAnimationFlags)incoming.StateFlags
         && current.GlideState == incoming.GlideState
         // Ensures that the first movement input after a teleport is always published,
         // even if the position/state values happen to be identical
         && !current.IsTeleport;
+
+    private static bool Vector3Equals(Vector3? a, Vector3? b, float tolerance) =>
+        (!a.HasValue && !b.HasValue)
+        || (a.HasValue && b.HasValue
+            && FloatEquals(a.Value.X, b.Value.X, tolerance)
+            && FloatEquals(a.Value.Y, b.Value.Y, tolerance)
+            && FloatEquals(a.Value.Z, b.Value.Z, tolerance));
 }

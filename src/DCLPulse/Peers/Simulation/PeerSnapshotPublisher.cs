@@ -65,6 +65,7 @@ public sealed class PeerSnapshotPublisher(
             SlideBlend: state.SlideBlend,
             HeadYaw: state.GetHeadYaw(),
             HeadPitch: state.GetHeadPitch(),
+            PointAt: state.GetPointAt(),
             AnimationFlags: (PlayerAnimationFlags)state.StateFlags,
             GlideState: state.GlideState,
             Emote: emoteState);
@@ -89,12 +90,14 @@ public sealed class PeerSnapshotPublisher(
 
         float rotationY = 0;
         float? headYaw = null, headPitch = null;
+        Vector3? pointAt = null;
 
         if (snapshotBoard.TryRead(from, out PeerSnapshot prev))
         {
             rotationY = prev.RotationY;
             headYaw = prev.HeadYaw;
             headPitch = prev.HeadPitch;
+            pointAt = prev.PointAt;
         }
 
         var snapshot = new PeerSnapshot(
@@ -110,6 +113,7 @@ public sealed class PeerSnapshotPublisher(
             SlideBlend: 0,
             HeadYaw: headYaw,
             HeadPitch: headPitch,
+            PointAt: pointAt,
             AnimationFlags: PlayerAnimationFlags.Grounded,
             GlideState: GlideState.PropClosed,
             IsTeleport: true,

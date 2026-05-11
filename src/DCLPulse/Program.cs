@@ -114,8 +114,11 @@ builder.Services.AddSingleton<IPeerIndexAllocator>(sp =>
     return new PeerIndexAllocator(transportOptions.MaxPeers);
 });
 
-builder.Services.Configure<SpatialHashAreaOfInterestOptions>(
-    builder.Configuration.GetSection(SpatialHashAreaOfInterestOptions.SECTION_NAME));
+builder.Services.AddSingleton<IValidateOptions<SpatialHashAreaOfInterestOptions>, SpatialHashAreaOfInterestOptionsValidator>();
+
+builder.Services.AddOptions<SpatialHashAreaOfInterestOptions>()
+    .Bind(builder.Configuration.GetSection(SpatialHashAreaOfInterestOptions.SECTION_NAME))
+    .ValidateOnStart();
 
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SpatialHashAreaOfInterestOptions>>().Value);
 

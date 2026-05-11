@@ -26,6 +26,7 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
     private readonly float tier1Sq;
     private readonly float maxDistanceSq;
     private readonly float cellSize;
+    private readonly int scanCellRadius;
 
     public SpatialHashAreaOfInterest(SpatialGrid grid,
         SnapshotBoard snapshotBoard,
@@ -39,6 +40,7 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
         tier1Sq = options.Tier1Radius * options.Tier1Radius;
         maxDistanceSq = options.MaxRadius * options.MaxRadius;
         cellSize = options.CellSize;
+        scanCellRadius = options.ScanCellRadius;
     }
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
@@ -50,8 +52,8 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
 
         Vector3 observerPos = observerSnapshot.GlobalPosition;
 
-        for (int dx = -1; dx <= 1; dx++)
-            for (int dz = -1; dz <= 1; dz++)
+        for (int dx = -scanCellRadius; dx <= scanCellRadius; dx++)
+            for (int dz = -scanCellRadius; dz <= scanCellRadius; dz++)
         {
             var cell = new Vector3(observerPos.X + (dx * cellSize), 0, observerPos.Z + (dz * cellSize));
 

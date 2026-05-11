@@ -30,7 +30,7 @@ namespace Decentraland.Pulse {
             "ChFIYW5kc2hha2VSZXNwb25zZRIPCgdzdWNjZXNzGAEgASgIEhIKBWVycm9y",
             "GAIgASgJSACIAQFCCAoGX2Vycm9yIkUKHlBsYXllclByb2ZpbGVWZXJzaW9u",
             "c0Fubm91bmNlZBISCgpzdWJqZWN0X2lkGAEgASgNEg8KB3ZlcnNpb24YAiAB",
-            "KAUiuQgKFVBsYXllclN0YXRlRGVsdGFUaWVyMBISCgpzdWJqZWN0X2lkGAEg",
+            "KAUitAgKFVBsYXllclN0YXRlRGVsdGFUaWVyMBISCgpzdWJqZWN0X2lkGAEg",
             "ASgNEhQKDGJhc2VsaW5lX3NlcRgCIAEoDRIPCgduZXdfc2VxGAMgASgNEhMK",
             "C3NlcnZlcl90aWNrGAQgASgNEhkKDHBhcmNlbF9pbmRleBgFIAEoBUgAiAEB",
             "EiQKCnBvc2l0aW9uX3gYBiABKA1CC4q1GAcVAACAQRgISAGIAQESJAoKcG9z",
@@ -45,47 +45,47 @@ namespace Decentraland.Pulse {
             "ZF9waXRjaBgQIAEoDUILirUYBxUAADRDGAZIC4gBARIYCgtzdGF0ZV9mbGFn",
             "cxgRIAEoDUgMiAEBEjgKC2dsaWRlX3N0YXRlGBIgASgOMh4uZGVjZW50cmFs",
             "YW5kLnB1bHNlLkdsaWRlU3RhdGVIDYgBARIXCgpqdW1wX2NvdW50GBMgASgF",
-            "SA6IAQESKQoKcG9pbnRfYXRfeBgUIAEoDUIQirUYDA0AAMjCFQAAyEIYB0gP",
-            "iAEBEikKCnBvaW50X2F0X3kYFSABKA1CEIq1GAwNAADIwhUAAMhCGAdIEIgB",
-            "ARIpCgpwb2ludF9hdF96GBYgASgNQhCKtRgMDQAAyMIVAADIQhgHSBGIAQFC",
-            "DwoNX3BhcmNlbF9pbmRleEINCgtfcG9zaXRpb25feEINCgtfcG9zaXRpb25f",
-            "eUINCgtfcG9zaXRpb25fekINCgtfdmVsb2NpdHlfeEINCgtfdmVsb2NpdHlf",
-            "eUINCgtfdmVsb2NpdHlfekINCgtfcm90YXRpb25feUIRCg9fbW92ZW1lbnRf",
-            "YmxlbmRCDgoMX3NsaWRlX2JsZW5kQgsKCV9oZWFkX3lhd0INCgtfaGVhZF9w",
-            "aXRjaEIOCgxfc3RhdGVfZmxhZ3NCDgoMX2dsaWRlX3N0YXRlQg0KC19qdW1w",
-            "X2NvdW50Qg0KC19wb2ludF9hdF94Qg0KC19wb2ludF9hdF95Qg0KC19wb2lu",
-            "dF9hdF96InwKD1BsYXllclN0YXRlRnVsbBISCgpzdWJqZWN0X2lkGAEgASgN",
-            "EhAKCHNlcXVlbmNlGAIgASgNEhMKC3NlcnZlcl90aWNrGAMgASgNEi4KBXN0",
-            "YXRlGAQgASgLMh8uZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlImwK",
-            "DFBsYXllckpvaW5lZBIPCgd1c2VyX2lkGAEgASgJEhcKD3Byb2ZpbGVfdmVy",
-            "c2lvbhgCIAEoBRIyCgVzdGF0ZRgDIAEoCzIjLmRlY2VudHJhbGFuZC5wdWxz",
-            "ZS5QbGF5ZXJTdGF0ZUZ1bGwiIAoKUGxheWVyTGVmdBISCgpzdWJqZWN0X2lk",
-            "GAEgASgNIpIBCgxFbW90ZVN0YXJ0ZWQSEgoKc3ViamVjdF9pZBgBIAEoDRIQ",
-            "CghzZXF1ZW5jZRgCIAEoDRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIQCghlbW90",
-            "ZV9pZBgEIAEoCRI1CgxwbGF5ZXJfc3RhdGUYBSABKAsyHy5kZWNlbnRyYWxh",
-            "bmQucHVsc2UuUGxheWVyU3RhdGUitQEKDEVtb3RlU3RvcHBlZBISCgpzdWJq",
-            "ZWN0X2lkGAEgASgNEhMKC3NlcnZlcl90aWNrGAIgASgNEjMKBnJlYXNvbhgD",
-            "IAEoDjIjLmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0b3BSZWFzb24SEAoI",
-            "c2VxdWVuY2UYBCABKA0SNQoMcGxheWVyX3N0YXRlGAUgASgLMh8uZGVjZW50",
-            "cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlIn4KEVRlbGVwb3J0UGVyZm9ybWVk",
-            "EhIKCnN1YmplY3RfaWQYASABKA0SEAoIc2VxdWVuY2UYAiABKA0SEwoLc2Vy",
-            "dmVyX3RpY2sYAyABKA0SLgoFc3RhdGUYBCABKAsyHy5kZWNlbnRyYWxhbmQu",
-            "cHVsc2UuUGxheWVyU3RhdGUi5gQKDVNlcnZlck1lc3NhZ2USOgoJaGFuZHNo",
-            "YWtlGAEgASgLMiUuZGVjZW50cmFsYW5kLnB1bHNlLkhhbmRzaGFrZVJlc3Bv",
-            "bnNlSAASQAoRcGxheWVyX3N0YXRlX2Z1bGwYAiABKAsyIy5kZWNlbnRyYWxh",
-            "bmQucHVsc2UuUGxheWVyU3RhdGVGdWxsSAASRwoScGxheWVyX3N0YXRlX2Rl",
-            "bHRhGAMgASgLMikuZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlRGVs",
-            "dGFUaWVyMEgAEjkKDXBsYXllcl9qb2luZWQYBCABKAsyIC5kZWNlbnRyYWxh",
-            "bmQucHVsc2UuUGxheWVySm9pbmVkSAASNQoLcGxheWVyX2xlZnQYBSABKAsy",
-            "Hi5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyTGVmdEgAEl4KIHBsYXllcl9w",
-            "cm9maWxlX3ZlcnNpb25fYW5ub3VuY2VkGAYgASgLMjIuZGVjZW50cmFsYW5k",
-            "LnB1bHNlLlBsYXllclByb2ZpbGVWZXJzaW9uc0Fubm91bmNlZEgAEjkKDWVt",
-            "b3RlX3N0YXJ0ZWQYByABKAsyIC5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVT",
-            "dGFydGVkSAASOQoNZW1vdGVfc3RvcHBlZBgIIAEoCzIgLmRlY2VudHJhbGFu",
-            "ZC5wdWxzZS5FbW90ZVN0b3BwZWRIABI7Cgp0ZWxlcG9ydGVkGAkgASgLMiUu",
-            "ZGVjZW50cmFsYW5kLnB1bHNlLlRlbGVwb3J0UGVyZm9ybWVkSABCCQoHbWVz",
-            "c2FnZSovCg9FbW90ZVN0b3BSZWFzb24SDQoJQ09NUExFVEVEEAASDQoJQ0FO",
-            "Q0VMTEVEEAFiBnByb3RvMw=="));
+            "SA6IAQESKQoKcG9pbnRfYXRfeBgUIAEoDUIQirUYDA0AgDvFFQCAO0UYEUgP",
+            "iAEBEiQKCnBvaW50X2F0X3kYFSABKA1CC4q1GAcVAABIQxgHSBCIAQESKQoK",
+            "cG9pbnRfYXRfehgWIAEoDUIQirUYDA0AgDvFFQCAO0UYEUgRiAEBQg8KDV9w",
+            "YXJjZWxfaW5kZXhCDQoLX3Bvc2l0aW9uX3hCDQoLX3Bvc2l0aW9uX3lCDQoL",
+            "X3Bvc2l0aW9uX3pCDQoLX3ZlbG9jaXR5X3hCDQoLX3ZlbG9jaXR5X3lCDQoL",
+            "X3ZlbG9jaXR5X3pCDQoLX3JvdGF0aW9uX3lCEQoPX21vdmVtZW50X2JsZW5k",
+            "Qg4KDF9zbGlkZV9ibGVuZEILCglfaGVhZF95YXdCDQoLX2hlYWRfcGl0Y2hC",
+            "DgoMX3N0YXRlX2ZsYWdzQg4KDF9nbGlkZV9zdGF0ZUINCgtfanVtcF9jb3Vu",
+            "dEINCgtfcG9pbnRfYXRfeEINCgtfcG9pbnRfYXRfeUINCgtfcG9pbnRfYXRf",
+            "eiJ8Cg9QbGF5ZXJTdGF0ZUZ1bGwSEgoKc3ViamVjdF9pZBgBIAEoDRIQCghz",
+            "ZXF1ZW5jZRgCIAEoDRITCgtzZXJ2ZXJfdGljaxgDIAEoDRIuCgVzdGF0ZRgE",
+            "IAEoCzIfLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZSJsCgxQbGF5",
+            "ZXJKb2luZWQSDwoHdXNlcl9pZBgBIAEoCRIXCg9wcm9maWxlX3ZlcnNpb24Y",
+            "AiABKAUSMgoFc3RhdGUYAyABKAsyIy5kZWNlbnRyYWxhbmQucHVsc2UuUGxh",
+            "eWVyU3RhdGVGdWxsIiAKClBsYXllckxlZnQSEgoKc3ViamVjdF9pZBgBIAEo",
+            "DSKSAQoMRW1vdGVTdGFydGVkEhIKCnN1YmplY3RfaWQYASABKA0SEAoIc2Vx",
+            "dWVuY2UYAiABKA0SEwoLc2VydmVyX3RpY2sYAyABKA0SEAoIZW1vdGVfaWQY",
+            "BCABKAkSNQoMcGxheWVyX3N0YXRlGAUgASgLMh8uZGVjZW50cmFsYW5kLnB1",
+            "bHNlLlBsYXllclN0YXRlIrUBCgxFbW90ZVN0b3BwZWQSEgoKc3ViamVjdF9p",
+            "ZBgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoDRIzCgZyZWFzb24YAyABKA4y",
+            "Iy5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVTdG9wUmVhc29uEhAKCHNlcXVl",
+            "bmNlGAQgASgNEjUKDHBsYXllcl9zdGF0ZRgFIAEoCzIfLmRlY2VudHJhbGFu",
+            "ZC5wdWxzZS5QbGF5ZXJTdGF0ZSJ+ChFUZWxlcG9ydFBlcmZvcm1lZBISCgpz",
+            "dWJqZWN0X2lkGAEgASgNEhAKCHNlcXVlbmNlGAIgASgNEhMKC3NlcnZlcl90",
+            "aWNrGAMgASgNEi4KBXN0YXRlGAQgASgLMh8uZGVjZW50cmFsYW5kLnB1bHNl",
+            "LlBsYXllclN0YXRlIuYECg1TZXJ2ZXJNZXNzYWdlEjoKCWhhbmRzaGFrZRgB",
+            "IAEoCzIlLmRlY2VudHJhbGFuZC5wdWxzZS5IYW5kc2hha2VSZXNwb25zZUgA",
+            "EkAKEXBsYXllcl9zdGF0ZV9mdWxsGAIgASgLMiMuZGVjZW50cmFsYW5kLnB1",
+            "bHNlLlBsYXllclN0YXRlRnVsbEgAEkcKEnBsYXllcl9zdGF0ZV9kZWx0YRgD",
+            "IAEoCzIpLmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZURlbHRhVGll",
+            "cjBIABI5Cg1wbGF5ZXJfam9pbmVkGAQgASgLMiAuZGVjZW50cmFsYW5kLnB1",
+            "bHNlLlBsYXllckpvaW5lZEgAEjUKC3BsYXllcl9sZWZ0GAUgASgLMh4uZGVj",
+            "ZW50cmFsYW5kLnB1bHNlLlBsYXllckxlZnRIABJeCiBwbGF5ZXJfcHJvZmls",
+            "ZV92ZXJzaW9uX2Fubm91bmNlZBgGIAEoCzIyLmRlY2VudHJhbGFuZC5wdWxz",
+            "ZS5QbGF5ZXJQcm9maWxlVmVyc2lvbnNBbm5vdW5jZWRIABI5Cg1lbW90ZV9z",
+            "dGFydGVkGAcgASgLMiAuZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RhcnRl",
+            "ZEgAEjkKDWVtb3RlX3N0b3BwZWQYCCABKAsyIC5kZWNlbnRyYWxhbmQucHVs",
+            "c2UuRW1vdGVTdG9wcGVkSAASOwoKdGVsZXBvcnRlZBgJIAEoCzIlLmRlY2Vu",
+            "dHJhbGFuZC5wdWxzZS5UZWxlcG9ydFBlcmZvcm1lZEgAQgkKB21lc3NhZ2Uq",
+            "LwoPRW1vdGVTdG9wUmVhc29uEg0KCUNPTVBMRVRFRBAAEg0KCUNBTkNFTExF",
+            "RBABYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Common.OptionsReflection.Descriptor, global::Decentraland.Pulse.PulseSharedReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Decentraland.Pulse.EmoteStopReason), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -1147,10 +1147,16 @@ namespace Decentraland.Pulse {
 
     private uint pointAtX_;
     /// <summary>
-    /// Hit position the player is pointing at, expressed relative to `position`.
-    /// Only meaningful when POINTING_AT is set in `state_flags`. Range matches the
-    /// gameplay raycast cutoff (CharacterControllerSettings.PointAtMaxDistance = 100m);
-    /// 7 bits keep each axis in a 1-byte varint at the cost of ~1.6m step size.
+    /// Absolute world hit position the player is pointing at.
+    /// Only meaningful when POINTING_AT is set in `state_flags`.
+    ///
+    /// X/Z use 17 bits over the world span (~±3000m, covers GenesisCity + border +
+    /// raycast cutoff) which yields ~0.046m steps — at least as fine as the player's
+    /// own parcel_index + position_x/z combined precision (0.0625m), so no separate
+    /// parcel index is needed for point-at.
+    ///
+    /// Y uses 7 bits over the player altitude range (matches position_y), step ~1.6m.
+    /// Point At is not supposed to change frequently so the wire overhead should be minimal
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]

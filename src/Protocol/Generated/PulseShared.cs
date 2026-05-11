@@ -298,7 +298,7 @@ namespace Decentraland.Pulse {
     public const int PointAtFieldNumber = 12;
     private global::Decentraland.Common.Vector3 pointAt_;
     /// <summary>
-    /// Hit position the player is pointing at, expressed relative to `position`.
+    /// Absolute world hit position the player is pointing at.
     /// Only meaningful when POINTING_AT is set in `state_flags`.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

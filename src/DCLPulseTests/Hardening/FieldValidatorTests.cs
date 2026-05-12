@@ -24,10 +24,9 @@ public class FieldValidatorTests
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
     }
 
-    private FieldValidator Create(int maxEmoteIdLength = 64, int maxRealmLength = 128, uint maxDurationMs = 60_000) =>
+    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000) =>
         new (Options.Create(new FieldValidatorOptions
         {
-            MaxEmoteIdLength = maxEmoteIdLength,
             MaxRealmLength = maxRealmLength,
             MaxEmoteDurationMs = maxDurationMs,
         }), parcelEncoder, transport);
@@ -110,16 +109,6 @@ public class FieldValidatorTests
     }
 
     [Test]
-    public void OversizedEmoteId_RejectsWithInvalidEmoteField()
-    {
-        FieldValidator v = Create(maxEmoteIdLength: 8);
-        EmoteStart msg = ValidEmoteStart(emoteId: new string('x', 9));
-
-        Assert.That(v.ValidateEmoteStart(PEER, NewState(),msg), Is.False);
-        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_EMOTE_FIELD);
-    }
-
-    [Test]
     public void ExcessiveDurationMs_Rejects()
     {
         FieldValidator v = Create(maxDurationMs: 10_000);
@@ -138,16 +127,6 @@ public class FieldValidatorTests
 
         Assert.That(v.ValidateEmoteStart(PEER, NewState(),msg), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_EMOTE_FIELD);
-    }
-
-    [Test]
-    public void ZeroEmoteIdLength_DisablesLengthCheckOnly()
-    {
-        FieldValidator v = Create(maxEmoteIdLength: 0);
-        EmoteStart msg = ValidEmoteStart(emoteId: new string('x', 5000));
-
-        Assert.That(v.ValidateEmoteStart(PEER, NewState(),msg), Is.True,
-            "Length check disabled → huge EmoteId accepted");
     }
 
     [Test]

@@ -294,7 +294,7 @@ that fall outside the encoder's grid produce garbage global positions downstream
 (`ValidatePlayerStateInput`, `ValidateEmoteStart`, `ValidateTeleport`). Checks performed:
 
 - Parcel-index bounds (delegated to `ParcelEncoder.IsValidIndex`).
-- String length caps (`EmoteId`, `Realm`).
+- `Realm` string length cap. Default 255 — covers all four realm-string forms in ADR-144 (DCL World subdomain `name.dcl.eth`, ENS name, DAO catalyst friendly name, catalyst URL) and matches the ENS-label spec ceiling.
 - `EmoteStart.DurationMs` upper bound.
 - **Finiteness** (`float.IsFinite`) on every client-supplied float: `Position`, `Velocity`,
   `RotationY`, `MovementBlend`, `SlideBlend`, optional `HeadYaw`/`HeadPitch`,
@@ -311,8 +311,7 @@ On any violation the peer is disconnected with a message-type-specific `Disconne
   "Messaging": {
     "Hardening": {
       "FieldValidator": {
-        "MaxEmoteIdLength": 64,
-        "MaxRealmLength": 128,
+        "MaxRealmLength": 255,
         "MaxEmoteDurationMs": 60000
       }
     }
@@ -328,7 +327,7 @@ server's own configured realm size, not a per-defense knob).
 | Value | Meaning |
 |---|---|
 | `INVALID_INPUT_FIELD = 11` | PlayerStateInput carried an out-of-range parcel index. |
-| `INVALID_EMOTE_FIELD = 12` | EmoteStart had an oversized EmoteId, excessive DurationMs, or invalid parcel index. |
+| `INVALID_EMOTE_FIELD = 12` | EmoteStart had excessive DurationMs or invalid parcel index. |
 | `INVALID_TELEPORT_FIELD = 13` | TeleportRequest had an empty or oversized Realm, or invalid parcel index. |
 
 ### Client recovery

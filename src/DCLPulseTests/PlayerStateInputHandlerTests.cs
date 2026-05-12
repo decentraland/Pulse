@@ -50,7 +50,7 @@ public class PlayerStateInputHandlerTests
             new FieldValidator(
                 Options.Create(new FieldValidatorOptions
                 {
-                    MaxEmoteIdLength = 0, MaxRealmLength = 0, MaxEmoteDurationMs = 0,
+                    MaxRealmLength = 0, MaxEmoteDurationMs = 0,
                 }),
                 parcelEncoder,
                 Substitute.For<ITransport>()));

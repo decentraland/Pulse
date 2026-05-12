@@ -58,7 +58,7 @@ public class HandshakeHandlerTests
         var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
 
         var fieldValidator = new FieldValidator(
-            Options.Create(new FieldValidatorOptions { MaxEmoteIdLength = 32, MaxRealmLength = 0, MaxEmoteDurationMs = 60_000 }),
+            Options.Create(new FieldValidatorOptions { MaxRealmLength = 0, MaxEmoteDurationMs = 60_000 }),
             parcelEncoder,
             transport);
 
@@ -196,18 +196,6 @@ public class HandshakeHandlerTests
     {
         PlayerInitialState initial = CreateInitialState(parcelIndex: 0,
             position: new Vector3(float.NaN, 0f, 0f));
-
-        handler.Handle(peers, peer, BuildHandshake(initial));
-
-        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
-        transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-    }
-
-    [Test]
-    public void Handle_OversizedEmoteId_RejectsHandshake()
-    {
-        // Test setUp configured MaxEmoteIdLength = 32. Anything longer is out-of-policy.
-        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, emoteId: new string('a', 33));
 
         handler.Handle(peers, peer, BuildHandshake(initial));
 

@@ -7,90 +7,27 @@ namespace Pulse.Messaging.Hardening;
 
 /// <summary>
 ///     Token-bucket rate limiter shared across the server's discrete-event handlers (emote
-///     start/stop, teleport). Whole-token refills at one token per <see cref="refillIntervalMs" />
-///     up to <see cref="burstCapacity" />. On violation the peer is disconnected with
-///     <see cref="DisconnectReason.DISCRETE_EVENT_RATE_EXCEEDED" /> — violations are client
-///     bugs, not back-pressure. Per-peer state lives on <see cref="PeerThrottleState" /> (byte
-///     tokens + uint timestamp); invoked on the owning worker thread so there is no
-///     concurrent access.
+///     start/stop, teleport). Each event triggers an O(observers) reliable broadcast, so the
+///     cap bounds the fan-out amplification an attacker can drive. Inherits its core logic
+///     from <see cref="TokenBucketRateLimiter" />.
 /// </summary>
-public sealed class DiscreteEventRateLimiter : PeerDefense
+public sealed class DiscreteEventRateLimiter : TokenBucketRateLimiter
 {
-    private readonly byte burstCapacity;
-    private readonly uint refillIntervalMs;
-    private readonly ITimeProvider timeProvider;
-
     public DiscreteEventRateLimiter(
         IOptions<DiscreteEventRateLimiterOptions> options,
         ITimeProvider timeProvider,
         ITransport transport)
-        : base(transport, PulseMetrics.Hardening.DISCRETE_EVENT_THROTTLED)
-    {
-        this.timeProvider = timeProvider;
+        : base(
+            options.Value.BurstCapacity,
+            options.Value.RatePerSecond > 0 ? (uint)Math.Max(1, 1000.0 / options.Value.RatePerSecond) : 0u,
+            DisconnectReason.DISCRETE_EVENT_RATE_EXCEEDED,
+            timeProvider,
+            transport,
+            PulseMetrics.Hardening.DISCRETE_EVENT_THROTTLED) { }
 
-        int cap = options.Value.BurstCapacity;
-        burstCapacity = (byte)Math.Clamp(cap, 0, byte.MaxValue);
+    protected override (byte tokens, uint lastRefillMs) GetBucket(PeerThrottleState t) =>
+        (t.DiscreteEventTokens, t.DiscreteEventLastRefillMs);
 
-        refillIntervalMs = options.Value.RatePerSecond > 0
-            ? (uint)Math.Max(1, 1000.0 / options.Value.RatePerSecond)
-            : 0u;
-    }
-
-    public bool IsEnabled => refillIntervalMs > 0 && burstCapacity > 0;
-
-    /// <summary>
-    ///     Returns <c>true</c> if the event is allowed. On rejection, disconnects
-    ///     <paramref name="from" /> and returns <c>false</c>. On success the peer's bucket is
-    ///     debited by one; on failure the bucket is untouched except for the refill timestamp.
-    /// </summary>
-    public bool TryAccept(PeerIndex from, PeerState state)
-    {
-        if (!IsEnabled) return true;
-
-        uint now = timeProvider.MonotonicTime;
-        PeerThrottleState t = state.Throttle;
-
-        byte tokens = t.DiscreteEventTokens;
-        uint last = t.DiscreteEventLastRefillMs;
-        uint newLast;
-
-        if (last == 0)
-        {
-            // First event from this peer — start with a full bucket.
-            tokens = burstCapacity;
-            newLast = now;
-        }
-        else
-        {
-            uint refills = (now - last) / refillIntervalMs;
-
-            if (refills > 0)
-            {
-                tokens = (byte)Math.Min((uint)burstCapacity, (uint)tokens + refills);
-                // Preserve sub-interval remainder so accuracy doesn't drift.
-                newLast = last + (refills * refillIntervalMs);
-            }
-            else
-            {
-                newLast = last;
-            }
-        }
-
-        if (tokens == 0)
-        {
-            state.Throttle = t with
-            {
-                DiscreteEventTokens = 0,
-                DiscreteEventLastRefillMs = newLast,
-            };
-            return Reject(from, state, DisconnectReason.DISCRETE_EVENT_RATE_EXCEEDED);
-        }
-
-        state.Throttle = t with
-        {
-            DiscreteEventTokens = (byte)(tokens - 1),
-            DiscreteEventLastRefillMs = newLast,
-        };
-        return true;
-    }
+    protected override PeerThrottleState SetBucket(PeerThrottleState t, byte tokens, uint lastRefillMs) =>
+        t with { DiscreteEventTokens = tokens, DiscreteEventLastRefillMs = lastRefillMs };
 }

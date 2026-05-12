@@ -204,15 +204,25 @@ asymmetry favours the attacker:
 
 ### Defenses
 
-Two dedicated limiters in `src/DCLPulse/Messaging/Hardening/`:
+Two dedicated limiters in `src/DCLPulse/Messaging/Hardening/`, both inheriting from a shared
+`TokenBucketRateLimiter` base:
 
 | Component | Cap | Enforcement |
 |---|---|---|
-| `MovementInputRateLimiter` | `MaxHz` (default 20) on `PlayerStateInput` | Interval-based — min `1000/MaxHz` ms between accepted inputs |
+| `MovementInputRateLimiter` | Token bucket, `MaxHz` refill (default 20) + `BurstCapacity` (default 16) on `PlayerStateInput` | Burst absorbs UDP jitter (ISP/NAT/Wi-Fi clustering, worker batch drain) without false positives |
 | `DiscreteEventRateLimiter` | Token bucket, `RatePerSecond` refill (default 5) + `BurstCapacity` (default 10) | Shared across emote start/stop + teleport |
 
-Per-peer state lives on `PeerThrottleState` hanging off `PeerState`. Mutated exclusively on
-the owning worker thread, so no synchronisation is required.
+Per-peer state lives on `PeerThrottleState` hanging off `PeerState` (one `(tokens, lastRefillMs)`
+pair per limiter). Mutated exclusively on the owning worker thread, so no synchronisation is
+required.
+
+**Why a bucket, not a strict interval, for movement input?** UDP packets sent at uniform 50 ms
+spacing at the client routinely arrive at the server in tight clusters after ISP bufferbloat,
+NAT queue drains, or Wi-Fi retransmits; the owning worker also drains its incoming-event
+channel in batches once per loop iteration, so two messages enqueued between drains are
+handled microseconds apart regardless of wire spacing. A strict `now − last < 1000/MaxHz`
+check counts these as violations and disconnects the peer. The bucket caps the long-run rate
+identically while letting short bursts through.
 
 **Violation response:** the peer is disconnected with a specific `DisconnectReason`. This is
 not graceful back-pressure — clients that sustain message rates above the cap are either
@@ -224,7 +234,7 @@ buggy or malicious, and staying connected lets them keep probing.
 {
   "Messaging": {
     "Hardening": {
-      "MovementInput": { "MaxHz": 20 },
+      "MovementInput": { "MaxHz": 20, "BurstCapacity": 16 },
       "DiscreteEvent": { "RatePerSecond": 5.0, "BurstCapacity": 10 }
     }
   }
@@ -233,9 +243,10 @@ buggy or malicious, and staying connected lets them keep probing.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `MovementInput.MaxHz` | 20 | Max `PlayerStateInput` messages per peer per second. Matches the base simulation tick rate — faster sends have no game-state benefit. `0` disables. |
+| `MovementInput.MaxHz` | 20 | Sustained `PlayerStateInput` refill rate per peer, in messages per second. Matches the base simulation tick rate — faster sends have no game-state benefit. `0` disables. |
+| `MovementInput.BurstCapacity` | 16 | Burst allowance for movement input — absorbs jitter-induced packet clustering (~800 ms worth at the default 20 Hz). Stored as `byte`, clamped to 255. `0` disables. |
 | `DiscreteEvent.RatePerSecond` | 5.0 | Sustained rate of discrete events per peer. `0` disables. |
-| `DiscreteEvent.BurstCapacity` | 10 | Burst allowance. Stored as `byte`, clamped to 255. |
+| `DiscreteEvent.BurstCapacity` | 10 | Burst allowance for discrete events. Stored as `byte`, clamped to 255. |
 
 Dev (`appsettings.Development.json`) sets all to `0` so load tests aren't throttled.
 
@@ -544,6 +555,13 @@ poll leaves the list empty — identical to pass-through mode.
 `HandshakeAttemptPolicy` all inherit from `PeerDefense`, which provides the common
 `Reject(PeerIndex, PeerState, DisconnectReason)` helper: bumps the violation counter, flips
 `PeerState.ConnectionState` to `PENDING_DISCONNECT`, and calls `transport.Disconnect`.
+
+The two rate limiters additionally share `TokenBucketRateLimiter` (subclass of `PeerDefense`),
+which owns the bucket math (whole-token refill, sub-interval-remainder carry, byte-capped
+debit). Subclasses provide three things: the rate/burst configuration, the disconnect reason,
+and a getter/setter pair that maps to their slot on `PeerThrottleState` (input slot vs
+discrete-event slot). Keeps the per-limiter classes to ~15 lines and ensures both behave
+identically under jitter and overflow.
 
 The `PENDING_DISCONNECT` state closes the window between "server decided to disconnect" and
 "ENet's Disconnect event actually fires" — during that window, subsequent queued messages from

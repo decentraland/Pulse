@@ -6,6 +6,7 @@ namespace Pulse.Peers;
 ///     doesn't clutter transport-lifecycle fields. Mutated from the owning worker thread only.
 /// </summary>
 public readonly record struct PeerThrottleState(
-    uint LastInputMs,
+    byte InputTokens,
+    uint InputLastRefillMs,
     byte DiscreteEventTokens,
     uint DiscreteEventLastRefillMs);

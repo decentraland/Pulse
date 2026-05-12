@@ -6,41 +6,29 @@ using Pulse.Transport;
 namespace Pulse.Messaging.Hardening;
 
 /// <summary>
-///     Caps <c>PlayerStateInput</c> admission to at most <c>MaxHz</c> per peer by enforcing a
-///     minimum interval between accepted inputs. On violation the peer is disconnected with
-///     <see cref="DisconnectReason.INPUT_RATE_EXCEEDED" /> — violations are client bugs, not
-///     back-pressure. Per-peer timestamp lives on <see cref="PeerThrottleState.LastInputMs" />;
-///     invoked on the owning worker thread so no synchronisation is needed.
+///     Caps <c>PlayerStateInput</c> admission to <c>MaxHz</c> per peer with a small burst
+///     allowance, sharing the <see cref="TokenBucketRateLimiter" /> implementation with
+///     <see cref="DiscreteEventRateLimiter" />. The burst absorbs UDP jitter — uniformly
+///     paced client sends routinely arrive in tight clusters after ISP/NAT/Wi-Fi queueing,
+///     which a strict-interval check would flag as a violation.
 /// </summary>
-public sealed class MovementInputRateLimiter(
-    IOptions<MovementInputRateLimiterOptions> options,
-    ITimeProvider timeProvider,
-    ITransport transport)
-    : PeerDefense(transport, PulseMetrics.Hardening.INPUT_RATE_THROTTLED)
+public sealed class MovementInputRateLimiter : TokenBucketRateLimiter
 {
-    private readonly int maxHz = options.Value.MaxHz;
-    private readonly uint minIntervalMs = options.Value.MaxHz > 0 ? (uint)(1000 / options.Value.MaxHz) : 0u;
+    public MovementInputRateLimiter(
+        IOptions<MovementInputRateLimiterOptions> options,
+        ITimeProvider timeProvider,
+        ITransport transport)
+        : base(
+            options.Value.BurstCapacity,
+            options.Value.MaxHz > 0 ? (uint)Math.Max(1, 1000 / options.Value.MaxHz) : 0u,
+            DisconnectReason.INPUT_RATE_EXCEEDED,
+            timeProvider,
+            transport,
+            PulseMetrics.Hardening.INPUT_RATE_THROTTLED) { }
 
-    public bool IsEnabled => maxHz > 0;
+    protected override (byte tokens, uint lastRefillMs) GetBucket(PeerThrottleState t) =>
+        (t.InputTokens, t.InputLastRefillMs);
 
-    /// <summary>
-    ///     Returns <c>true</c> if the input should be processed. On rejection, disconnects
-    ///     <paramref name="from" /> and returns <c>false</c> — the caller must skip the
-    ///     message. Mutates <see cref="PeerState.Throttle" /> to stamp the accepted timestamp.
-    /// </summary>
-    public bool TryAccept(PeerIndex from, PeerState state)
-    {
-        if (!IsEnabled) return true;
-
-        uint now = timeProvider.MonotonicTime;
-        uint last = state.Throttle.LastInputMs;
-
-        if (last != 0 && now - last < minIntervalMs)
-            return Reject(from, state, DisconnectReason.INPUT_RATE_EXCEEDED);
-
-        // 0 is reserved as the "never" sentinel — clamp the stamp so a peer whose first input
-        // arrives at server time 0 can't re-use the sentinel on subsequent calls.
-        state.Throttle = state.Throttle with { LastInputMs = now == 0 ? 1u : now };
-        return true;
-    }
+    protected override PeerThrottleState SetBucket(PeerThrottleState t, byte tokens, uint lastRefillMs) =>
+        t with { InputTokens = tokens, InputLastRefillMs = lastRefillMs };
 }

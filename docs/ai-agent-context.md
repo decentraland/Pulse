@@ -43,8 +43,9 @@ Defense-in-depth, all local, all fail-closed. Each has a dedicated class under `
 - **Handshake replay cache** (`HandshakeReplayPolicy`) — sliding-window `(wallet, timestamp)` rejection within `PendingAuthCleanTimeoutMs`. Sweeps opportunistically at 50% capacity.
 - **Handshake attempt cap** (`HandshakeAttemptPolicy`) — per-peer counter bounds repeated ECDSA recoveries.
 - **Field validation** (`FieldValidator`) — bounds / NaN / Infinity / length checks on all client-supplied fields; violation disconnects with a specific `DisconnectReason`.
-- **Movement input rate limit** (`MovementInputRateLimiter`) — per-peer min-interval gate; violation → instant disconnect with `INPUT_RATE_EXCEEDED`.
-- **Discrete event rate limit** (`DiscreteEventRateLimiter`) — token-bucket on `EmoteStart` / `EmoteStop` / `Teleport`; discard-on-violation, not backpressure.
+- **Movement input rate limit** (`MovementInputRateLimiter`) — per-peer token bucket (`MaxHz` sustained refill + `BurstCapacity` for UDP-jitter tolerance); violation → instant disconnect with `INPUT_RATE_EXCEEDED`.
+- **Discrete event rate limit** (`DiscreteEventRateLimiter`) — token bucket on `EmoteStart` / `EmoteStop` / `Teleport`; discard-on-violation, not backpressure.
+- Both rate limiters share `TokenBucketRateLimiter`, which owns the bucket math; subclasses provide config + a `PeerThrottleState` slot getter/setter.
 
 ---
 

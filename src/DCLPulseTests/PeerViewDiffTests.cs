@@ -284,32 +284,20 @@ public class PeerViewDiffTests
         Assert.That(delta.JumpCount, Is.EqualTo(3));
     }
 
-    // ── PointAt tier gating + null-to-null ──────────────────────────
+    // ── PointAt: tier-agnostic + null handling ──────────────────────
 
     [Test]
-    public void CreateMessage_Tier0_IncludesPointAt()
+    public void CreateMessage_PointAtChanged_SetAcrossAllTiers(
+        [Values] PeerViewSimulationTierValue tierValue)
     {
         PeerSnapshot from = MakeSnapshot();
         PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: new Vector3(5f, 6f, 7f));
 
-        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_0);
+        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, ToTier(tierValue));
 
         Assert.That(delta.HasPointAtX, Is.True);
         Assert.That(delta.HasPointAtY, Is.True);
         Assert.That(delta.HasPointAtZ, Is.True);
-    }
-
-    [Test]
-    public void CreateMessage_Tier1_ExcludesPointAt()
-    {
-        PeerSnapshot from = MakeSnapshot();
-        PeerSnapshot to = MakeSnapshot(seq: 2, pointAt: new Vector3(5f, 6f, 7f));
-
-        PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_1);
-
-        Assert.That(delta.HasPointAtX, Is.False);
-        Assert.That(delta.HasPointAtY, Is.False);
-        Assert.That(delta.HasPointAtZ, Is.False);
     }
 
     [Test]

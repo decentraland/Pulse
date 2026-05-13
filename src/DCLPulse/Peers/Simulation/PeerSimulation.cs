@@ -526,7 +526,7 @@ public sealed class PeerSimulation : IPeerSimulation
             && snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
             && knownSnapshot.Seq != latestSnapshot.Seq)
         {
-            SendDelta(observerId, ref view, entry.Subject, knownSnapshot, latestSnapshot, entry.Tier, PacketMode.RELIABLE);
+            SendDelta(observerId, ref view, entry.Subject, knownSnapshot, latestSnapshot, entry.Tier, PacketMode.RELIABLE, fromResync: true);
 
             logger.LogInformation("Resync fulfilled with targeted delta for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
                 entry.Subject, observerId, lastKnownSeq);
@@ -536,7 +536,7 @@ public sealed class PeerSimulation : IPeerSimulation
             SendTracked(observerId, ref view, latestSnapshot.Seq, new ServerMessage
             {
                 PlayerStateFull = CreateFullState(entry.Subject, latestSnapshot),
-            }, PacketMode.RELIABLE);
+            }, PacketMode.RELIABLE, fromResync: true);
 
             logger.LogWarning("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq}, gap={SeqGap})",
                 entry.Subject, observerId, lastKnownSeq, latestSnapshot.Seq - lastKnownSeq);
@@ -559,11 +559,18 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     the latest carrying snapshot, and its seq may collide with a prior send in the same
     ///     tick (e.g. a teleport also landing at the latest seq). The collision is logged as
     ///     a warning with explicit eviction context rather than an error.
+    ///     <para />
+    ///     When <paramref name="fromResync" /> is <c>true</c>, the duplicate is also expected:
+    ///     the resync path retransmits the latest known seq over the reliable channel to fill
+    ///     a client-side gap, and that seq may match a prior unreliable send that the client
+    ///     missed. The caller already logs the resync context as a warning, so the tripwire
+    ///     stays silent in this case.
     /// </summary>
     private void SendTracked(PeerIndex observerId, ref PeerToPeerView view, uint seq, ServerMessage message, PacketMode packetMode,
-        bool fromEmoteStartEviction = false)
+        bool fromEmoteStartEviction = false,
+        bool fromResync = false)
     {
-        if (seq == view.LastSentSeq)
+        if (seq == view.LastSentSeq && !fromResync)
         {
             if (fromEmoteStartEviction)
                 logger.LogWarning(
@@ -635,7 +642,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private void SendDelta(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot baseline, PeerSnapshot target,
         PeerViewSimulationTier tier,
-        PacketMode packetMode)
+        PacketMode packetMode,
+        bool fromResync = false)
     {
         if (baseline.Seq == target.Seq)
             return;
@@ -645,7 +653,7 @@ public sealed class PeerSimulation : IPeerSimulation
         SendTracked(observerId, ref view, target.Seq, new ServerMessage
         {
             PlayerStateDelta = delta,
-        }, packetMode);
+        }, packetMode, fromResync: fromResync);
     }
 
     private void TryAnnounceProfile(PeerIndex observerId, PeerIndex subjectId, ref PeerToPeerView view)

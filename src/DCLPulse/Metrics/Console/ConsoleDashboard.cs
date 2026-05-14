@@ -109,6 +109,7 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker fieldValidationFailedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker handshakeReplayRejectedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker bannedRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
 
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
@@ -145,6 +146,7 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView fieldValidationFailed = new ();
     private readonly RateStatsView handshakeReplayRejected = new ();
     private readonly RateStatsView bannedRefused = new ();
+    private readonly RateStatsView corruptedPacket = new ();
 
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
@@ -169,6 +171,7 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline fieldValidationFailedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline handshakeReplayRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline bannedRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -293,18 +296,21 @@ public sealed class ConsoleDashboard(
         RateStats fieldValidationRate = fieldValidationFailedTracker.Update(snap.Hardening.TotalFieldValidationFailed, elapsed);
         RateStats replayRejectedRate = handshakeReplayRejectedTracker.Update(snap.Hardening.TotalHandshakeReplayRejected, elapsed);
         RateStats bannedRefusedRate = bannedRefusedTracker.Update(snap.Hardening.TotalBannedRefused, elapsed);
+        RateStats corruptedPacketRate = corruptedPacketTracker.Update(snap.Hardening.TotalCorruptedPacket, elapsed);
 
         inputRateThrottled.Apply(inputThrottledRate, v => v.ToString("N0"));
         discreteEventThrottled.Apply(discreteThrottledRate, v => v.ToString("N0"));
         fieldValidationFailed.Apply(fieldValidationRate, v => v.ToString("N0"));
         handshakeReplayRejected.Apply(replayRejectedRate, v => v.ToString("N0"));
         bannedRefused.Apply(bannedRefusedRate, v => v.ToString("N0"));
+        corruptedPacket.Apply(corruptedPacketRate, v => v.ToString("N0"));
 
         ShiftSample(inputRateThrottledSparkline.Values, inputThrottledRate.PerSec);
         ShiftSample(discreteEventThrottledSparkline.Values, discreteThrottledRate.PerSec);
         ShiftSample(fieldValidationFailedSparkline.Values, fieldValidationRate.PerSec);
         ShiftSample(handshakeReplayRejectedSparkline.Values, replayRejectedRate.PerSec);
         ShiftSample(bannedRefusedSparkline.Values, bannedRefusedRate.PerSec);
+        ShiftSample(corruptedPacketSparkline.Values, corruptedPacketRate.PerSec);
 
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
@@ -348,6 +354,7 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Field Validation Failed", fieldValidationFailed, fieldValidationFailedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Handshake Replay Rejected", handshakeReplayRejected, handshakeReplayRejectedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Banned Refused", bannedRefused, bannedRefusedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Corrupted Packets", corruptedPacket, corruptedPacketSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
 
         var hardening = new Group("Hardening", hardeningTable);

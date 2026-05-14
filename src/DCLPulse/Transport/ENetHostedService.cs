@@ -16,7 +16,8 @@ public sealed partial class ENetHostedService(
     MessagePipe messagePipe,
     IPeerIndexAllocator peerIndexAllocator,
     IdentityBoard identityBoard,
-    PreAuthAdmission preAuthAdmission
+    PreAuthAdmission preAuthAdmission,
+    CorruptedPacketLimiter corruptedPacketLimiter
 ) : BackgroundService,
     // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
     ITransport
@@ -115,6 +116,41 @@ public sealed partial class ENetHostedService(
     }
 
     /// <summary>
+    ///     Runs the per-peer state teardown the Disconnect/Timeout handler does. Returns
+    ///     <c>true</c> if a known peer was released. Shared with the hardening path that
+    ///     uses <c>DisconnectNow</c>, which doesn't fire a local Disconnect event — so the
+    ///     same bookkeeping has to run inline. Per-slot limiter state is always released
+    ///     regardless of whether the slot ever bound to a peerIndex.
+    /// </summary>
+    private bool TeardownPeerSlot(uint slotId, string contextForLog)
+    {
+        corruptedPacketLimiter.ReleaseSlot(slotId);
+
+        if (!slotToPeerIndex.Remove(slotId, out PeerIndex peerIndex))
+            return false;
+
+        connectedPeers.Remove(peerIndex);
+
+        // Park the slot. The allocator won't reissue it until CleanupDisconnectedPeer
+        // releases it — that's the one place the simulation wipes every per-peer board,
+        // so allocation and cleanup stay in lockstep.
+        // PreAuthAdmission release is driven by the worker on the lifecycle Disconnected
+        // event, not here — keeping all admission accounting on one thread.
+        peerIndexAllocator.MarkPending(peerIndex);
+        corruptedPacketLimiter.Release(peerIndex);
+
+        string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);
+        messagePipe.OnPeerDisconnected(peerIndex);
+
+        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
+        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+
+        logger.LogDebug("Peer teardown ({Context}): slot={Slot} peerIndex={PeerIndex} wallet={Wallet}.",
+            contextForLog, slotId, peerIndex, walletId ?? "<none>");
+        return true;
+    }
+
+    /// <summary>
     ///     ENet is not thread-safe so we are obliged to write from the same thread we read.
     ///     Drains both data sends and disconnect requests in enqueue order — any queued
     ///     send for a peer reaches ENet before that peer's disconnect.
@@ -199,29 +235,9 @@ public sealed partial class ENetHostedService(
             case EventType.Disconnect:
             case EventType.Timeout:
             {
-                if (!slotToPeerIndex.Remove(slotId, out PeerIndex peerIndex))
-                {
+                if (!TeardownPeerSlot(slotId, netEvent.Type.ToString()))
                     logger.LogWarning("Unknown ENet slot {Slot} on {EventType} — nothing to release.", slotId, netEvent.Type);
-                    break;
-                }
 
-                connectedPeers.Remove(peerIndex);
-
-                // Park the slot. The allocator won't reissue it until CleanupDisconnectedPeer
-                // releases it — that's the one place the simulation wipes every per-peer board,
-                // so allocation and cleanup stay in lockstep.
-                // PreAuthAdmission release is driven by the worker on the lifecycle Disconnected
-                // event, not here — keeping all admission accounting on one thread.
-                peerIndexAllocator.MarkPending(peerIndex);
-
-                string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);
-                messagePipe.OnPeerDisconnected(peerIndex);
-
-                PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
-                PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
-
-                logger.LogDebug("Peer {EventType}: slot={Slot} peerIndex={PeerIndex} wallet={Wallet} data={Data}.",
-                    netEvent.Type, slotId, peerIndex, walletId ?? "<none>", netEvent.Data);
                 break;
             }
 
@@ -232,17 +248,25 @@ public sealed partial class ENetHostedService(
                 if (!slotToPeerIndex.TryGetValue(slotId, out PeerIndex peerIndex))
                 {
                     // Should not happen — ENet delivers Connect before Receive for a given slot.
-                    logger.LogWarning("Receive from unknown ENet slot {Slot} — dropping packet.", slotId);
+                    // Treat as a corrupted packet so a peer that floods this race window still
+                    // hits the same per-slot budget.
+                    logger.LogWarning("Receive from unknown ENet slot {Slot} — counting against corruption budget.", slotId);
+                    RecordCorruptionForSlot(ref netEvent, slotId);
                     break;
                 }
 
                 int packetLength = netEvent.Packet.Length;
+
+                if (CheckOversized(ref netEvent, peerIndex, packetLength))
+                    break;
+
                 netEvent.Packet.CopyTo(receiveBuffer);
 
                 PulseMetrics.Transport.PACKETS_RECEIVED.Add(1);
                 PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength);
 
-                messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, packetLength), peerIndex));
+                if (!messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, packetLength), peerIndex)))
+                    RecordCorruption(ref netEvent, peerIndex);
 
                 break;
             }

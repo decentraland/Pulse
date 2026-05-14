@@ -27,6 +27,9 @@ public sealed class FieldValidator(
 
     public bool ValidatePlayerStateInput(PeerIndex from, PeerState state, PlayerStateInput input)
     {
+        if (input.State == null)
+            return Reject(from, state, DisconnectReason.INVALID_INPUT_FIELD);
+
         if (!IsValidParcel(input.State.ParcelIndex))
             return Reject(from, state, DisconnectReason.INVALID_INPUT_FIELD);
 
@@ -39,6 +42,9 @@ public sealed class FieldValidator(
     public bool ValidateEmoteStart(PeerIndex from, PeerState state, EmoteStart emote)
     {
         if (maxEmoteDurationMs > 0 && emote.HasDurationMs && emote.DurationMs > maxEmoteDurationMs)
+            return Reject(from, state, DisconnectReason.INVALID_EMOTE_FIELD);
+
+        if (emote.PlayerState == null)
             return Reject(from, state, DisconnectReason.INVALID_EMOTE_FIELD);
 
         if (!IsValidParcel(emote.PlayerState.ParcelIndex))

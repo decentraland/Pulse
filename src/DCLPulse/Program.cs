@@ -24,6 +24,9 @@ builder.Services.Configure<ENetTransportOptions>(
 builder.Services.Configure<PreAuthAdmissionOptions>(
     builder.Configuration.GetSection(PreAuthAdmissionOptions.SECTION_NAME));
 
+builder.Services.Configure<CorruptedPacketLimiterOptions>(
+    builder.Configuration.GetSection(CorruptedPacketLimiterOptions.SECTION_NAME));
+
 builder.Services.Configure<HandshakeAttemptPolicyOptions>(
     builder.Configuration.GetSection(HandshakeAttemptPolicyOptions.SECTION_NAME));
 
@@ -43,6 +46,7 @@ builder.Services.Configure<BansOptions>(
     builder.Configuration.GetSection(BansOptions.SECTION_NAME));
 
 builder.Services.AddSingleton<PreAuthAdmission>();
+builder.Services.AddSingleton<CorruptedPacketLimiter>();
 builder.Services.AddSingleton<HandshakeAttemptPolicy>();
 builder.Services.AddSingleton<MovementInputRateLimiter>();
 builder.Services.AddSingleton<DiscreteEventRateLimiter>();

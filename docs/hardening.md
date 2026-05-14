@@ -548,6 +548,103 @@ poll leaves the list empty — identical to pass-through mode.
 
 ---
 
+## Group G — Corrupted Packets
+
+### Threat model
+
+Two distinct trigger points produce a "this packet is garbage" outcome on the ENet thread:
+
+1. **Oversized packets.** ENet reassembles fragmented UDP datagrams before delivering a Receive
+   event, so a peer can hand the server a single logical packet much larger than the MTU. The
+   Receive handler copies the payload into a fixed-size `receiveBuffer` (`Transport.BufferSize`,
+   default 4096). Anything larger either crashes the ENet thread on `CopyTo`, overflows into
+   adjacent memory in unsafe configurations, or wastes CPU on garbage parsing.
+2. **Protobuf parse failures.** `MessagePipe.OnDataReceived` runs `ClientMessage.Parser.ParseFrom`
+   on the raw bytes. A malformed payload (`Protocol message contained an invalid tag (zero)`,
+   truncated frame, unknown wire types) throws `Google.Protobuf.InvalidProtocolBufferException`.
+   A single corrupted packet may be a UDP middlebox glitch; a sustained rate is a fuzzer
+   feeding random bytes to probe the parser.
+
+A single corrupted packet is benign — well-formed clients still occasionally see one in the
+wild after broken NAT reassembly. The expensive failure mode is **sustained** corruption from
+one peer.
+
+### Defense
+
+A per-peer token bucket — `CorruptedPacketLimiter`
+(`src/DCLPulse/Transport/Hardening/CorruptedPacketLimiter.cs`) — refills one token every
+`60000 / MaxPerMinute` ms up to `BurstCapacity`. The transport calls
+`RegisterAndCheckExhausted` on every corrupt packet (oversized **and** parse-failure paths
+funnel through the same bucket). When the bucket exhausts, the peer is queued for disconnect
+with `PACKET_CORRUPTED`.
+
+The two call sites are:
+
+| Site | When |
+|---|---|
+| `ENetHostedService.IsOversizedAndRecordCorruption` | Packet length > `Transport.BufferSize` (caught before `CopyTo`) |
+| `ENetHostedService.HandleEvent` `Receive` branch | `messagePipe.OnDataReceived` returned `false` (protobuf parse failed) |
+
+`MessagePipe.OnDataReceived` now returns `bool` — the parse result — and the transport (which
+already owns the limiter) decides whether to call `RecordCorruption`. The limiter has no
+dependency on `MessagePipe`; both call sites run on the ENet thread, so the limiter's per-peer
+dictionary is mutated single-threaded with no locking.
+
+Per-peer state is released in the existing Disconnect event handler via
+`corruptedPacketLimiter.Release(peerIndex)`.
+
+### Config
+
+```json
+{
+  "Transport": {
+    "Hardening": {
+      "CorruptedPacket": {
+        "MaxPerMinute": 5,
+        "BurstCapacity": 5
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `MaxPerMinute` | 5 | Sustained corrupt-packets-per-minute per peer before disconnect (refill: one token every `60000 / MaxPerMinute` ms = 12000 ms at the default). Zero disables. |
+| `BurstCapacity` | 5 | Burst allowance — number of corrupt packets a peer can send back-to-back before refill kicks in. Stored as a byte per peer (clamped to 255). Zero disables. |
+
+### Tuning
+
+Well-formed clients produce **zero** corrupt packets — protobuf is rigid and ENet handles its
+own checksum/length on the wire. The default `5 / 5` (5 per minute, burst 5) tolerates a brief
+reassembly anomaly on flaky links without nuking the session: a peer can hit 5 corrupt packets
+back-to-back, then must wait 12 s for each subsequent token. A fuzzer streaming garbage at
+~1 Hz exhausts the bucket within ~5 seconds. Raise both knobs together if you observe
+legitimate clients churning the metric, but suspect the client first.
+
+### DisconnectReason
+
+| Value | Meaning |
+|---|---|
+| `PACKET_CORRUPTED = 16` | Peer's corrupted-packet budget was exhausted. Terminal — covers both oversized packets and protobuf parse failures. |
+
+### Client recovery
+
+**Terminal, not retryable.** A legitimate client encoding the protocol correctly never sustains
+corrupt packets — even a full `STATE_FULL` snapshot fits well under 4 KB after quantization,
+and protobuf serializers don't randomly emit invalid tags. If a client needs to send something
+larger than `Transport.BufferSize` the right fix is at the protocol layer (split, chunk,
+compress), not raising the buffer. Recommended client behaviour matches the other terminal
+codes: log locally, surface to telemetry, do **not** auto-reconnect.
+
+### Metrics to watch
+
+| Metric | Type | Signal |
+|---|---|---|
+| `corrupted_packet` | counter | Increments on **every** corrupt packet (oversized + parse-failure), regardless of whether the bucket exhausted. Sporadic hits ⇒ benign UDP/middlebox jitter; sustained per-peer rate above `MaxPerSecond` ⇒ that peer just hit `PACKET_CORRUPTED`; cross-peer spike ⇒ coordinated fuzzing or client/server build drift. |
+
+---
+
 ## Shared `PeerDefense` base class
 
 `MovementInputRateLimiter`, `DiscreteEventRateLimiter`, `FieldValidator`, and

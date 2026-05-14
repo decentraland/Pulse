@@ -80,8 +80,11 @@ public sealed class MessagePipe(
     /// <summary>
     ///     Called on the Transport thread for every received packet.
     ///     Must be fast and must not throw — any exception here stalls the Transport loop.
+    ///     Returns <c>true</c> when the packet parsed and was enqueued; <c>false</c> when
+    ///     protobuf parsing failed (the caller decides whether to disconnect — typically by
+    ///     routing the event through <see cref="Pulse.Transport.Hardening.CorruptedPacketLimiter" />).
     /// </summary>
-    public void OnDataReceived(MessagePacket packet)
+    public bool OnDataReceived(MessagePacket packet)
     {
         ClientMessage? message = null;
 
@@ -89,10 +92,11 @@ public sealed class MessagePipe(
         catch (Exception ex) { logger.LogWarning(ex, "Failed to parse packet from peer {PeerIndex}", packet.FromPeer.Value); }
 
         if (message is null)
-            return;
+            return false;
 
         incomingChannel.Writer.TryWrite(new IncomingEvent(packet.FromPeer, message));
         Interlocked.Increment(ref incomingDepth);
+        return true;
     }
 
     /// <summary>

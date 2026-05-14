@@ -32,5 +32,8 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> BANNED_REFUSED =
             METER.CreateCounter<long>("pulse.hardening.banned_refused");
+
+        public static readonly Counter<long> CORRUPTED_PACKET =
+            METER.CreateCounter<long>("pulse.hardening.corrupted_packet");
     }
 }

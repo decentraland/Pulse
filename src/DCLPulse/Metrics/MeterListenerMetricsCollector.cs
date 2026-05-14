@@ -39,6 +39,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long fieldValidationFailed;
     private long handshakeReplayRejected;
     private long bannedRefused;
+    private long corruptedPacket;
 
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
@@ -99,6 +100,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalFieldValidationFailed = Interlocked.Read(ref fieldValidationFailed),
                 TotalHandshakeReplayRejected = Interlocked.Read(ref handshakeReplayRejected),
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
+                TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -158,6 +160,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.banned_refused":
                 Interlocked.Add(ref bannedRefused, value);
+                break;
+            case "pulse.hardening.corrupted_packet":
+                Interlocked.Add(ref corruptedPacket, value);
                 break;
         }
     }

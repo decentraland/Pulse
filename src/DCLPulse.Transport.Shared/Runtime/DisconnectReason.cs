@@ -84,5 +84,13 @@ namespace Pulse.Transport
         ///     chain itself was valid, but the asserted starting state isn't usable.
         /// </summary>
         INVALID_HANDSHAKE_FIELD = 15,
+
+        /// <summary>
+        ///     Peer sustained more corrupted packets per second than the transport tolerates.
+        ///     Covers both oversized packets (larger than the receive buffer) and protobuf
+        ///     parse failures. Terminal — well-formed clients never produce corrupt packets;
+        ///     a sustained rate indicates a buggy client, fuzzer, or amplification probe.
+        /// </summary>
+        PACKET_CORRUPTED = 16,
     }
 }

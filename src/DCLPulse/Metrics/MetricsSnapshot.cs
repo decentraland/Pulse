@@ -33,5 +33,6 @@ public readonly record struct MetricsSnapshot
         public long TotalFieldValidationFailed { get; init; }
         public long TotalHandshakeReplayRejected { get; init; }
         public long TotalBannedRefused { get; init; }
+        public long TotalCorruptedPacket { get; init; }
     }
 }

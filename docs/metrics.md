@@ -190,6 +190,17 @@ Counter of handshake rejections and active-peer evictions caused by the platform
 | Bursts matching a ban wave | Expected immediately after moderators ban many wallets at once — each connected victim triggers one increment per poll. |
 | Sustained high | Banned user auto-reconnecting; check client is honouring the terminal-code guidance. |
 
+### Corrupted Packets
+
+Counter of corrupted packets observed per peer — combines two trigger points: oversized packets caught in the transport before `CopyTo` (length > `Transport.BufferSize`) and protobuf parse failures caught in `MessagePipe.OnDataReceived`. Every observation bumps the counter; the per-peer token bucket (`CorruptedPacketLimiter`, default `MaxPerMinute=5`, `BurstCapacity=5`) decides whether to disconnect the peer with `PACKET_CORRUPTED`. `dcl_pulse_corrupted_packet_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — well-formed clients never produce corrupt packets |
+| Sporadic (well under five per minute) | Transient UDP reassembly anomaly or a buggy client frame — tolerated by the bucket, peer stays connected |
+| Sustained > `MaxPerMinute` per peer | Fuzzer or broken client — bucket exhausts and the peer is dropped with `PACKET_CORRUPTED` |
+| Spike across many peers | Coordinated probing or protocol drift between client and server builds |
+
 ### Field Validation Failed
 
 Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`). `dcl_pulse_field_validation_failed_total`.

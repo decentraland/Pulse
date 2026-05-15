@@ -11,7 +11,7 @@ if ([string]::IsNullOrEmpty($version)) { throw "RustEthereumVersion not found in
 $nupkg = "Decentraland.RustEthereum.$version.nupkg"
 $url   = "https://github.com/decentraland/rust-ethereum/releases/download/v$version/$nupkg"
 
-if (-not (Test-Path $pkgDir)) { New-Item -ItemType Directory -Path $pkgDir | Out-Null }
+New-Item -ItemType Directory -Path $pkgDir -Force | Out-Null
 $dest = Join-Path $pkgDir $nupkg
 
 if (Test-Path -LiteralPath $dest) {

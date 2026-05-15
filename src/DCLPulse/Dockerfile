@@ -6,6 +6,12 @@ COPY ["src/DCLPulse/global.json", "src/DCLPulse/"]
 COPY ["src/DCLAuth/DCLAuth.csproj", "src/DCLAuth/"]
 COPY ["src/Protocol/Protocol.csproj", "src/Protocol/"]
 COPY ["src/Protocol/Directory.Build.props", "src/Protocol/"]
+# RustEthereum auto-fetch needs the version, the MSBuild target, the local
+# feed config, and the fetch script — all referenced during `dotnet restore`.
+COPY ["src/Directory.Build.props", "src/"]
+COPY ["src/Directory.Build.targets", "src/"]
+COPY ["src/NuGet.config", "src/"]
+COPY ["tools/fetch-rust-eth.sh", "tools/"]
 RUN dotnet restore "src/DCLPulse/DCLPulse.csproj"
 COPY src/ src/
 WORKDIR "/build/src/DCLPulse"

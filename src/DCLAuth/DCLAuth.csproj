@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\RustEthereum\RustEthereum.csproj" />
+      <PackageReference Include="Decentraland.RustEthereum" Version="$(RustEthereumVersion)" />
     </ItemGroup>
 
 </Project>

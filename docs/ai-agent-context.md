@@ -163,6 +163,8 @@ Pulse-A  Pulse-B  Pulse-C ...
 - Infrastructure: AWS NLB (L4, UDP)
 - SDK: Installed at `~/.dotnet` (user-local)
 
+**Native dependency:** ECDSA verification uses the `Decentraland.RustEthereum` NuGet package fetched from the [`decentraland/rust-ethereum`](https://github.com/decentraland/rust-ethereum) GitHub Release. Version is pinned in `src/Directory.Build.props` (`<RustEthereumVersion>`). `dotnet restore` auto-populates the gitignored `packages/` local feed via `src/Directory.Build.targets`, which invokes `tools/fetch-rust-eth.{sh,ps1}` when the matching nupkg is missing.
+
 **Build:**
 ```bash
 DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false

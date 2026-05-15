@@ -4,5 +4,6 @@ RUN apt-get update && apt-get install -y curl unzip procps \
     && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
+RUN bash tools/fetch-rust-eth.sh
 EXPOSE 7777/udp
 ENTRYPOINT ["dotnet", "run", "--project", "src/DCLPulse/DCLPulse.csproj", "--configuration", "Debug", "--property:GenerateProto=false"]

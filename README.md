@@ -42,6 +42,42 @@ To set `GenerateProto` from Rider:
 
 In practice the default (`true`) is correct for local development. The `false` value is used by Docker/CI builds that don't have the protocol repo available.
 
+## Decentraland.RustEthereum native dependency
+
+ECDSA signature verification on the auth chain is delegated to the
+[`decentraland/rust-ethereum`](https://github.com/decentraland/rust-ethereum) NuGet
+package. The package is **not** on a public feed — it ships as a GitHub Release
+asset and is fetched from there on demand.
+
+### Pinning the version
+
+The version is the **single source of truth** in `src/Directory.Build.props`:
+
+```xml
+<RustEthereumVersion>0.2.0-rc2</RustEthereumVersion>
+```
+
+Both consuming projects (`DCLAuth`, `Fuzzer`) reference it via
+`$(RustEthereumVersion)`. To bump, edit that one value.
+
+### Fetching the .nupkg
+
+`src/NuGet.config` adds the repo-root `packages/` directory as a local NuGet
+source. The directory is gitignored — run the fetch script to populate it after
+clone or after bumping the version:
+
+```bash
+bash tools/fetch-rust-eth.sh        # Linux / macOS / git-bash
+pwsh tools/fetch-rust-eth.ps1       # Windows PowerShell
+```
+
+The script reads the version from `Directory.Build.props` and downloads the
+matching `Decentraland.RustEthereum.<version>.nupkg` from the GitHub Release.
+It's idempotent — re-runs are no-ops when the file is already present.
+
+CI (`test.yml`, `build-executable.yml`) and `Dockerfile.debug` run the script
+automatically before `dotnet restore` / `dotnet publish`.
+
 ## Transport
 
 Pulse uses ENet over UDP. A couple of non-obvious behaviors worth knowing before reading or changing server code:

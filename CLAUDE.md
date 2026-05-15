@@ -331,4 +331,4 @@ MetaForge/
 - The solution file is `src/DCLPulse/DCLPulse.sln` — always pass it explicitly since it's not in the repo root.
 - Use `-p:GenerateProto=false` unless the user explicitly asks to regenerate proto files.
 - To run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
-- Before the first `dotnet restore` (and after bumping `RustEthereumVersion` in `src/Directory.Build.props`), run `bash tools/fetch-rust-eth.sh` to populate the gitignored `packages/` local NuGet source with the `Decentraland.RustEthereum.<version>.nupkg` from the GitHub Release. CI and `Dockerfile.debug` run the script automatically.
+- `dotnet restore` auto-fetches `Decentraland.RustEthereum.<version>.nupkg` into the gitignored `packages/` local NuGet source via `src/Directory.Build.targets`. Bump `RustEthereumVersion` in `src/Directory.Build.props` and the next restore pulls the new version from the GitHub Release. The underlying script is `tools/fetch-rust-eth.{sh,ps1}`.

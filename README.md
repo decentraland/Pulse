@@ -63,20 +63,23 @@ Both consuming projects (`DCLAuth`, `Fuzzer`) reference it via
 ### Fetching the .nupkg
 
 `src/NuGet.config` adds the repo-root `packages/` directory as a local NuGet
-source. The directory is gitignored — run the fetch script to populate it after
-clone or after bumping the version:
+source. The directory is gitignored — populated automatically on every
+`dotnet restore` via `src/Directory.Build.targets`, which runs
+`tools/fetch-rust-eth.{sh,ps1}` before `Restore` if the matching
+`Decentraland.RustEthereum.<version>.nupkg` is missing.
+
+Bump `RustEthereumVersion` and the next restore pulls the new nupkg from the
+GitHub Release. The script is idempotent and concurrency-safe (temp file +
+atomic rename), so the parallel restore graph triggering it from every project
+is fine.
+
+To pre-fetch outside of a restore (e.g. air-gapped builds), invoke the script
+directly:
 
 ```bash
 bash tools/fetch-rust-eth.sh        # Linux / macOS / git-bash
 pwsh tools/fetch-rust-eth.ps1       # Windows PowerShell
 ```
-
-The script reads the version from `Directory.Build.props` and downloads the
-matching `Decentraland.RustEthereum.<version>.nupkg` from the GitHub Release.
-It's idempotent — re-runs are no-ops when the file is already present.
-
-CI (`test.yml`, `build-executable.yml`) and `Dockerfile.debug` run the script
-automatically before `dotnet restore` / `dotnet publish`.
 
 ## Transport
 

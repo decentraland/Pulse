@@ -1,5 +1,5 @@
 <Project>
   <PropertyGroup>
-    <RustEthereumVersion>0.2.0-rc2</RustEthereumVersion>
+    <RustEthereumVersion>0.2.2</RustEthereumVersion>
   </PropertyGroup>
 </Project>

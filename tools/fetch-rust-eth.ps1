@@ -14,11 +14,23 @@ $url   = "https://github.com/decentraland/rust-ethereum/releases/download/v$vers
 if (-not (Test-Path $pkgDir)) { New-Item -ItemType Directory -Path $pkgDir | Out-Null }
 $dest = Join-Path $pkgDir $nupkg
 
-if (Test-Path $dest) {
+if (Test-Path -LiteralPath $dest) {
     Write-Host "$nupkg already present at $dest"
     return
 }
 
+$tmp = "$dest.tmp.$PID"
 Write-Host "Fetching $nupkg from $url"
-Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
-Write-Host "Saved to $dest"
+Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+
+try {
+    Move-Item -LiteralPath $tmp -Destination $dest -ErrorAction Stop
+    Write-Host "Saved to $dest"
+} catch {
+    Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $dest) {
+        Write-Host "$nupkg already present at $dest (concurrent fetch)"
+    } else {
+        throw
+    }
+}

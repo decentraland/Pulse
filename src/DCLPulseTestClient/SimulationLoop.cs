@@ -13,7 +13,7 @@ public class SimulationLoop(
     ParcelEncoder parcelEncoder,
     ITimeProvider timeProvider)
 {
-    private const float TICK_RATE = 1 / 30f;
+    private const float TICK_RATE = 1 / 10f;
     private const int TICK_RATE_MS = (int)(TICK_RATE * 1000);
 
     public async Task RunAsync(CancellationToken ct)

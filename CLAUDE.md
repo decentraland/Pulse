@@ -332,3 +332,10 @@ MetaForge/
 - Use `-p:GenerateProto=false` unless the user explicitly asks to regenerate proto files.
 - To run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
 - `dotnet restore` auto-fetches `Decentraland.RustEthereum.<version>.nupkg` into the gitignored `packages/` local NuGet source via `src/Directory.Build.targets`. Bump `RustEthereumVersion` in `src/Directory.Build.props` and the next restore pulls the new version from the GitHub Release. The underlying script is `tools/fetch-rust-eth.{sh,ps1}`.
+- **If you touched anything in the restore/build pipeline** — csprojs (especially `<PackageReference>` or `<ProjectReference>`), `src/Directory.Build.{props,targets}`, `src/NuGet.config`, `tools/fetch-rust-eth.{sh,ps1}`, or the `.gitignore` rules around `packages/` — also build the Docker images to catch layered-COPY misses that `dotnet build` won't surface:
+  ```bash
+  docker build -f src/DCLPulse/Dockerfile          -t pulse-prod-test      .
+  docker build -f src/DCLPulse/Dockerfile.dev-debug -t pulse-dev-debug-test .
+  docker build -f Dockerfile.debug                 -t pulse-debug-test     .
+  ```
+  The prod and dev-debug Dockerfiles selectively COPY pre-restore files for layer caching, so a new file in the build pipeline must be added to those COPY lines explicitly. `Dockerfile.debug` does `COPY . .` and is usually safe.

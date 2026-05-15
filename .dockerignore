@@ -26,3 +26,4 @@ LICENSE
 README.md
 CLAUDE.md
 tools/
+!tools/fetch-rust-eth.sh

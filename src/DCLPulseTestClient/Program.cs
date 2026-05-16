@@ -1,3 +1,4 @@
+using Decentraland.Pulse;
 using Pulse.Transport;
 using PulseTestClient;
 using PulseTestClient.Auth;

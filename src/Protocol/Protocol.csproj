@@ -60,6 +60,30 @@
     </ItemGroup>
 
     <!--
+        _ProbePythonDeps: invalidates the pip stamp if `google.protobuf` can't
+        actually be imported. Keeps _EnsurePythonDeps self-healing when the
+        Python environment changes underneath the stamp (e.g. Python reinstall,
+        switched interpreter), instead of trusting the stamp blindly.
+    -->
+    <Target Name="_ProbePythonDeps"
+            Condition="'$(GenerateProto)' == 'true' and Exists('$(_PipStamp)')"
+            BeforeTargets="_EnsurePythonDeps">
+
+        <Exec Command="py -c &quot;import google.protobuf&quot; 2&gt;nul"
+              Condition="'$(OS)' == 'Windows_NT'"
+              IgnoreExitCode="true">
+            <Output TaskParameter="ExitCode" PropertyName="_PythonDepsProbeExitCode" />
+        </Exec>
+        <Exec Command="python3 -c &quot;import google.protobuf&quot; 2&gt;/dev/null"
+              Condition="'$(OS)' != 'Windows_NT'"
+              IgnoreExitCode="true">
+            <Output TaskParameter="ExitCode" PropertyName="_PythonDepsProbeExitCode" />
+        </Exec>
+
+        <Delete Files="$(_PipStamp)" Condition="'$(_PythonDepsProbeExitCode)' != '0'" />
+    </Target>
+
+    <!--
         _EnsurePythonDeps: installs protoc-gen-bitwise Python dependencies via pip.
         Runs only when requirements.txt changes (stamp-based), so the build is
         fast on subsequent runs when dependencies are already satisfied.

@@ -5,6 +5,7 @@ public class ClientOptions
     public string AccountPrefix { get; init; } = "enetclient-test";
     public string ServerIp { get; init; } = "127.0.0.1";
     public int ServerPort { get; init; } = 7777;
+    public string Realm { get; init; } = "main";
     public float RotateSpeed { get; init; } = 90f;
     public int BotCount { get; init; } = 1;
     public float PositionX { get; init; } = -104f;
@@ -25,6 +26,7 @@ public class ClientOptions
             AccountPrefix = Arg("account", "enetclient-test"),
             ServerIp = Arg("ip", "127.0.0.1"),
             ServerPort = int.Parse(Arg("port", "7777")),
+            Realm = Arg("realm", "main"),
             RotateSpeed = float.Parse(Arg("rotate-speed", "90")),
             BotCount = int.Parse(Arg("bot-count", "1")),
             PositionX = float.Parse(Arg("pos-x", "-104")),

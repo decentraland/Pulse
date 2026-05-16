@@ -1,5 +1,3 @@
-using System.Numerics;
-using Decentraland.Pulse;
 using Pulse.Transport;
 using PulseTestClient;
 using PulseTestClient.Auth;
@@ -7,6 +5,7 @@ using PulseTestClient.Inputs;
 using PulseTestClient.Networking;
 using PulseTestClient.Profiles;
 using PulseTestClient.Timing;
+using System.Numerics;
 
 var options = ClientOptions.FromArgs(args);
 var behaviorSettings = BotBehaviorSettings.Load();
@@ -145,6 +144,19 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     await service.ConnectAsync(options.ServerIp, options.ServerPort, login.AuthChainJson, lifeCycleCts.Token);
 
     _ = ServerEventHandler.ProcessAll(session, lifeCycleCts.Token);
+
+    int spawnParcelIndex = parcelEncoder.EncodeGlobalPosition(position, out Vector3 spawnRelativePosition);
+
+    pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+    {
+        Teleport = new TeleportRequest
+        {
+            ParcelIndex = spawnParcelIndex,
+            Position = new Decentraland.Common.Vector3
+                { X = spawnRelativePosition.X, Y = spawnRelativePosition.Y, Z = spawnRelativePosition.Z },
+            Realm = options.Realm,
+        },
+    }, PacketMode.RELIABLE));
 
     pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
     {

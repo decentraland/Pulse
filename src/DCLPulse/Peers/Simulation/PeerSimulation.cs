@@ -148,7 +148,9 @@ public sealed class PeerSimulation : IPeerSimulation
             if (selfMirrorEnabled)
                 collector.Add(observerId, selfMirrorTier);
 
-            ProcessVisibleSubjects(observerId, views, observerState.ResyncRequests, tickCounter);
+            string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
+
+            ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter);
 
             observerState.ResyncRequests?.Clear();
 
@@ -174,6 +176,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private void ProcessVisibleSubjects(
         PeerIndex observerId,
+        string? observerWallet,
         Dictionary<PeerIndex, PeerToPeerView> views,
         Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter)
@@ -185,6 +188,20 @@ public sealed class PeerSimulation : IPeerSimulation
             bool isSelfMirror = entry.Subject == observerId;
 
             if (isSelfMirror && !selfMirrorEnabled)
+                continue;
+
+            // Same-wallet ghost suppression: during the disconnect-cleanup window a stale
+            // PeerIndex from the prior session still occupies SnapshotBoard/SpatialGrid/
+            // IdentityBoard and surfaces to its own freshly reconnected PeerIndex as a
+            // visible subject. The PeerIndex differs (allocator pending-recycle), so the
+            // == observerId check above doesn't catch it. Skipping by wallet here prevents
+            // the reconnecting client from receiving a PlayerJoined for itself.
+            if (!isSelfMirror
+                && observerWallet != null
+                && string.Equals(
+                    identityBoard.GetWalletIdByPeerIndex(entry.Subject),
+                    observerWallet,
+                    StringComparison.OrdinalIgnoreCase))
                 continue;
 
             bool isNew = !views.TryGetValue(entry.Subject, out PeerToPeerView view);

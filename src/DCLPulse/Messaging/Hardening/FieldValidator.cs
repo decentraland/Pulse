@@ -57,22 +57,20 @@ public sealed class FieldValidator(
     }
 
     /// <summary>
-    ///     Validates the <see cref="PlayerInitialState" /> the client carries through the
-    ///     handshake. The auth-chain itself was already accepted upstream — this gate keeps a
-    ///     malformed (or absent) asserted-state from poisoning the snapshot ring on the seed
-    ///     publish. InitialState is mandatory because it carries the realm; without realm the
-    ///     seeded peer is invisible in every AoI partition.
+    ///     Validates the optional <see cref="PlayerInitialState" /> the client carries through
+    ///     the handshake. The auth-chain itself was already accepted upstream — this gate keeps
+    ///     a malformed asserted-state from poisoning the snapshot ring on the seed publish. The
+    ///     reconnect/recovery path always carries InitialState (and realm); the legacy connect
+    ///     path skips it and uses a follow-up <c>TeleportRequest</c> to set realm.
     ///     <para />
     ///     Mirrors <see cref="ValidatePlayerStateInput" /> + <see cref="ValidateEmoteStart" />:
     ///     same parcel and float checks for the embedded <see cref="PlayerState" />, same
     ///     length / duration caps for the optional emote fields, same non-empty + length rules
-    ///     for the realm as <see cref="ValidateTeleport" />.
+    ///     for the realm as <see cref="ValidateTeleport" /> — but only enforced when an
+    ///     InitialState is actually present.
     /// </summary>
-    public bool ValidateHandshakeInitialState(PeerIndex from, PeerState state, PlayerInitialState? initial)
+    public bool ValidateHandshakeInitialState(PeerIndex from, PeerState state, PlayerInitialState initial)
     {
-        if (initial == null)
-            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-
         if (initial.State == null)
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 

@@ -89,12 +89,13 @@ public class HandshakeHandler(MessagePipe messagePipe,
             if (existingState != null && !replayPolicy.TryAdmit(from, existingState, result.UserAddress, timestamp))
                 return;
 
-            // Initial-state validation runs before the AUTHENTICATED transition: a malformed or
-            // missing asserted state aborts the handshake cleanly via FieldValidator.Reject (peer
-            // is disconnected with INVALID_HANDSHAKE_FIELD), no half-authenticated state survives.
-            // InitialState is mandatory — it carries the realm; null is rejected inside the
-            // validator alongside the other invalid-field cases.
+            // Initial-state validation runs before the AUTHENTICATED transition: a malformed
+            // asserted state aborts the handshake cleanly via FieldValidator.Reject (peer is
+            // disconnected with INVALID_HANDSHAKE_FIELD), no half-authenticated state survives.
+            // InitialState is optional — the legacy connect path skips it and sets realm via a
+            // follow-up TeleportRequest.
             if (existingState != null
+                && handshakeRequest.InitialState != null
                 && !fieldValidator.ValidateHandshakeInitialState(from, existingState, handshakeRequest.InitialState))
                 return;
 

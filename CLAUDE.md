@@ -71,9 +71,9 @@ Sent on **channel 0 (reliable)** immediately after ENet transport connect:
 
 ### Initial-State Seed
 
-`HandshakeRequest.PlayerInitialState` is **the state the client authenticates with** — not a server-side fallback. The client must send it on every (re-)connect because it can't observe whether its prior session is still on the server (worker-shard isolation prevents cross-slot preservation; every fresh ENet connection lands on an empty slot). The handshake handler validates it via `FieldValidator.ValidateHandshakeInitialState` **before** transitioning to `AUTHENTICATED`; a malformed seed — or a missing one entirely — disconnects the peer with `INVALID_HANDSHAKE_FIELD` rather than letting half-validated state into the snapshot ring.
+`HandshakeRequest.PlayerInitialState` is **the state the client authenticates with** — not a server-side fallback. It's optional: the legacy connect flow omits it and sets realm via a follow-up `TeleportRequest`; the reconnect/recovery flow includes it so AoI can place the peer immediately without waiting for a teleport round-trip. The handshake handler validates it via `FieldValidator.ValidateHandshakeInitialState` **before** transitioning to `AUTHENTICATED`; a malformed seed disconnects the peer with `INVALID_HANDSHAKE_FIELD` rather than letting half-validated state into the snapshot ring.
 
-`InitialState.realm` is mandatory and non-empty. It's stamped onto the seed snapshot directly so AoI can place the peer immediately on (re-)connect; without it the peer would have `Realm = null` and be invisible to every observer until the next `TeleportRequest`. Subsequent `TeleportRequest`s can still change the realm.
+When `InitialState` *is* sent, its `realm` must be non-empty and within `MaxRealmLength` — same rules as `TeleportRequest.realm`. It's stamped onto the seed snapshot directly so AoI can place the peer immediately on reconnect; without it the seeded peer would have `Realm = null` and be invisible to every observer until the next `TeleportRequest`.
 
 If `InitialState.emote_id` is set the seeded snapshot also carries an `EmoteState` with `start_tick = now − emote_start_offset_ms` (underflow-clamped) so the next `EmoteStarted` broadcast scrubs the animation forward by the elapsed-since-real-start delta.
 

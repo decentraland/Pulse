@@ -90,16 +90,17 @@ public class HandshakeHandlerTests
     }
 
     [Test]
-    public void Handle_NoInitialState_RejectsHandshake()
+    public void Handle_NoInitialState_AuthenticatesWithoutSeedingSnapshot()
     {
-        // Realm is mandatory and lives only on PlayerInitialState — a handshake without it
-        // cannot be placed in any AoI partition, so the peer is unrecoverable. Reject early.
+        // Legacy connect flow: client skips InitialState and relies on the follow-up
+        // TeleportRequest to set realm. Only the reconnect/recovery flow carries InitialState
+        // (where realm-validation kicks in).
         handler.Handle(peers, peer, BuildHandshake(initialState: null));
 
-        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
-        transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
 
-        Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue));
+        Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue),
+            "Without InitialState the handshake leaves the snapshot ring untouched.");
     }
 
     [Test]

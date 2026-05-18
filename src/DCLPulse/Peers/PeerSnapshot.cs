@@ -37,9 +37,10 @@ public static class PeerSnapshotExtensions
 ///     <para />
 ///     <see cref="Realm" /> is the AoI partition the peer belongs to. Carried forward by
 ///     <see cref="Simulation.SnapshotBoard.Publish" /> onto every snapshot, same as
-///     <see cref="Emote" /> — the first TeleportRequest seeds it, subsequent teleports may
-///     change it. Snapshots from before the first TeleportRequest have <c>Realm == null</c>,
-///     which makes the peer invisible to every observer and unable to observe anyone.
+///     <see cref="Emote" /> — the handshake initial-state seed sets it, subsequent
+///     <c>TeleportRequest</c>s may change it. A snapshot with <c>Realm == null</c> would make
+///     the peer invisible to every observer and unable to observe anyone — that's why
+///     <c>PlayerInitialState.realm</c> is mandatory.
 /// </summary>
 public record struct PeerSnapshot(
 

@@ -89,11 +89,12 @@ public class HandshakeHandler(MessagePipe messagePipe,
             if (existingState != null && !replayPolicy.TryAdmit(from, existingState, result.UserAddress, timestamp))
                 return;
 
-            // Initial-state validation runs before the AUTHENTICATED transition: a malformed
-            // asserted state aborts the handshake cleanly via FieldValidator.Reject (peer is
-            // disconnected with INVALID_HANDSHAKE_FIELD), no half-authenticated state survives.
+            // Initial-state validation runs before the AUTHENTICATED transition: a malformed or
+            // missing asserted state aborts the handshake cleanly via FieldValidator.Reject (peer
+            // is disconnected with INVALID_HANDSHAKE_FIELD), no half-authenticated state survives.
+            // InitialState is mandatory — it carries the realm; null is rejected inside the
+            // validator alongside the other invalid-field cases.
             if (existingState != null
-                && handshakeRequest.InitialState != null
                 && !fieldValidator.ValidateHandshakeInitialState(from, existingState, handshakeRequest.InitialState))
                 return;
 
@@ -154,10 +155,9 @@ public class HandshakeHandler(MessagePipe messagePipe,
     ///     defer to (cross-slot preservation isn't part of the architecture), and the
     ///     authenticated state is whatever the client just signed for.
     ///     <para />
-    ///     Realm stays null on the seed — the next <c>TeleportRequest</c> establishes it and
-    ///     inherits the seeded <see cref="EmoteState" /> via the SnapshotBoard ledger
-    ///     carry-forward, so a reconnecting client mid-emote keeps animating without
-    ///     re-sending <c>EmoteStart</c>.
+    ///     Realm is stamped onto the seed snapshot directly so AoI can place the peer
+    ///     immediately — without it the reconnecting peer would be invisible to every observer
+    ///     until the next <c>TeleportRequest</c>.
     /// </summary>
     private void SeedInitialState(PeerIndex from, PlayerInitialState? initialState)
     {
@@ -180,10 +180,10 @@ public class HandshakeHandler(MessagePipe messagePipe,
             emote = new PeerSnapshotPublisher.EmoteInput(initialState.EmoteId, DurationMs: duration, StartTick: startTick);
         }
 
-        snapshotPublisher.PublishFromPlayerState(from, initialState.State, emote);
+        snapshotPublisher.PublishFromPlayerState(from, initialState.State, emote, realm: initialState.Realm);
 
-        logger.LogInformation("Seeded initial snapshot for peer {Peer} at parcel {Parcel} (emote='{Emote}')",
-            from, initialState.State.ParcelIndex, emote?.EmoteId ?? "<none>");
+        logger.LogInformation("Seeded initial snapshot for peer {Peer} at parcel {Parcel} realm '{Realm}' (emote='{Emote}')",
+            from, initialState.State.ParcelIndex, initialState.Realm, emote?.EmoteId ?? "<none>");
     }
 
     private void RejectBanned(PeerIndex from, PeerState state, string wallet)

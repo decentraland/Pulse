@@ -57,15 +57,22 @@ public sealed class FieldValidator(
     }
 
     /// <summary>
-    ///     Validates the optional <see cref="PlayerInitialState" /> the client carries through
-    ///     the handshake. The auth-chain itself was already accepted upstream — this gate keeps
-    ///     a malformed asserted-state from poisoning the snapshot ring on the seed publish.
+    ///     Validates the <see cref="PlayerInitialState" /> the client carries through the
+    ///     handshake. The auth-chain itself was already accepted upstream — this gate keeps a
+    ///     malformed (or absent) asserted-state from poisoning the snapshot ring on the seed
+    ///     publish. InitialState is mandatory because it carries the realm; without realm the
+    ///     seeded peer is invisible in every AoI partition.
+    ///     <para />
     ///     Mirrors <see cref="ValidatePlayerStateInput" /> + <see cref="ValidateEmoteStart" />:
     ///     same parcel and float checks for the embedded <see cref="PlayerState" />, same
-    ///     length / duration caps for the optional emote fields.
+    ///     length / duration caps for the optional emote fields, same non-empty + length rules
+    ///     for the realm as <see cref="ValidateTeleport" />.
     /// </summary>
-    public bool ValidateHandshakeInitialState(PeerIndex from, PeerState state, PlayerInitialState initial)
+    public bool ValidateHandshakeInitialState(PeerIndex from, PeerState state, PlayerInitialState? initial)
     {
+        if (initial == null)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
         if (initial.State == null)
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
@@ -76,6 +83,12 @@ public sealed class FieldValidator(
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
         if (maxEmoteDurationMs > 0 && initial.HasEmoteDurationMs && initial.EmoteDurationMs > maxEmoteDurationMs)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (string.IsNullOrEmpty(initial.Realm))
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (maxRealmLength > 0 && initial.Realm.Length > maxRealmLength)
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
         return true;

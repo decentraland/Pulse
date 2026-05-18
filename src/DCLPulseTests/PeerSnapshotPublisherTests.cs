@@ -130,6 +130,22 @@ public class PeerSnapshotPublisherTests
     }
 
     [Test]
+    public void PublishFromPlayerState_WithoutRealm_InheritsRealmFromPriorSnapshot()
+    {
+        // Mirrors production: HandshakeHandler seeds with realm, then PlayerStateInputHandler
+        // publishes movement without realm — the latest ring slot must still carry the realm
+        // forward so AoI lookups don't see a null realm one tick after the seed.
+        publisher.PublishFromPlayerState(peer, MakeState(), emote: null, realm: "main");
+        publisher.PublishFromPlayerState(peer, MakeState());
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(1u));
+
+        Assert.That(snapshot.Realm, Is.EqualTo("main"),
+            "Callers that omit realm must inherit it from the prior snapshot, not overwrite with null.");
+    }
+
+    [Test]
     public void PublishTeleport_WithoutPriorSnapshot_DefaultsRotationAndHeadIKAndPointAt()
     {
         publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(1f, 0f, 1f), realm: "realm-a");

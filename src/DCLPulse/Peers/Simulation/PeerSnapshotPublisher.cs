@@ -37,8 +37,12 @@ public sealed class PeerSnapshotPublisher(
     /// <summary>
     ///     Build a snapshot from a client-supplied <see cref="PlayerState" /> and publish it.
     ///     Used by movement input, emote start, and the handshake initial-state seed.
+    ///     <para />
+    ///     <paramref name="realm" /> is non-null only on the handshake seed path; movement and
+    ///     emote-start publishes leave it null and inherit the prior snapshot's realm via the
+    ///     <see cref="SnapshotBoard" /> ledger carry-forward.
     /// </summary>
-    public PeerSnapshot PublishFromPlayerState(PeerIndex from, PlayerState state, EmoteInput? emote = null)
+    public PeerSnapshot PublishFromPlayerState(PeerIndex from, PlayerState state, EmoteInput? emote = null, string? realm = null)
     {
         uint seq = snapshotBoard.LastSeq(from) + 1;
         uint now = timeProvider.MonotonicTime;
@@ -68,7 +72,8 @@ public sealed class PeerSnapshotPublisher(
             PointAt: state.GetPointAt(),
             AnimationFlags: (PlayerAnimationFlags)state.StateFlags,
             GlideState: state.GlideState,
-            Emote: emoteState);
+            Emote: emoteState,
+            Realm: realm);
 
         snapshotBoard.Publish(from, in snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);

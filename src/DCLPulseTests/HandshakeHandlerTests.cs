@@ -58,7 +58,7 @@ public class HandshakeHandlerTests
         var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
 
         var fieldValidator = new FieldValidator(
-            Options.Create(new FieldValidatorOptions { MaxRealmLength = 0, MaxEmoteDurationMs = 60_000 }),
+            Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),
             parcelEncoder,
             transport);
 
@@ -90,14 +90,16 @@ public class HandshakeHandlerTests
     }
 
     [Test]
-    public void Handle_NoInitialState_AuthenticatesWithoutSeedingSnapshot()
+    public void Handle_NoInitialState_RejectsHandshake()
     {
+        // Realm is mandatory and lives only on PlayerInitialState — a handshake without it
+        // cannot be placed in any AoI partition, so the peer is unrecoverable. Reject early.
         handler.Handle(peers, peer, BuildHandshake(initialState: null));
 
-        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
+        transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
-        Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue),
-            "Without InitialState the handshake leaves the snapshot ring untouched.");
+        Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue));
     }
 
     [Test]
@@ -107,7 +109,8 @@ public class HandshakeHandlerTests
             position: new Vector3(2f, 3f, 4f),
             velocity: new Vector3(0.5f, 0f, 0.5f),
             rotationY: 90f,
-            stateFlags: (uint)PlayerAnimationFlags.Grounded);
+            stateFlags: (uint)PlayerAnimationFlags.Grounded,
+            realm: "main");
 
         handler.Handle(peers, peer, BuildHandshake(initial));
 
@@ -121,8 +124,36 @@ public class HandshakeHandlerTests
         Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
         Assert.That(snapshot.IsTeleport, Is.False);
 
-        Assert.That(snapshot.Realm, Is.Null,
-            "Realm stays null on the seed — only the first TeleportRequest establishes it.");
+        Assert.That(snapshot.Realm, Is.EqualTo("main"),
+            "Seed must carry the client-asserted realm so AoI can place the peer immediately on reconnect.");
+    }
+
+    [Test]
+    public void Handle_EmptyRealmInInitialState_RejectsHandshake()
+    {
+        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, realm: string.Empty);
+
+        handler.Handle(peers, peer, BuildHandshake(initial));
+
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT),
+            "Empty realm must short-circuit the handshake — a seed without realm is invisible in AoI.");
+
+        transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue),
+            "No snapshot must be published when validation aborts the handshake.");
+    }
+
+    [Test]
+    public void Handle_RealmExceedsMaxLength_RejectsHandshake()
+    {
+        // MaxRealmLength = 16 in this fixture; anything longer must be rejected.
+        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, realm: new string('a', 17));
+
+        handler.Handle(peers, peer, BuildHandshake(initial));
+
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
+        transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 
     [Test]
@@ -254,7 +285,8 @@ public class HandshakeHandlerTests
         uint stateFlags = 0,
         string? emoteId = null,
         uint? emoteDurationMs = null,
-        uint? emoteStartOffsetMs = null)
+        uint? emoteStartOffsetMs = null,
+        string realm = "main")
     {
         Vector3 pos = position ?? Vector3.Zero;
         Vector3 vel = velocity ?? Vector3.Zero;
@@ -269,6 +301,7 @@ public class HandshakeHandlerTests
                 RotationY = rotationY,
                 StateFlags = stateFlags,
             },
+            Realm = realm,
         };
 
         if (emoteId != null)

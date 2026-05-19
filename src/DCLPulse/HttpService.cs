@@ -34,34 +34,41 @@ public sealed class HttpService(
             {
                 HttpListenerContext ctx = await listener.GetContextAsync().WaitAsync(stoppingToken);
 
-                switch (ctx.Request.Url?.AbsolutePath)
+                try
                 {
-                    case "/health":
-                        ctx.Response.StatusCode = 200;
-                        break;
-                    case "/about":
-                        ctx.Response.StatusCode = 200;
-                        ctx.Response.ContentType = "application/json";
-                        await ctx.Response.OutputStream.WriteAsync(ABOUT_RESPONSE, stoppingToken);
-                        break;
-                    case "/metrics":
-                        if (!AuthorizeMetrics(ctx.Request))
-                        {
-                            ctx.Response.StatusCode = 401;
+                    switch (ctx.Request.Url?.AbsolutePath)
+                    {
+                        case "/health":
+                            ctx.Response.StatusCode = 200;
                             break;
-                        }
+                        case "/about":
+                            ctx.Response.StatusCode = 200;
+                            ctx.Response.ContentType = "application/json";
+                            await ctx.Response.OutputStream.WriteAsync(ABOUT_RESPONSE, stoppingToken);
+                            break;
+                        case "/metrics":
+                            if (!AuthorizeMetrics(ctx.Request))
+                            {
+                                ctx.Response.StatusCode = 401;
+                                break;
+                            }
 
-                        ctx.Response.StatusCode = 200;
-                        ctx.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
-                        await using (var writer = new StreamWriter(ctx.Response.OutputStream))
-                            PrometheusFormatter.Write(writer, metricsCollector.TakeSnapshot());
-                        break;
-                    default:
-                        ctx.Response.StatusCode = 404;
-                        break;
+                            ctx.Response.StatusCode = 200;
+                            ctx.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
+                            await using (var writer = new StreamWriter(ctx.Response.OutputStream))
+                                PrometheusFormatter.Write(writer, metricsCollector.TakeSnapshot());
+                            break;
+                        default:
+                            ctx.Response.StatusCode = 404;
+                            break;
+                    }
+
+                    ctx.Response.Close();
                 }
-
-                ctx.Response.Close();
+                catch (HttpListenerException ex)
+                {
+                    logger.LogWarning(ex, "Client disconnected mid-response");
+                }
             }
         }
         catch (OperationCanceledException) { }

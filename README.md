@@ -216,3 +216,9 @@ BotSession.cs                       Per-bot state (position, rotation, seq track
 Local debugging uses `docker-compose.debug.yml` with Rider attaching via the Docker socket. Remote debugging against the dev environment uses `Dockerfile.dev-debug` (Debug build + vsdbg + sshd + pre-installed JetBrains RiderRemoteDebugger) deployed via the **Deploy Dev (Debug)** GitHub Action, with Rider attaching over SSH through the bastion.
 
 See [docs/debugging.md](docs/debugging.md) for full setup and workflows. Bastion/tunnel specifics are in the `decentraland/playbooks` repo (internal access only).
+
+## Troubleshooting
+
+### Port 5000 already in use (macOS)
+
+The HTTP service listens on **port 5000** by default and the port must be free for the server to start. On macOS, port 5000 is grabbed by **AirPlay Receiver** out of the box — disable it under *System Settings → General → AirDrop & Handoff → AirPlay Receiver*, or override the port via `HttpService:Port` in `appsettings.json`.

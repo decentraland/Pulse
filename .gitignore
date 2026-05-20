@@ -4,6 +4,9 @@ src/Protocol/Generated/.proto.stamp
 ## Proto code-generation tooling stamp files (produced during build)
 tools/protoc-gen-bitwise/.pip.stamp
 
+## Project-local venv for protoc-gen-bitwise Python deps (produced during build)
+tools/protoc-gen-bitwise/.venv/
+
 ## NuGet packages fetched by tools/fetch-rust-eth.{sh,ps1} (populated pre-restore)
 packages/
 

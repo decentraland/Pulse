@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-exec python3 "$(dirname "$0")/../../../protocol/protoc-gen-bitwise/plugin.py" "$@"
+DIR="$(dirname "$0")"
+exec "$DIR/.venv/bin/python" "$DIR/../../../protocol/protoc-gen-bitwise/plugin.py" "$@"

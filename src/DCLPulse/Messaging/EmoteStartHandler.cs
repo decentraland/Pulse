@@ -25,8 +25,9 @@ public class EmoteStartHandler(
 
         EmoteStart emoteStart = message.EmoteStart;
         uint? durationMs = emoteStart.HasDurationMs ? emoteStart.DurationMs : null;
+        int? mask =  emoteStart.HasMask ? emoteStart.Mask : null;
 
-        var emote = new PeerSnapshotPublisher.EmoteInput(emoteStart.EmoteId, DurationMs: durationMs);
+        var emote = new PeerSnapshotPublisher.EmoteInput(emoteStart.EmoteId, DurationMs: durationMs, Mask: mask);
         snapshotPublisher.PublishFromPlayerState(from, emoteStart.PlayerState, emote);
 
         logger.LogInformation("Peer {Peer} started emote {EmoteId}", from.Value, emoteStart.EmoteId);

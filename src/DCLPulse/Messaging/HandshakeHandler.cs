@@ -177,8 +177,9 @@ public class HandshakeHandler(MessagePipe messagePipe,
             // Underflow guard keeps the start tick from wrapping if the offset overstates now.
             uint startTick = offset > now ? 0u : now - offset;
             uint? duration = initialState.HasEmoteDurationMs ? initialState.EmoteDurationMs : null;
+            int emoteMask = initialState.HasEmoteMask ? initialState.EmoteMask : 0;
 
-            emote = new PeerSnapshotPublisher.EmoteInput(initialState.EmoteId, DurationMs: duration, StartTick: startTick);
+            emote = new PeerSnapshotPublisher.EmoteInput(initialState.EmoteId, DurationMs: duration, StartTick: startTick, Mask: emoteMask);
         }
 
         snapshotPublisher.PublishFromPlayerState(from, initialState.State, emote, realm: initialState.Realm);

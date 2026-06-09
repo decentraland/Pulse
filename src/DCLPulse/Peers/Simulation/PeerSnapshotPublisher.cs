@@ -32,7 +32,8 @@ public sealed class PeerSnapshotPublisher(
     public readonly record struct EmoteInput(
         string EmoteId,
         uint? DurationMs = null,
-        uint? StartTick = null);
+        uint? StartTick = null,
+        int? Mask = null);
 
     /// <summary>
     ///     Build a snapshot from a client-supplied <see cref="PlayerState" /> and publish it.
@@ -53,7 +54,8 @@ public sealed class PeerSnapshotPublisher(
                 EmoteId: e.EmoteId,
                 StartSeq: seq,
                 StartTick: e.StartTick ?? now,
-                DurationMs: e.DurationMs)
+                DurationMs: e.DurationMs,
+                Mask: e.Mask)
             : null;
 
         var snapshot = new PeerSnapshot(

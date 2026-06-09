@@ -18,7 +18,8 @@ public record struct EmoteState(
     uint StartSeq,
     uint StartTick,
     uint? DurationMs = null,
-    EmoteStopReason? StopReason = null
+    EmoteStopReason? StopReason = null,
+    int? Mask = null
 );
 
 public static class PeerSnapshotExtensions

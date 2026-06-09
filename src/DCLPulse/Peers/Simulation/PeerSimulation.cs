@@ -623,16 +623,21 @@ public sealed class PeerSimulation : IPeerSimulation
     private void SendEmoteStarted(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote,
         bool fromEviction = false)
     {
+        var emoteStarted = new EmoteStarted
+        {
+            SubjectId = subjectId.Value,
+            Sequence = snapshot.Seq,
+            ServerTick = emote.StartTick,
+            EmoteId = emote.EmoteId,
+            PlayerState = CreatePlayerState(snapshot),
+        };
+
+        if (emote.Mask != null)
+            emoteStarted.Mask = emote.Mask.Value;
+
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
-            EmoteStarted = new EmoteStarted
-            {
-                SubjectId = subjectId.Value,
-                Sequence = snapshot.Seq,
-                ServerTick = emote.StartTick,
-                EmoteId = emote.EmoteId,
-                PlayerState = CreatePlayerState(snapshot),
-            },
+            EmoteStarted = emoteStarted,
         }, PacketMode.RELIABLE, fromEmoteStartEviction: fromEviction);
 
         logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",

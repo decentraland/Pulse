@@ -17,9 +17,9 @@ The protocol is the single source of truth for the wire format. It lives in a **
 | Proto sources | `../protocol/proto/decentraland/` | **Sibling repo** — edit these |
 | Pulse-specific protos | `../protocol/proto/decentraland/pulse/` | Three files: `pulse_client.proto` (C→S messages + `ClientMessage` envelope), `pulse_server.proto` (S→C messages + `ServerMessage` envelope), `pulse_shared.proto` (types referenced by both directions: `PlayerState`, `GlideState`, `PlayerAnimationFlags`) |
 | Shared primitives | `../protocol/proto/decentraland/common/` | `vectors.proto`, `options.proto` (custom `quantized` / `bit_packed`), etc. |
-| Bitwise plugin | `../protocol/protoc-gen-bitwise/plugin.py` | Python protoc plugin — emits C# `Encode`/`Decode` partials |
+| Bitwise plugin | `../protocol/protoc-gen-bitwise/plugin.js` | Node/JS protoc plugin — emits C# `Encode`/`Decode` partials |
 | Plugin runtime | `../protocol/protoc-gen-bitwise/runtime/cs/{BitReader,BitWriter,Quantize}.cs` | `Quantize.cs` is copied into `Generated/` at build time |
-| Plugin wrapper (this repo) | `tools/protoc-gen-bitwise/{protoc-gen-bitwise.cmd,.sh,requirements.txt}` | Invokes the sibling `plugin.py` with `py` / `python3` |
+| Plugin wrapper (this repo) | `tools/protoc-gen-bitwise/{protoc-gen-bitwise.cmd,.sh}` | Invokes the sibling `plugin.js` with `node` |
 | Generated C# | `src/Protocol/Generated/` | **Do not hand-edit** — overwritten on build |
 | Build wiring | `src/Protocol/Protocol.csproj` + `src/Protocol/Directory.Build.props` | Runs protoc + bitwise plugin via MSBuild targets |
 | Hand-written partial extensions | `src/Protocol/ProtoTypesConversion.cs` | Convenience conversions / nullable accessors — safe to extend |
@@ -61,7 +61,7 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
    Do **not** pass `-p:GenerateProto=false` during schema changes — that flag is for Docker/CI where the protocol repo isn't available and uses committed `Generated/` files.
 
    What happens on build:
-   - `_EnsurePythonDeps` installs `protobuf==4.22.3` (once, stamp-based).
+   - `_CheckNode` verifies `node` is on PATH (the bitwise plugin is a dependency-free Node script — nothing to install).
    - `_GenerateProto` runs `protoc` with both `--csharp_out` and `--bitwise_out` against every `*.proto` under `decentraland/common/**` and `decentraland/pulse/**`. Stamp-based, so only re-runs when a `.proto` changes.
    - `Quantize.cs` is copied from the plugin's runtime into `Generated/`.
    - `_AddGeneratedProtoToCompile` globs `Generated/**/*.cs` into the compile.
@@ -104,7 +104,7 @@ After regeneration:
 ## Troubleshooting
 
 - **`_ProtocolRepo` path error at build:** the sibling `../protocol` checkout is missing or in a different location. Clone `@dcl/protocol` as a sibling of Pulse, or override `_ProtocolRepo` via `/p:_ProtocolRepo=...`.
-- **`py: command not found` (Windows) or `python3: command not found` (unix):** the plugin wrapper in `tools/protoc-gen-bitwise/` shells out to `py` / `python3`. Install Python 3 and ensure it's on PATH.
-- **`pip install` fails inside `_EnsurePythonDeps`:** delete `tools/protoc-gen-bitwise/.pip.stamp` and rebuild, or `py -m pip install -r tools/protoc-gen-bitwise/requirements.txt` manually.
+- **`node: command not found` / `'node' is not recognized`:** the plugin wrapper in `tools/protoc-gen-bitwise/` runs `node`. Install Node 16+ and ensure it's on PATH, or build with `-p:GenerateProto=false` to use the committed `Generated/` files.
+- **`protoc-gen-bitwise: Plugin failed`:** the sibling `../protocol/protoc-gen-bitwise/plugin.js` is missing or `_ProtocolRepo` doesn't point at your `../protocol` checkout. Confirm the protocol repo is a sibling of Pulse (or override `/p:_ProtocolRepo=...`).
 - **Generated files not refreshing:** delete `src/Protocol/Generated/.proto.stamp` to force regen on next build.
 - **Bitwise output missing for a message:** the plugin only emits `Encode`/`Decode` for messages that contain at least one `[(quantized)]` or `[(bit_packed)]` field (directly or transitively). Pure protobuf messages get `csharp_out` only — that's expected.

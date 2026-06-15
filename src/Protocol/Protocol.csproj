@@ -30,17 +30,11 @@
              D:\<root>\Pulse\      ← this repo
          ══════════════════════════════════════════════════════════════════════ -->
     <PropertyGroup Label="ProtoGen" Condition="'$(GenerateProto)' == 'true'">
-        <!-- protoc-gen-bitwise plugin wrapper — .cmd on Windows, .sh on macOS/Linux -->
+        <!-- protoc-gen-bitwise plugin wrapper — .cmd on Windows, .sh on macOS/Linux.
+             protoc-gen-bitwise is a Node script in the sibling protocol repo; the
+             wrappers just run `node plugin.js`, so there are no deps to install. -->
         <_Plugin Condition="'$(OS)' == 'Windows_NT'">$(MSBuildProjectDirectory)\..\..\tools\protoc-gen-bitwise\protoc-gen-bitwise.cmd</_Plugin>
         <_Plugin Condition="'$(OS)' != 'Windows_NT'">$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/protoc-gen-bitwise.sh</_Plugin>
-
-        <!-- Python pip requirements and stamp for protoc-gen-bitwise dependencies.
-             Deps install into a project-local venv so we don't fight PEP 668 on
-             Homebrew / distro-managed Pythons. The wrapper scripts invoke the
-             venv's interpreter directly. -->
-        <_PipRequirements>$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/requirements.txt</_PipRequirements>
-        <_PipStamp>$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/.pip.stamp</_PipStamp>
-        <_Venv>$(MSBuildProjectDirectory)/../../tools/protoc-gen-bitwise/.venv</_Venv>
 
         <!-- Proto import root; protoc resolves all imports from here.
              No trailing backslash — "path\" breaks C-runtime argument parsing on Windows. -->
@@ -64,54 +58,22 @@
     </ItemGroup>
 
     <!--
-        _ProbePythonDeps: invalidates the pip stamp if the venv's python can't
-        import `google.protobuf`. Keeps _EnsurePythonDeps self-healing when the
-        venv changes underneath the stamp (e.g. venv deleted, host Python
-        upgraded so the venv's interpreter is now broken). A missing venv
-        interpreter also fails the probe.
+        _CheckNode: fail fast with an actionable message if Node.js isn't on PATH.
+        protoc-gen-bitwise is a Node script invoked via the wrapper in
+        tools/protoc-gen-bitwise/, so generation needs `node`. (Only runs when
+        GenerateProto=true; Docker / CI builds pass GenerateProto=false and use
+        the committed Generated/ files, so they need neither Node nor protoc.)
     -->
-    <Target Name="_ProbePythonDeps"
-            Condition="'$(GenerateProto)' == 'true' and Exists('$(_PipStamp)')"
-            BeforeTargets="_EnsurePythonDeps">
-
-        <Exec Command="&quot;$(_Venv)\Scripts\python.exe&quot; -c &quot;import google.protobuf&quot; 2&gt;nul"
-              Condition="'$(OS)' == 'Windows_NT'"
-              IgnoreExitCode="true">
-            <Output TaskParameter="ExitCode" PropertyName="_PythonDepsProbeExitCode" />
-        </Exec>
-        <Exec Command="&quot;$(_Venv)/bin/python&quot; -c &quot;import google.protobuf&quot; 2&gt;/dev/null"
-              Condition="'$(OS)' != 'Windows_NT'"
-              IgnoreExitCode="true">
-            <Output TaskParameter="ExitCode" PropertyName="_PythonDepsProbeExitCode" />
-        </Exec>
-
-        <Delete Files="$(_PipStamp)" Condition="'$(_PythonDepsProbeExitCode)' != '0'" />
-    </Target>
-
-    <!--
-        _EnsurePythonDeps: creates a project-local venv if missing and installs
-        protoc-gen-bitwise Python dependencies into it. The venv sidesteps PEP
-        668 on externally-managed system Pythons (Homebrew, distro packages).
-        Runs only when requirements.txt changes (stamp-based), so the build is
-        fast on subsequent runs when dependencies are already satisfied.
-    -->
-    <Target Name="_EnsurePythonDeps"
+    <Target Name="_CheckNode"
             Condition="'$(GenerateProto)' == 'true'"
-            BeforeTargets="_GenerateProto"
-            Inputs="$(_PipRequirements)"
-            Outputs="$(_PipStamp)">
+            BeforeTargets="_GenerateProto">
 
-        <Exec Command="if not exist &quot;$(_Venv)\Scripts\python.exe&quot; py -m venv &quot;$(_Venv)&quot;"
-              Condition="'$(OS)' == 'Windows_NT'" />
-        <Exec Command="&quot;$(_Venv)\Scripts\pip.exe&quot; install --quiet -r &quot;$(_PipRequirements)&quot;"
-              Condition="'$(OS)' == 'Windows_NT'" />
+        <Exec Command="node --version" ContinueOnError="true" StandardOutputImportance="low">
+            <Output TaskParameter="ExitCode" PropertyName="_NodeExitCode" />
+        </Exec>
 
-        <Exec Command="[ -x &quot;$(_Venv)/bin/python&quot; ] || python3 -m venv &quot;$(_Venv)&quot;"
-              Condition="'$(OS)' != 'Windows_NT'" />
-        <Exec Command="&quot;$(_Venv)/bin/pip&quot; install --quiet -r &quot;$(_PipRequirements)&quot;"
-              Condition="'$(OS)' != 'Windows_NT'" />
-
-        <Touch Files="$(_PipStamp)" AlwaysCreate="true" />
+        <Error Condition="'$(_NodeExitCode)' != '0'"
+               Text="protoc-gen-bitwise requires Node.js on PATH (the bitwise plugin is a Node script). Install Node 16+ so 'node' is available, or build with -p:GenerateProto=false to use the committed Generated/ files." />
     </Target>
 
     <!--

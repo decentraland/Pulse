@@ -270,7 +270,7 @@ For full debugging workflows (local + remote Fargate, Rider setup, logpoints, po
 - `decentraland/pulse/pulse_client.proto` — client→server messages and the `ClientMessage` envelope
 - `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and the only quantized message (`PlayerStateDeltaTier0`)
 - `decentraland/pulse/pulse_shared.proto` — types referenced by both directions (`PlayerState`, `GlideState`, `PlayerAnimationFlags`); imported by both client and server protos
-- `protoc-gen-bitwise` — Python plugin, reads `CodeGeneratorRequest`, emits C# serializers
+- `protoc-gen-bitwise` — Node/JS plugin, reads `CodeGeneratorRequest`, emits C# serializers
 - `BitWriter` / `BitReader` (C#) — bit packing + quantization (`WriteQuantizedFloat` / `ReadQuantizedFloat`), used by generated C# serializers
 
 ## MetaForge — Test Account & Identity Toolkit

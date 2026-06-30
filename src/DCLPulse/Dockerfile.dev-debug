@@ -9,6 +9,7 @@ COPY ["src/Directory.Build.props", "src/"]
 COPY ["src/Directory.Build.targets", "src/"]
 COPY ["src/NuGet.config", "src/"]
 COPY ["tools/fetch-rust-eth.sh", "tools/"]
+COPY ["tools/fetch-rust-webtransport.sh", "tools/"]
 RUN dotnet restore "src/DCLPulse/DCLPulse.csproj"
 COPY src/ src/
 WORKDIR "/build/src/DCLPulse"

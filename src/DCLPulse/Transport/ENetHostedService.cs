@@ -64,15 +64,15 @@ public sealed partial class ENetHostedService(
         using var host = new Host();
 
         var address = new Address();
-        address.SetIP("::");
+        address.SetIP(options.BindHost);
         address.Port = options.Port;
 
         int concurrentCap = options.EffectiveMaxConcurrentConnections;
         host.Create(address, concurrentCap, channelLimit: ENetChannel.COUNT);
 
         logger.LogInformation(
-            "ENet host listening on 0.0.0.0:{Port} (concurrentCap={Cap}, peerIndexPool={Pool}).",
-            options.Port, concurrentCap, options.MaxPeers);
+            "ENet host listening on {BindHost}:{Port} (concurrentCap={Cap}, peerIndexPool={Pool}).",
+            options.BindHost, options.Port, concurrentCap, options.MaxPeers);
 
         while (!stoppingToken.IsCancellationRequested)
         {

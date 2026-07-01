@@ -13,8 +13,22 @@ public sealed class WebTransportOptions
     /// <summary>Whether to start the WebTransport transport. Disabled by default; ENet is unaffected.</summary>
     public bool Enabled { get; set; }
 
-    /// <summary>QUIC/UDP bind address handed to the native host, e.g. <c>[::]:7443</c>.</summary>
-    public string BindAddr { get; set; } = "[::]:7443";
+    /// <summary>
+    ///     Host to bind the QUIC/UDP socket to. Defaults to the IPv4 wildcard <c>0.0.0.0</c> so it
+    ///     behaves the same on Windows and Linux, matching <see cref="ENetTransportOptions.BindHost" />.
+    ///     Set to <c>::</c> for the IPv6 wildcard (dual-stack on Linux, IPv6-only on Windows).
+    /// </summary>
+    public string BindHost { get; set; } = "0.0.0.0";
+
+    /// <summary>QUIC/UDP port.</summary>
+    public ushort Port { get; set; } = 7443;
+
+    /// <summary>
+    ///     Bind address handed to the native host, composed from <see cref="BindHost" /> and
+    ///     <see cref="Port" /> — an IPv6 host is bracketed (e.g. <c>[::]:7443</c>).
+    /// </summary>
+    public string BindAddr =>
+        BindHost.Contains(':') ? $"[{BindHost}]:{Port}" : $"{BindHost}:{Port}";
 
     /// <summary>PEM-encoded server certificate chain. Takes precedence over <see cref="CertPath" />.</summary>
     public string? CertPem { get; set; }

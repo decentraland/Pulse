@@ -70,15 +70,27 @@ public sealed class WebTransportHostedService(
 
         logger.LogInformation("WebTransport host listening on {BindAddr}.", options.BindAddr);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            if (host.TryService(options.ServiceTimeoutMs, out WebTransportEvent ev))
-                HandleEvent(ev);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                if (host.TryService(options.ServiceTimeoutMs, out WebTransportEvent ev))
+                    HandleEvent(ev);
 
-            FlushOutgoing();
+                FlushOutgoing();
+            }
+
+            ShutdownGracefully();
         }
-
-        ShutdownGracefully();
+        finally
+        {
+            // Dispose on the thread that owns the native host, once the loop has stopped touching it —
+            // never from StopAsync, which can return early on the shutdown timeout while this loop is
+            // still mid-service. The host is a DI singleton; the container's later Dispose is an
+            // idempotent no-op.
+            host.Dispose();
+            logger.LogInformation("WebTransport host stopped.");
+        }
     }
 
     private void ShutdownGracefully()
@@ -343,17 +355,6 @@ public sealed class WebTransportHostedService(
         }
 
         return host.SendDatagram(wtId, payload.ToArray());
-    }
-
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        await base.StopAsync(cancellationToken);
-
-        // Dispose the shared host to close the QUIC endpoint promptly on graceful stop. It is a DI
-        // singleton, so the container disposes it again at teardown — the native Dispose is idempotent,
-        // so the second call is a no-op.
-        host.Dispose();
-        logger.LogInformation("WebTransport host stopped.");
     }
 
     private static string ParseIp(string remoteAddress) =>

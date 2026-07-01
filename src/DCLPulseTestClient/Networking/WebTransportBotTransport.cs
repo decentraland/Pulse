@@ -39,8 +39,17 @@ public sealed class WebTransportBotTransport(MessagePipe pipe, byte[]? serverCer
         string url = $"https://{FormatHost(address)}:{port}/";
 
         // Connect blocks until the QUIC session is established — keep it off the caller's thread.
-        client = await Task.Run(() => WebTransportClient.Connect(url, serverCertHash), ct);
+        WebTransportClient connected = await Task.Run(() => WebTransportClient.Connect(url, serverCertHash), ct);
 
+        // Task.Run can't abort the in-flight native Connect, so a cancellation that raced it still
+        // returns a live session — dispose it rather than leak the native handle.
+        if (ct.IsCancellationRequested)
+        {
+            connected.Dispose();
+            ct.ThrowIfCancellationRequested();
+        }
+
+        client = connected;
         loopCts = new CancellationTokenSource();
         RunLoop(client, loopCts.Token);
     }

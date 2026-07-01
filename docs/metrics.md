@@ -4,17 +4,17 @@ Pulse includes a built-in analytics layer with a real-time terminal dashboard fo
 
 ## Enabling the dashboard
 
-Set `Dashboard:Enabled` to `true` in `appsettings.json` (or `appsettings.Development.json`):
+Set `Metrics:Type` to `Console` in `appsettings.json` (or `appsettings.Development.json`):
 
 ```json
 {
-  "Dashboard": {
-    "Enabled": true
+  "Metrics": {
+    "Type": "Console"
   }
 }
 ```
 
-When enabled, the dashboard takes over the terminal (fullscreen mode). Logs are captured by a custom `ILoggerProvider` and displayed in an embedded panel at the bottom. When disabled, ZLogger writes to stdout as usual and a no-op `NullDashboard` is used.
+`Console` runs the fullscreen terminal dashboard: it takes over the terminal, and logs are captured by a custom `ILoggerProvider` and shown in an embedded panel at the bottom. `Prometheus` (the production default) skips the dashboard, writes logs to stdout via ZLogger, and serves metrics over HTTP at `/metrics`.
 
 ## Architecture
 

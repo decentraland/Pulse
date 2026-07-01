@@ -25,10 +25,17 @@ public sealed class WebTransportOptions
 
     /// <summary>
     ///     Bind address handed to the native host, composed from <see cref="BindHost" /> and
-    ///     <see cref="Port" /> — an IPv6 host is bracketed (e.g. <c>[::]:7443</c>).
+    ///     <see cref="Port" /> — an IPv6 host is bracketed (e.g. <c>[::]:7443</c>). Brackets already on
+    ///     <see cref="BindHost" /> are normalized first, so both <c>::</c> and <c>[::]</c> resolve correctly.
     /// </summary>
-    public string BindAddr =>
-        BindHost.Contains(':') ? $"[{BindHost}]:{Port}" : $"{BindHost}:{Port}";
+    public string BindAddr
+    {
+        get
+        {
+            string host = BindHost.Trim('[', ']');
+            return host.Contains(':') ? $"[{host}]:{Port}" : $"{host}:{Port}";
+        }
+    }
 
     /// <summary>PEM-encoded server certificate chain. Takes precedence over <see cref="CertPath" />.</summary>
     public string? CertPem { get; set; }
@@ -46,8 +53,10 @@ public sealed class WebTransportOptions
     public uint ServiceTimeoutMs { get; set; } = 1;
 
     /// <summary>
-    ///     Largest framed datagram sent on an unreliable channel. A message that would exceed this
-    ///     falls back to the reliable stream. Sized under the QUIC path MTU browsers enforce (~1200 B).
+    ///     Largest framed datagram sent on an unreliable channel. A message that would exceed this is
+    ///     deliberately dropped and counted — never rerouted to the reliable stream, which would change
+    ///     the channel's semantics (unreliable → head-of-line-blocking reliable) and hide a server-side
+    ///     regression. Sized under the QUIC path MTU browsers enforce (~1200 B).
     /// </summary>
     public int MaxDatagramBytes { get; set; } = 1200;
 

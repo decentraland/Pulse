@@ -8,7 +8,8 @@ namespace Pulse.Transport.WebTransport
     /// <summary>
     ///     Length-prefixed framing for the reliable WebTransport bidi stream. QUIC streams are byte
     ///     pipes with no message boundaries (unlike ENet packets), so each message is written as a
-    ///     4-byte big-endian length followed by its payload. The browser client uses the same framing.
+    ///     4-byte big-endian length followed by its payload. This is the wire contract for both ends
+    ///     of the stream.
     /// </summary>
     public static class StreamFraming
     {
@@ -66,9 +67,15 @@ namespace Pulse.Transport.WebTransport
                 header[i] = buffer[i];
             uint length = BinaryPrimitives.ReadUInt32BigEndian(header);
 
-            // Reject before buffering the payload, so a hostile length prefix can't force unbounded growth.
             if (length > (uint)maxMessageLength)
+            {
+                // The stream is unrecoverable past a frame that overruns the cap — its next boundary is
+                // lost — so drop what's buffered before signalling. Otherwise the offending header sits at
+                // the head and every later chunk re-appends and re-throws, growing the buffer without
+                // bound; the caller debits its corruption budget on the throw and disconnects the peer.
+                buffer.Clear();
                 throw new InvalidDataException($"stream frame length {length} exceeds cap {maxMessageLength}");
+            }
 
             int total = HEADER_SIZE + (int)length;
             if (buffer.Count < total)

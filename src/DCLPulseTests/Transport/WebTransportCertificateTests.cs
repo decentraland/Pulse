@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.Transport;
+using Pulse.Transport.WebTransport;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -58,18 +59,30 @@ public class WebTransportCertificateTests
     [Test]
     public void Resolve_WithNoCert_AndSelfSignAllowed_GeneratesSelfSignedEcdsaP256UnderFourteenDays()
     {
-        (string certPem, string keyPem) = WebTransportCertificate.Resolve(new WebTransportOptions(), allowSelfSigned: true, logger);
+        try
+        {
+            (string certPem, string keyPem) = WebTransportCertificate.Resolve(new WebTransportOptions(), allowSelfSigned: true, logger);
 
-        Assert.That(certPem, Does.Contain("BEGIN CERTIFICATE"));
-        Assert.That(keyPem, Does.Contain("BEGIN PRIVATE KEY"));
+            Assert.That(certPem, Does.Contain("BEGIN CERTIFICATE"));
+            Assert.That(keyPem, Does.Contain("BEGIN PRIVATE KEY"));
 
-        using X509Certificate2 certificate = X509Certificate2.CreateFromPem(certPem);
-        using ECDsa? ecdsa = certificate.GetECDsaPublicKey();
+            using X509Certificate2 certificate = X509Certificate2.CreateFromPem(certPem);
+            using ECDsa? ecdsa = certificate.GetECDsaPublicKey();
 
-        Assert.That(ecdsa, Is.Not.Null, "the dev certificate must use ECDSA — serverCertificateHashes requires ECDSA-P256");
-        Assert.That(ecdsa!.KeySize, Is.EqualTo(256));
-        Assert.That(certificate.NotAfter - certificate.NotBefore, Is.LessThan(TimeSpan.FromDays(14)),
-            "serverCertificateHashes rejects certificates valid for more than 14 days");
+            Assert.That(ecdsa, Is.Not.Null, "the dev certificate must use ECDSA — serverCertificateHashes requires ECDSA-P256");
+            Assert.That(ecdsa!.KeySize, Is.EqualTo(256));
+            Assert.That(certificate.NotAfter - certificate.NotBefore, Is.LessThan(TimeSpan.FromDays(14)),
+                "serverCertificateHashes rejects certificates valid for more than 14 days");
+
+            // The dev-cert SHA-256 (base64) is written to the well-known file so a local client can pin it.
+            Assert.That(File.Exists(WebTransportDevCert.HashFilePath), Is.True);
+            byte[] writtenHash = Convert.FromBase64String(File.ReadAllText(WebTransportDevCert.HashFilePath));
+            Assert.That(writtenHash, Is.EqualTo(SHA256.HashData(certificate.RawData)));
+        }
+        finally
+        {
+            File.Delete(WebTransportDevCert.HashFilePath);
+        }
     }
 
     [Test]
@@ -86,9 +99,16 @@ public class WebTransportCertificateTests
         // through rather than be returned verbatim. With self-signing allowed it becomes a dev cert.
         var options = new WebTransportOptions { CertPem = "CERT-ONLY" };
 
-        (string certPem, _) = WebTransportCertificate.Resolve(options, allowSelfSigned: true, logger);
+        try
+        {
+            (string certPem, _) = WebTransportCertificate.Resolve(options, allowSelfSigned: true, logger);
 
-        Assert.That(certPem, Is.Not.EqualTo("CERT-ONLY"));
-        Assert.That(certPem, Does.Contain("BEGIN CERTIFICATE"));
+            Assert.That(certPem, Is.Not.EqualTo("CERT-ONLY"));
+            Assert.That(certPem, Does.Contain("BEGIN CERTIFICATE"));
+        }
+        finally
+        {
+            File.Delete(WebTransportDevCert.HashFilePath);
+        }
     }
 }

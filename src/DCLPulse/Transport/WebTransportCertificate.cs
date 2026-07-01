@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Pulse.Transport.WebTransport;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -62,12 +63,26 @@ internal static class WebTransportCertificate
         using X509Certificate2 certificate = request.CreateSelfSigned(notBefore, notAfter);
 
         string certHash = Convert.ToBase64String(SHA256.HashData(certificate.RawData));
+        WriteDevCertHashFile(certHash, logger);
 
         logger.LogWarning(
             "WebTransport: no certificate configured — generated a self-signed ECDSA-P256 dev certificate valid until {Expiry:u}. "
-            + "Browsers must trust it via serverCertificateHashes; its SHA-256 (base64) is {Hash}.",
-            notAfter, certHash);
+            + "Trust it via serverCertificateHashes; its SHA-256 (base64) is {Hash} (also written to {HashFile}).",
+            notAfter, certHash, WebTransportDevCert.HashFilePath);
 
         return (certificate.ExportCertificatePem(), key.ExportPkcs8PrivateKeyPem());
+    }
+
+    private static void WriteDevCertHashFile(string certHashBase64, ILogger logger)
+    {
+        try
+        {
+            File.WriteAllText(WebTransportDevCert.HashFilePath, certHashBase64);
+        }
+        catch (Exception exception)
+        {
+            // The hash file only greases the local self-signed dev flow — never fail startup over it.
+            logger.LogWarning(exception, "WebTransport: failed to write the dev cert hash to {HashFile}.", WebTransportDevCert.HashFilePath);
+        }
     }
 }

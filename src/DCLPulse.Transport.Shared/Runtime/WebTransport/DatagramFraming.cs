@@ -18,10 +18,22 @@ namespace Pulse.Transport.WebTransport
         public static byte[] Frame(byte channelId, uint seq, ReadOnlySpan<byte> payload)
         {
             var framed = new byte[HEADER_SIZE + payload.Length];
-            framed[0] = channelId;
-            BinaryPrimitives.WriteUInt32BigEndian(framed.AsSpan(1), seq);
-            payload.CopyTo(framed.AsSpan(HEADER_SIZE));
+            Frame(channelId, seq, payload, framed);
             return framed;
+        }
+
+        /// <summary>
+        ///     Write the {channelId, seq} header followed by <paramref name="payload" /> into
+        ///     <paramref name="destination" /> (which must hold at least <c>HEADER_SIZE + payload.Length</c>
+        ///     bytes) and return the number of bytes written — lets a caller frame into a reused or stack
+        ///     buffer without allocating.
+        /// </summary>
+        public static int Frame(byte channelId, uint seq, ReadOnlySpan<byte> payload, Span<byte> destination)
+        {
+            destination[0] = channelId;
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(1), seq);
+            payload.CopyTo(destination.Slice(HEADER_SIZE));
+            return HEADER_SIZE + payload.Length;
         }
 
         /// <summary>

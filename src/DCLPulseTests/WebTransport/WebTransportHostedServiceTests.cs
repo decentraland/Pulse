@@ -18,9 +18,9 @@ namespace DCLPulseTests.WebTransport;
 
 /// <summary>
 ///     Drives <see cref="WebTransportHostedService" /> through its internal <c>HandleEvent</c> /
-///     <c>FlushOutgoing</c> seam with a substituted native host, exercising connect/admission,
+///     <c>FlushOutgoing</c> seam with a recording fake host, exercising connect/admission,
 ///     stream reassembly, datagram staleness-drop, <see cref="PacketMode" /> → QUIC-primitive
-///     mapping, the oversize-datagram fallback, teardown, and the reused-<see cref="PeerIndex" />
+///     mapping, the oversize-datagram drop, teardown, and the reused-<see cref="PeerIndex" />
 ///     reconnect path — all without the native library or the transport thread.
 /// </summary>
 [TestFixture]
@@ -29,7 +29,7 @@ public class WebTransportHostedServiceTests
     private const int MAX_PEERS = 4;
     private const byte CHANNEL_SEQUENCED = 1; // mirrors WebTransportHostedService.CHANNEL_SEQUENCED
 
-    private IWebTransportHost host;
+    private RecordingWebTransportHost host;
     private MessagePipe messagePipe;
     private PeerIndexAllocator allocator;
     private IdentityBoard identityBoard;
@@ -37,10 +37,7 @@ public class WebTransportHostedServiceTests
     [SetUp]
     public void SetUp()
     {
-        host = Substitute.For<IWebTransportHost>();
-        host.SendStream(Arg.Any<ulong>(), Arg.Any<byte[]>()).Returns(true);
-        host.SendDatagram(Arg.Any<ulong>(), Arg.Any<byte[]>()).Returns(true);
-        host.Disconnect(Arg.Any<ulong>(), Arg.Any<uint>()).Returns(true);
+        host = new RecordingWebTransportHost();
 
         messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
         allocator = new PeerIndexAllocator(MAX_PEERS);
@@ -62,7 +59,7 @@ public class WebTransportHostedServiceTests
         Assert.That(connected.From.Transport, Is.EqualTo(TransportId.WebTransport),
             "the peer's index must be stamped WebTransport so its traffic routes back to this transport");
         Assert.That(allocator.FreeCount, Is.EqualTo(MAX_PEERS - 1));
-        host.DidNotReceive().Disconnect(Arg.Any<ulong>(), Arg.Any<uint>());
+        Assert.That(host.Disconnects, Is.Empty);
     }
 
     [Test]
@@ -74,8 +71,9 @@ public class WebTransportHostedServiceTests
         service.HandleEvent(Connect(wtId: 1));
         service.HandleEvent(Connect(wtId: 2));
 
-        host.Received(1).Disconnect(2, (uint)DisconnectReason.SERVER_FULL);
-        host.DidNotReceive().Disconnect(1, Arg.Any<uint>());
+        Assert.That(host.Disconnects, Has.Count.EqualTo(1));
+        Assert.That(host.Disconnects[0], Is.EqualTo((2ul, (uint)DisconnectReason.SERVER_FULL)),
+            "only the flooding peer is refused; the admitted peer is untouched");
         Assert.That(allocator.FreeCount, Is.EqualTo(0), "the single slot went to the admitted peer; the flood found the pool empty");
     }
 
@@ -88,7 +86,8 @@ public class WebTransportHostedServiceTests
         service.HandleEvent(Connect(wtId: 1, ip: "10.0.0.1:5000"));
         service.HandleEvent(Connect(wtId: 2, ip: "10.0.0.1:6000"));
 
-        host.Received(1).Disconnect(2, (uint)DisconnectReason.PRE_AUTH_IP_LIMIT_EXHAUSTED);
+        Assert.That(host.Disconnects, Has.Count.EqualTo(1));
+        Assert.That(host.Disconnects[0], Is.EqualTo((2ul, (uint)DisconnectReason.PRE_AUTH_IP_LIMIT_EXHAUSTED)));
         Assert.That(allocator.FreeCount, Is.EqualTo(MAX_PEERS - 1),
             "the refused peer's PeerIndex must be rolled back to the pool");
     }
@@ -152,8 +151,11 @@ public class WebTransportHostedServiceTests
         messagePipe.Send(new MessagePipe.OutgoingMessage(peer, response, PacketMode.RELIABLE));
         service.FlushOutgoing();
 
-        host.Received(1).SendStream(42, Arg.Is<byte[]>(b => b.SequenceEqual(StreamFraming.Frame(response.ToByteArray()))));
-        host.DidNotReceive().SendDatagram(Arg.Any<ulong>(), Arg.Any<byte[]>());
+        Assert.That(host.Streams, Has.Count.EqualTo(1));
+        Assert.That(host.Streams[0].Peer, Is.EqualTo(42ul));
+        Assert.That(host.Streams[0].Data, Is.EqualTo(StreamFraming.Frame(response.ToByteArray())),
+            "the reliable send is the length-framed message");
+        Assert.That(host.Datagrams, Is.Empty);
     }
 
     [Test]
@@ -163,9 +165,6 @@ public class WebTransportHostedServiceTests
         service.HandleEvent(Connect(wtId: 42));
         PeerIndex peer = new (0, TransportId.WebTransport);
 
-        var datagrams = new List<byte[]>();
-        host.SendDatagram(Arg.Any<ulong>(), Arg.Do<byte[]>(datagrams.Add)).Returns(true);
-
         var msg = new ServerMessage { Handshake = new HandshakeResponse { Success = true } };
         messagePipe.Send(new MessagePipe.OutgoingMessage(peer, msg, PacketMode.UNRELIABLE_SEQUENCED));
         messagePipe.Send(new MessagePipe.OutgoingMessage(peer, msg, PacketMode.UNRELIABLE_UNSEQUENCED));
@@ -173,9 +172,9 @@ public class WebTransportHostedServiceTests
 
         // Server→client datagrams carry no transport header — the client detects staleness from the
         // message body's own sequence, so each datagram is exactly the serialized ServerMessage.
-        Assert.That(datagrams, Has.Count.EqualTo(2));
-        Assert.That(datagrams[0], Is.EqualTo(msg.ToByteArray()));
-        Assert.That(datagrams[1], Is.EqualTo(msg.ToByteArray()), "both sequenced and unsequenced go raw on the server→client path");
+        Assert.That(host.Datagrams, Has.Count.EqualTo(2));
+        Assert.That(host.Datagrams[0].Data, Is.EqualTo(msg.ToByteArray()));
+        Assert.That(host.Datagrams[1].Data, Is.EqualTo(msg.ToByteArray()), "both sequenced and unsequenced go raw on the server→client path");
     }
 
     [Test]
@@ -192,8 +191,8 @@ public class WebTransportHostedServiceTests
         messagePipe.Send(new MessagePipe.OutgoingMessage(peer, msg, PacketMode.UNRELIABLE_SEQUENCED));
         service.FlushOutgoing();
 
-        host.DidNotReceive().SendDatagram(Arg.Any<ulong>(), Arg.Any<byte[]>());
-        host.DidNotReceive().SendStream(Arg.Any<ulong>(), Arg.Any<byte[]>());
+        Assert.That(host.Datagrams, Is.Empty);
+        Assert.That(host.Streams, Is.Empty);
     }
 
     [Test]
@@ -206,7 +205,8 @@ public class WebTransportHostedServiceTests
         messagePipe.SendDisconnect(peer, DisconnectReason.BANNED);
         service.FlushOutgoing();
 
-        host.Received(1).Disconnect(42, (uint)DisconnectReason.BANNED);
+        Assert.That(host.Disconnects, Has.Count.EqualTo(1));
+        Assert.That(host.Disconnects[0], Is.EqualTo((42ul, (uint)DisconnectReason.BANNED)));
     }
 
     [Test]
@@ -226,7 +226,7 @@ public class WebTransportHostedServiceTests
         // The peer is gone from the transport: a subsequent send is dropped, not forwarded.
         messagePipe.Send(new MessagePipe.OutgoingMessage(peer, new ServerMessage { Handshake = new HandshakeResponse() }, PacketMode.RELIABLE));
         service.FlushOutgoing();
-        host.DidNotReceive().SendStream(Arg.Any<ulong>(), Arg.Any<byte[]>());
+        Assert.That(host.Streams, Is.Empty);
     }
 
     [Test]
@@ -312,5 +312,44 @@ public class WebTransportHostedServiceTests
         a.CopyTo(result, 0);
         b.CopyTo(result, a.Length);
         return result;
+    }
+
+    /// <summary>
+    ///     Records sends and disconnects for assertion. A hand-written fake rather than an NSubstitute
+    ///     mock because NSubstitute can't observe a <see cref="ReadOnlySpan{T}" /> argument (a ref struct
+    ///     can't be boxed into its call recorder); the fake copies the span at call time.
+    /// </summary>
+    private sealed class RecordingWebTransportHost : IWebTransportHost
+    {
+        public List<(ulong Peer, byte[] Data)> Streams { get; } = new ();
+        public List<(ulong Peer, byte[] Data)> Datagrams { get; } = new ();
+        public List<(ulong Peer, uint Reason)> Disconnects { get; } = new ();
+
+        // Tests drive HandleEvent directly, so the service never services this fake.
+        public bool TryService(uint timeoutMs, out WebTransportEvent ev)
+        {
+            ev = default;
+            return false;
+        }
+
+        public bool SendStream(ulong peerId, ReadOnlySpan<byte> data)
+        {
+            Streams.Add((peerId, data.ToArray()));
+            return true;
+        }
+
+        public bool SendDatagram(ulong peerId, ReadOnlySpan<byte> data)
+        {
+            Datagrams.Add((peerId, data.ToArray()));
+            return true;
+        }
+
+        public bool Disconnect(ulong peerId, uint reason)
+        {
+            Disconnects.Add((peerId, reason));
+            return true;
+        }
+
+        public void Dispose() { }
     }
 }

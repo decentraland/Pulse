@@ -15,13 +15,25 @@ namespace Pulse.Transport.WebTransport
     {
         public const int HEADER_SIZE = 4;
 
-        /// <summary>Prefix <paramref name="payload" /> with its 4-byte big-endian length.</summary>
+        /// <summary>Prefix <paramref name="payload" /> with its 4-byte big-endian length into a new array.</summary>
         public static byte[] Frame(ReadOnlySpan<byte> payload)
         {
             var framed = new byte[HEADER_SIZE + payload.Length];
-            BinaryPrimitives.WriteUInt32BigEndian(framed, (uint)payload.Length);
-            payload.CopyTo(framed.AsSpan(HEADER_SIZE));
+            Frame(payload, framed);
             return framed;
+        }
+
+        /// <summary>
+        ///     Write the 4-byte big-endian length prefix followed by <paramref name="payload" /> into
+        ///     <paramref name="destination" /> (which must hold at least <c>HEADER_SIZE + payload.Length</c>
+        ///     bytes) and return the number of bytes written — lets a caller frame into a reused or stack
+        ///     buffer without allocating.
+        /// </summary>
+        public static int Frame(ReadOnlySpan<byte> payload, Span<byte> destination)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(destination, (uint)payload.Length);
+            payload.CopyTo(destination.Slice(HEADER_SIZE));
+            return HEADER_SIZE + payload.Length;
         }
     }
 

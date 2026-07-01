@@ -22,7 +22,6 @@ public sealed class WebTransportBotTransport(MessagePipe pipe, byte[]? serverCer
 
     private readonly StreamFrameReader streamReader = new (MAX_MESSAGE_BYTES);
     private readonly DatagramSequencer sequencer = new ();
-    private readonly byte[] sendBuffer = new byte[MAX_MESSAGE_BYTES];
 
     private WebTransportClient? client;
     private CancellationTokenSource? loopCts;
@@ -127,31 +126,38 @@ public sealed class WebTransportBotTransport(MessagePipe pipe, byte[]? serverCer
 
     private void FlushOutgoing(WebTransportClient session)
     {
+        // Stack buffers reused across this drain: serialize into payloadBuffer, frame into frameBuffer.
+        // Allocated once per call and freed on return, so the send path makes no per-message heap allocation.
+        Span<byte> payloadBuffer = stackalloc byte[MAX_MESSAGE_BYTES];
+        Span<byte> frameBuffer = stackalloc byte[DatagramFraming.HEADER_SIZE + MAX_MESSAGE_BYTES];
+
         while (pipe.TryReadOutgoingMessage(out MessagePipe.OutgoingMessage msg))
         {
             int size = msg.Message.CalculateSize();
 
-            if (size > sendBuffer.Length)
+            if (size > payloadBuffer.Length)
             {
-                Console.WriteLine($"WebTransport: outgoing message ({size} B) exceeds the {sendBuffer.Length} B buffer — dropping.");
+                Console.WriteLine($"WebTransport: outgoing message ({size} B) exceeds the {payloadBuffer.Length} B buffer — dropping.");
                 continue;
             }
 
-            var span = new Span<byte>(sendBuffer, 0, size);
-            msg.Message.WriteTo(span);
+            msg.Message.WriteTo(payloadBuffer.Slice(0, size));
+            ReadOnlySpan<byte> payload = payloadBuffer.Slice(0, size);
 
             if (msg.PacketMode == PacketMode.RELIABLE)
             {
-                if (!session.SendStream(StreamFraming.Frame(span)))
+                int total = StreamFraming.Frame(payload, frameBuffer);
+                if (!session.SendStream(frameBuffer.Slice(0, total)))
                     Console.WriteLine("WebTransport: reliable stream send failed.");
             }
             else
             {
                 byte channelId = msg.PacketMode == PacketMode.UNRELIABLE_SEQUENCED ? CHANNEL_SEQUENCED : CHANNEL_UNSEQUENCED;
+                int total = DatagramFraming.Frame(channelId, sequencer.Next(channelId), payload, frameBuffer);
 
                 // A false return also covers a datagram past the transport's size limit — quantized
                 // MovementInput stays well under it, so surfacing it is enough without a preflight guard.
-                if (!session.SendDatagram(DatagramFraming.Frame(channelId, sequencer.Next(channelId), span)))
+                if (!session.SendDatagram(frameBuffer.Slice(0, total)))
                     Console.WriteLine("WebTransport: datagram send failed or exceeded the transport limit.");
             }
         }

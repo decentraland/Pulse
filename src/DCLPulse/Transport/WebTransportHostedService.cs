@@ -53,6 +53,10 @@ public sealed class WebTransportHostedService(
 
     private readonly byte[] sendBuffer = new byte[options.Value.MaxMessageBytes];
 
+    // Reliable sends are length-framed into this buffer (HEADER_SIZE + the serialized message) so the
+    // frame is built without allocating per send. Raw datagrams reuse sendBuffer directly.
+    private readonly byte[] frameBuffer = new byte[StreamFraming.HEADER_SIZE + options.Value.MaxMessageBytes];
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // The native host is driven on a single dedicated thread — LongRunning keeps the thread-pool
@@ -320,12 +324,11 @@ public sealed class WebTransportHostedService(
             return;
         }
 
-        var payload = new Span<byte>(sendBuffer, 0, size);
-        message.WriteTo(payload);
+        message.WriteTo(new Span<byte>(sendBuffer, 0, size));
 
         bool sent = packetMode == PacketMode.RELIABLE
-                        ? host.SendStream(wtId, StreamFraming.Frame(payload))
-                        : SendDatagram(peerIndex, wtId, payload);
+                        ? SendStream(wtId, size)
+                        : SendDatagram(peerIndex, wtId, size);
 
         if (!sent)
             PulseMetrics.Transport.SEND_FAILURES.Add(1, TRANSPORT_TAG);
@@ -334,14 +337,21 @@ public sealed class WebTransportHostedService(
         PulseMetrics.Transport.BYTES_SENT.Add(size, TRANSPORT_TAG);
     }
 
-    private bool SendDatagram(PeerIndex peerIndex, ulong wtId, ReadOnlySpan<byte> payload)
+    private bool SendStream(ulong wtId, int size)
+    {
+        // Length-frame the serialized message (sendBuffer[0..size]) into frameBuffer and send that prefix.
+        int total = StreamFraming.Frame(new ReadOnlySpan<byte>(sendBuffer, 0, size), frameBuffer);
+        return host.SendStream(wtId, frameBuffer.AsSpan(0, total));
+    }
+
+    private bool SendDatagram(PeerIndex peerIndex, ulong wtId, int size)
     {
         // A raw datagram — one QUIC datagram carries one message (datagrams are already bounded, unlike
         // streams), and every unreliable server→client message (STATE_DELTA) carries its own sequence
         // in the body, so no transport-level sequence header is added; the client detects staleness from
         // that body sequence. Only the client→server direction, whose payload has no intrinsic sequence,
         // frames a {channelId, seq} header for the inbound deduper.
-        if (payload.Length > options.MaxDatagramBytes)
+        if (size > options.MaxDatagramBytes)
         {
             // A message on the unreliable channel that doesn't fit a datagram is a server bug — it
             // outgrew the path-MTU budget. Drop it and raise an error for a developer to fix; do not
@@ -349,12 +359,12 @@ public sealed class WebTransportHostedService(
             // channel's semantics (unreliable → head-of-line-blocking reliable).
             logger.LogError(
                 "Unreliable message ({Size} B) exceeds the {Cap} B datagram cap for peer {PeerIndex} and was dropped — a message on the unreliable channel must fit the datagram budget; investigate the oversized message.",
-                payload.Length, options.MaxDatagramBytes, peerIndex);
+                size, options.MaxDatagramBytes, peerIndex);
             PulseMetrics.WebTransport.DATAGRAMS_DROPPED_OVERSIZE.Add(1);
             return false;
         }
 
-        return host.SendDatagram(wtId, payload.ToArray());
+        return host.SendDatagram(wtId, sendBuffer.AsSpan(0, size));
     }
 
     private static string ParseIp(string remoteAddress) =>

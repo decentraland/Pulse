@@ -65,7 +65,7 @@ builder.Services.AddSingleton<ITimeProvider, StopwatchTimeProvider>();
 
 builder.Services.AddSingleton<ENetHostedService>();
 builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService<ENetHostedService>());
-builder.Services.AddSingleton<ITransport>(sp => sp.GetRequiredService<ENetHostedService>());
+builder.Services.AddSingleton<ITransport, MessagePipeTransport>();
 builder.Services.AddHostedService<PeersManager>();
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton(new ClientMessageCounters(8));

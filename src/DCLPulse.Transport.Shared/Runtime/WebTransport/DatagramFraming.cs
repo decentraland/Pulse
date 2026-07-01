@@ -8,8 +8,10 @@ namespace Pulse.Transport.WebTransport
     ///     Header framing for unreliable WebTransport datagrams: a 1-byte channel id and a 4-byte
     ///     big-endian sequence number, followed by the payload. The sequence lets the receiver drop
     ///     stale datagrams on the sequenced channel — replicating ENet's unreliable-sequenced
-    ///     semantics — since the application payload (e.g. MovementInput) carries no sequence of its
-    ///     own. The browser client uses the same framing.
+    ///     semantics. It is applied only by the sender whose payload has no sequence of its own — the
+    ///     browser client's MovementInput. Payloads that already carry a sequence (the server's
+    ///     STATE_DELTA) are sent as a bare datagram, so this header appears only on the client→server
+    ///     direction.
     /// </summary>
     public static class DatagramFraming
     {

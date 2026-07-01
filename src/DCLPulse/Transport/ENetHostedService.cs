@@ -18,9 +18,7 @@ public sealed partial class ENetHostedService(
     IdentityBoard identityBoard,
     PreAuthAdmission preAuthAdmission,
     CorruptedPacketLimiter corruptedPacketLimiter
-) : BackgroundService,
-    // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
-    ITransport
+) : BackgroundService
 {
     private readonly ENetTransportOptions options = options.Value;
 
@@ -282,13 +280,4 @@ public sealed partial class ENetHostedService(
         logger.LogInformation("ENet deinitialized.");
     }
 
-    /// <summary>
-    ///     Safe to call from any thread. The actual <c>enet_peer_disconnect</c> runs on the
-    ///     ENet thread via <see cref="FlushOutgoing" /> — the native ENet API is not
-    ///     thread-safe (see <c>CLAUDE.md</c>), and <see cref="connectedPeers" /> is only mutated
-    ///     by the ENet thread, so both concerns are resolved by routing through
-    ///     <see cref="MessagePipe" />.
-    /// </summary>
-    public void Disconnect(PeerIndex pi, DisconnectReason reason) =>
-        messagePipe.SendDisconnect(pi, reason);
 }

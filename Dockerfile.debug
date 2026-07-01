@@ -5,4 +5,5 @@ RUN apt-get update && apt-get install -y curl unzip procps \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
 EXPOSE 7777/udp
+EXPOSE 7443/udp
 ENTRYPOINT ["dotnet", "run", "--project", "src/DCLPulse/DCLPulse.csproj", "--configuration", "Debug", "--property:GenerateProto=false"]

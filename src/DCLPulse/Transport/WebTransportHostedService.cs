@@ -348,6 +348,10 @@ public sealed class WebTransportHostedService(
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
+
+        // Dispose the shared host to close the QUIC endpoint promptly on graceful stop. It is a DI
+        // singleton, so the container disposes it again at teardown — the native Dispose is idempotent,
+        // so the second call is a no-op.
         host.Dispose();
         logger.LogInformation("WebTransport host stopped.");
     }

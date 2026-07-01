@@ -35,5 +35,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip proc
 WORKDIR /app
 COPY --from=build /app/publish .
 EXPOSE 7777/udp
+EXPOSE 7443/udp
 EXPOSE 2222/tcp
 ENTRYPOINT ["/bin/sh", "-c", "set -e && /usr/sbin/sshd && exec dotnet DCLPulse.dll"]

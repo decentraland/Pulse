@@ -203,7 +203,9 @@ public sealed partial class ENetHostedService(
         {
             case EventType.Connect:
             {
-                if (!peerIndexAllocator.TryAllocate(out PeerIndex peerIndex))
+                // Allocate a slot stamped as ENet-owned; the stamp rides on the PeerIndex through every
+                // store it lands in (slotToPeerIndex, connectedPeers, the worker's peerStates, IdentityBoard).
+                if (!peerIndexAllocator.TryAllocate(TransportId.ENet, out PeerIndex peerIndex))
                 {
                     // Pool exhausted — refuse the connection. This can happen if the pool is the
                     // same size as ENet's max peers and every pending-recycle slot is still in grace.

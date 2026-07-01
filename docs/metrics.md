@@ -35,9 +35,11 @@ Each metric shows: current value, P95, P99, and a sparkline of the last 60 secon
 
 ## Transport metrics
 
+Both transports share this metric set. On the dashboard they render as two sections — **Transport — ENet** and **Transport — WebTransport**. In Prometheus every counter below carries a `transport="enet"|"webtransport"` label, so the old un-labelled aggregate becomes `sum without(transport)(…)`. The shared pipeline queues (Incoming/Outgoing Queue) are not per-transport and remain un-labelled.
+
 ### Active Peers
 
-Current number of connected ENet peers.
+Current number of connected peers, reported per transport.
 
 | Signal | Meaning |
 |---|---|
@@ -89,7 +91,7 @@ Pending messages in the incoming channel (`MessagePipe.incomingChannel`) waiting
 
 ### Outgoing Queue Depth
 
-Pending messages in the outgoing channel (`MessagePipe.outgoingChannel`) waiting for the ENet thread to flush. Worker threads enqueue `ServerMessage` envelopes; the ENet thread drains and sends via `FlushOutgoing()`.
+Pending messages across the per-transport outgoing channels waiting for a transport thread to flush. Worker threads enqueue `ServerMessage` envelopes, routed by the recipient's transport; each transport drains its own channel via `FlushOutgoing()`. This gauge is the aggregate across both channels.
 
 | Signal | Meaning |
 |---|---|
@@ -102,6 +104,30 @@ Pending messages in the outgoing channel (`MessagePipe.outgoingChannel`) waiting
 **The key signal is the trend, not the absolute value.** A flat sparkline at 200 with 100 peers is healthy. A sparkline trending upward is a problem regardless of the absolute value.
 
 **Why it's bursty**: Simulation ticks fire on worker threads and produce N*(N-1) outgoing deltas in a burst. The ENet thread, running at ~1000 iterations/sec (1ms service timeout), drains the queue between bursts. The queue depth reflects the burst size, not sustained backlog.
+
+---
+
+## WebTransport metrics
+
+WebTransport-specific counters with no ENet analogue — ENet frames its own packets and drops stale unreliable-sequenced packets at the transport, whereas the WebTransport channel-semantics layer reconstructs both in C#. Emitted un-labelled (they are inherently WebTransport).
+
+### Datagrams Dropped Stale
+
+Counter of inbound sequenced datagrams dropped because their sequence was older than the last accepted on that channel — the app-level replacement for ENet's unreliable-sequenced stale-drop. `dcl_pulse_wt_datagrams_dropped_stale_total`.
+
+| Signal | Meaning |
+|---|---|
+| Low / sporadic | Normal — occasional out-of-order or duplicate datagram delivery over QUIC |
+| Sustained high for a peer | That peer's path is heavily reordering/duplicating, or a client is misnumbering sequences |
+
+### Datagrams Dropped Oversize
+
+Counter of outbound unreliable messages dropped because the payload exceeded `WebTransport.MaxDatagramBytes` (the QUIC path-MTU budget). Logged as an error — it indicates a server-side message that outgrew the datagram budget, not client behaviour, and the message is **dropped, not rerouted** to the reliable stream. `dcl_pulse_wt_datagrams_dropped_oversize_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — every unreliable message fits the datagram budget |
+| Non-zero | **Server bug** — an unreliable message type grew past the cap; investigate the oversized message |
 
 ---
 

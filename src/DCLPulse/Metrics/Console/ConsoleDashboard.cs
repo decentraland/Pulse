@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Pulse.Transport;
 using System.Diagnostics;
 using XenoAtom.Terminal;
 using XenoAtom.Terminal.UI;
@@ -89,15 +90,17 @@ public sealed class ConsoleDashboard(
         (ServerMessage.MessageOneofCase.Teleported, "Teleported", STYLE_OUTBOUND),
     ]);
 
-    // Rate trackers — compute rates and percentiles from raw totals.
-    private readonly RateTracker bytesReceivedTracker = new (SPARKLINE_MAX_SAMPLES);
-    private readonly RateTracker bytesSentTracker = new (SPARKLINE_MAX_SAMPLES);
-    private readonly RateTracker packetsReceivedTracker = new (SPARKLINE_MAX_SAMPLES);
-    private readonly RateTracker packetsSentTracker = new (SPARKLINE_MAX_SAMPLES);
-    private readonly RateTracker unauthSkippedTracker = new (SPARKLINE_MAX_SAMPLES);
-    private readonly RateTracker sendFailuresTracker = new (SPARKLINE_MAX_SAMPLES);
+    // One transport section per transport, split by the snapshot's per-transport breakdown.
+    private readonly TransportView enetTransport = new ();
+    private readonly TransportView webTransport = new ();
+
+    // Shared pipeline queues (aggregate across transports).
     private readonly GaugeTracker incomingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker outgoingQueueDepthTracker = new (SPARKLINE_MAX_SAMPLES);
+
+    // WebTransport-specific counters.
+    private readonly RateTracker datagramsDroppedStaleTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker datagramsDroppedOversizeTracker = new (SPARKLINE_MAX_SAMPLES);
 
     // Hardening trackers.
     private readonly RateTracker preAuthIpLimitRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
@@ -125,18 +128,11 @@ public sealed class ConsoleDashboard(
     private readonly Dictionary<ServerMessage.MessageOneofCase, RateStats> outgoingRates =
         OUTGOING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => default(RateStats));
 
-    // Reactive state — written on UI thread inside onUpdate callback.
-    private readonly State<string> activePeers = new ("0");
-    private readonly State<string> totalConnected = new ("0");
-    private readonly State<string> totalDisconnected = new ("0");
-    private readonly RateStatsView bytesIn = new ();
-    private readonly RateStatsView bytesOut = new ();
-    private readonly RateStatsView packetsIn = new ();
-    private readonly RateStatsView packetsOut = new ();
-    private readonly RateStatsView unauthSkipped = new ();
-    private readonly RateStatsView sendFailures = new ();
+    // Shared / WebTransport reactive state — written on UI thread inside onUpdate callback.
     private readonly RateStatsView incomingQueue = new ();
     private readonly RateStatsView outgoingQueue = new ();
+    private readonly RateStatsView datagramsDroppedStale = new ();
+    private readonly RateStatsView datagramsDroppedOversize = new ();
     private readonly RateStatsView preAuthIpLimitRefused = new ();
     private readonly RateStatsView preAuthRefused = new ();
     private readonly RateStatsView handshakeAttemptsExceeded = new ();
@@ -153,15 +149,10 @@ public sealed class ConsoleDashboard(
     private readonly MessageTableState<ServerMessage.MessageOneofCase> outgoingMessagesState = new (OUTGOING_MESSAGES_CONFIG);
 
     // Charts — pre-filled to SPARKLINE_MAX_SAMPLES so the layout size is constant from the start.
-    private readonly Sparkline activePeersChart = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline bytesInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline bytesOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline packetsInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline packetsOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline unauthSkippedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline sendFailuresSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline incomingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline outgoingQueueSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline datagramsDroppedStaleSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline datagramsDroppedOversizeSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline preAuthIpLimitRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline preAuthRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline handshakeAttemptsExceededSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -243,37 +234,22 @@ public sealed class ConsoleDashboard(
 
         MetricsSnapshot snap = metricsCollector.TakeSnapshot();
 
-        activePeers.Value = snap.Transport.ActivePeers.ToString("N0");
-        totalConnected.Value = snap.Transport.TotalPeersConnected.ToString("N0");
-        totalDisconnected.Value = snap.Transport.TotalPeersDisconnected.ToString("N0");
+        enetTransport.Apply(snap.Transport.ByTransport[(int)TransportId.ENet], elapsed);
+        webTransport.Apply(snap.Transport.ByTransport[(int)TransportId.WebTransport], elapsed);
 
-        RateStats bytesReceivedRate = bytesReceivedTracker.Update(snap.Transport.TotalBytesReceived, elapsed);
-        RateStats bytesSentRate = bytesSentTracker.Update(snap.Transport.TotalBytesSent, elapsed);
-        RateStats packetsReceivedRate = packetsReceivedTracker.Update(snap.Transport.TotalPacketsReceived, elapsed);
-        RateStats packetsSentRate = packetsSentTracker.Update(snap.Transport.TotalPacketsSent, elapsed);
-        RateStats unauthRate = unauthSkippedTracker.Update(snap.Transport.TotalUnauthMessagesSkipped, elapsed);
-        RateStats failuresRate = sendFailuresTracker.Update(snap.Transport.TotalSendFailures, elapsed);
         RateStats inQueueRate = incomingQueueDepthTracker.Record(snap.Transport.IncomingQueueDepth);
         RateStats outQueueRate = outgoingQueueDepthTracker.Record(snap.Transport.OutgoingQueueDepth);
-
-        bytesIn.Apply(bytesReceivedRate, ByteFormat.FormatRate);
-        bytesOut.Apply(bytesSentRate, ByteFormat.FormatRate);
-        packetsIn.Apply(packetsReceivedRate, v => v.ToString("N0"));
-        packetsOut.Apply(packetsSentRate, v => v.ToString("N0"));
-        unauthSkipped.Apply(unauthRate, v => v.ToString("N0"));
-        sendFailures.Apply(failuresRate, v => v.ToString("N0"));
         incomingQueue.Apply(inQueueRate, v => v.ToString("N0"));
         outgoingQueue.Apply(outQueueRate, v => v.ToString("N0"));
-
-        ShiftSample(activePeersChart.Values, snap.Transport.ActivePeers);
-        ShiftSample(bytesInSparkline.Values, bytesReceivedRate.PerSec);
-        ShiftSample(bytesOutSparkline.Values, bytesSentRate.PerSec);
-        ShiftSample(packetsInSparkline.Values, packetsReceivedRate.PerSec);
-        ShiftSample(packetsOutSparkline.Values, packetsSentRate.PerSec);
-        ShiftSample(unauthSkippedSparkline.Values, unauthRate.PerSec);
-        ShiftSample(sendFailuresSparkline.Values, failuresRate.PerSec);
         ShiftSample(incomingQueueSparkline.Values, snap.Transport.IncomingQueueDepth);
         ShiftSample(outgoingQueueSparkline.Values, snap.Transport.OutgoingQueueDepth);
+
+        RateStats staleRate = datagramsDroppedStaleTracker.Update(snap.WebTransport.TotalDatagramsDroppedStale, elapsed);
+        RateStats oversizeRate = datagramsDroppedOversizeTracker.Update(snap.WebTransport.TotalDatagramsDroppedOversize, elapsed);
+        datagramsDroppedStale.Apply(staleRate, v => v.ToString("N0"));
+        datagramsDroppedOversize.Apply(oversizeRate, v => v.ToString("N0"));
+        ShiftSample(datagramsDroppedStaleSparkline.Values, staleRate.PerSec);
+        ShiftSample(datagramsDroppedOversizeSparkline.Values, oversizeRate.PerSec);
 
         // Hardening rates + gauge.
         RateStats ipLimitRefusedRate = preAuthIpLimitRefusedTracker.Update(snap.Hardening.TotalPreAuthIpLimitRefused, elapsed);
@@ -324,23 +300,23 @@ public sealed class ConsoleDashboard(
 
     private Visual BuildVisualTree()
     {
-        var metricsTable = new Table(
+        var pipelineTable = new Table(
             TableHeaders(),
             [
-                [new TextBlock("Active Peers").MinWidth(COL_LABEL), new TextBlock(() => activePeers.Value).MinWidth(COL_VALUE), "", "", "", activePeersChart.Style(STYLE_PEERS)],
-                [new TextBlock("Total Connected"), new TextBlock(() => totalConnected.Value), "", "", "", ""],
-                [new TextBlock("Total Disconnected"), new TextBlock(() => totalDisconnected.Value), "", "", "", ""],
-                RateStatsRow("Bytes In/s", bytesIn, bytesInSparkline.Style(STYLE_INBOUND), stacked: true),
-                RateStatsRow("Bytes Out/s", bytesOut, bytesOutSparkline.Style(STYLE_OUTBOUND), stacked: true),
-                RateStatsRow("Packets In/s", packetsIn, packetsInSparkline.Style(STYLE_INBOUND)),
-                RateStatsRow("Packets Out/s", packetsOut, packetsOutSparkline.Style(STYLE_OUTBOUND)),
-                RateStatsRow("Unauth Skipped", unauthSkipped, unauthSkippedSparkline.Style(STYLE_BACKPRESSURE)),
-                RateStatsRow("Send Failures", sendFailures, sendFailuresSparkline.Style(STYLE_ERROR)),
                 RateStatsRow("Incoming Queue", incomingQueue, incomingQueueSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Outgoing Queue", outgoingQueue, outgoingQueueSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
 
-        var transport = new Group("Transport", metricsTable);
+        var pipeline = new Group("Pipeline Queues", pipelineTable);
+
+        var webTransportTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Datagrams Dropped Stale", datagramsDroppedStale, datagramsDroppedStaleSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Datagrams Dropped Oversize", datagramsDroppedOversize, datagramsDroppedOversizeSparkline.Style(STYLE_ERROR)),
+            ]);
+
+        var webTransportGroup = new Group("WebTransport", webTransportTable);
 
         var hardeningTable = new Table(
             TableHeaders(),
@@ -364,7 +340,10 @@ public sealed class ConsoleDashboard(
             ).HorizontalAlignment(Align.Stretch);
 
         ScrollViewer metricsArea = new VStack(
-                transport,
+                enetTransport.BuildGroup("Transport — ENet"),
+                webTransport.BuildGroup("Transport — WebTransport"),
+                pipeline,
+                webTransportGroup,
                 hardening,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()
@@ -418,6 +397,83 @@ public sealed class ConsoleDashboard(
     {
         values.RemoveAt(0);
         values.Add(value);
+    }
+
+    /// <summary>
+    ///     One transport's section: the per-transport counters rendered as a table, computing rates
+    ///     and percentiles locally. Instantiated once per <see cref="TransportId" /> and fed the
+    ///     matching <see cref="MetricsSnapshot.PerTransportCounters" /> each tick.
+    /// </summary>
+    private sealed class TransportView
+    {
+        private readonly RateTracker bytesReceivedTracker = new (SPARKLINE_MAX_SAMPLES);
+        private readonly RateTracker bytesSentTracker = new (SPARKLINE_MAX_SAMPLES);
+        private readonly RateTracker packetsReceivedTracker = new (SPARKLINE_MAX_SAMPLES);
+        private readonly RateTracker packetsSentTracker = new (SPARKLINE_MAX_SAMPLES);
+        private readonly RateTracker unauthSkippedTracker = new (SPARKLINE_MAX_SAMPLES);
+        private readonly RateTracker sendFailuresTracker = new (SPARKLINE_MAX_SAMPLES);
+
+        private readonly State<string> activePeers = new ("0");
+        private readonly State<string> totalConnected = new ("0");
+        private readonly State<string> totalDisconnected = new ("0");
+        private readonly RateStatsView bytesIn = new ();
+        private readonly RateStatsView bytesOut = new ();
+        private readonly RateStatsView packetsIn = new ();
+        private readonly RateStatsView packetsOut = new ();
+        private readonly RateStatsView unauthSkipped = new ();
+        private readonly RateStatsView sendFailures = new ();
+
+        private readonly Sparkline activePeersChart = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+        private readonly Sparkline bytesInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+        private readonly Sparkline bytesOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+        private readonly Sparkline packetsInSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+        private readonly Sparkline packetsOutSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+        private readonly Sparkline unauthSkippedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+        private readonly Sparkline sendFailuresSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+
+        public void Apply(in MetricsSnapshot.PerTransportCounters counters, double elapsed)
+        {
+            activePeers.Value = counters.ActivePeers.ToString("N0");
+            totalConnected.Value = counters.TotalPeersConnected.ToString("N0");
+            totalDisconnected.Value = counters.TotalPeersDisconnected.ToString("N0");
+
+            RateStats bytesReceivedRate = bytesReceivedTracker.Update(counters.TotalBytesReceived, elapsed);
+            RateStats bytesSentRate = bytesSentTracker.Update(counters.TotalBytesSent, elapsed);
+            RateStats packetsReceivedRate = packetsReceivedTracker.Update(counters.TotalPacketsReceived, elapsed);
+            RateStats packetsSentRate = packetsSentTracker.Update(counters.TotalPacketsSent, elapsed);
+            RateStats unauthRate = unauthSkippedTracker.Update(counters.TotalUnauthMessagesSkipped, elapsed);
+            RateStats failuresRate = sendFailuresTracker.Update(counters.TotalSendFailures, elapsed);
+
+            bytesIn.Apply(bytesReceivedRate, ByteFormat.FormatRate);
+            bytesOut.Apply(bytesSentRate, ByteFormat.FormatRate);
+            packetsIn.Apply(packetsReceivedRate, v => v.ToString("N0"));
+            packetsOut.Apply(packetsSentRate, v => v.ToString("N0"));
+            unauthSkipped.Apply(unauthRate, v => v.ToString("N0"));
+            sendFailures.Apply(failuresRate, v => v.ToString("N0"));
+
+            ShiftSample(activePeersChart.Values, counters.ActivePeers);
+            ShiftSample(bytesInSparkline.Values, bytesReceivedRate.PerSec);
+            ShiftSample(bytesOutSparkline.Values, bytesSentRate.PerSec);
+            ShiftSample(packetsInSparkline.Values, packetsReceivedRate.PerSec);
+            ShiftSample(packetsOutSparkline.Values, packetsSentRate.PerSec);
+            ShiftSample(unauthSkippedSparkline.Values, unauthRate.PerSec);
+            ShiftSample(sendFailuresSparkline.Values, failuresRate.PerSec);
+        }
+
+        public Group BuildGroup(string title) =>
+            new (title, new Table(
+                TableHeaders(),
+                [
+                    [new TextBlock("Active Peers").MinWidth(COL_LABEL), new TextBlock(() => activePeers.Value).MinWidth(COL_VALUE), "", "", "", activePeersChart.Style(STYLE_PEERS)],
+                    [new TextBlock("Total Connected"), new TextBlock(() => totalConnected.Value), "", "", "", ""],
+                    [new TextBlock("Total Disconnected"), new TextBlock(() => totalDisconnected.Value), "", "", "", ""],
+                    RateStatsRow("Bytes In/s", bytesIn, bytesInSparkline.Style(STYLE_INBOUND), stacked: true),
+                    RateStatsRow("Bytes Out/s", bytesOut, bytesOutSparkline.Style(STYLE_OUTBOUND), stacked: true),
+                    RateStatsRow("Packets In/s", packetsIn, packetsInSparkline.Style(STYLE_INBOUND)),
+                    RateStatsRow("Packets Out/s", packetsOut, packetsOutSparkline.Style(STYLE_OUTBOUND)),
+                    RateStatsRow("Unauth Skipped", unauthSkipped, unauthSkippedSparkline.Style(STYLE_BACKPRESSURE)),
+                    RateStatsRow("Send Failures", sendFailures, sendFailuresSparkline.Style(STYLE_ERROR)),
+                ]));
     }
 
     /// <summary>

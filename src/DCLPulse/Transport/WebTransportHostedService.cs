@@ -38,6 +38,9 @@ public sealed class WebTransportHostedService(
     // Outbound datagrams carry no header — see SendDatagram.
     private const byte CHANNEL_SEQUENCED = 1;
 
+    // The transport dimension attached to every transport counter this service records.
+    private static readonly KeyValuePair<string, object?> TRANSPORT_TAG = PulseMetrics.Transport.Tag(TransportId.WebTransport);
+
     private readonly WebTransportOptions options = options.Value;
 
     // Session state is owned exclusively by the WebTransport thread — no locking, same discipline as
@@ -133,8 +136,8 @@ public sealed class WebTransportHostedService(
 
         messagePipe.OnPeerConnected(peerIndex);
 
-        PulseMetrics.Transport.PEERS_CONNECTED.Add(1);
-        PulseMetrics.Transport.ACTIVE_PEERS.Add(1);
+        PulseMetrics.Transport.PEERS_CONNECTED.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.ACTIVE_PEERS.Add(1, TRANSPORT_TAG);
 
         logger.LogDebug("WebTransport peer connected: {Address} (wtId={WtId}, peerIndex={PeerIndex}).",
             ev.RemoteAddress, ev.PeerId, peerIndex);
@@ -205,7 +208,10 @@ public sealed class WebTransportHostedService(
         // Replicate ENet's unreliable-sequenced drop: on the sequenced channel keep only datagrams
         // newer than the last accepted; the unsequenced channel is delivered as-is.
         if (channelId == CHANNEL_SEQUENCED && !session.Deduper.ShouldAccept(channelId, seq))
+        {
+            PulseMetrics.WebTransport.DATAGRAMS_DROPPED_STALE.Add(1);
             return;
+        }
 
         DeliverInbound(session.PeerIndex, payload);
     }
@@ -237,8 +243,8 @@ public sealed class WebTransportHostedService(
         string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);
         messagePipe.OnPeerDisconnected(peerIndex);
 
-        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
-        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1, TRANSPORT_TAG);
 
         logger.LogDebug("WebTransport peer teardown: wtId={WtId} peerIndex={PeerIndex} wallet={Wallet}.",
             wtId, peerIndex, walletId ?? "<none>");
@@ -246,8 +252,8 @@ public sealed class WebTransportHostedService(
 
     private void DeliverInbound(PeerIndex peerIndex, ReadOnlySpan<byte> message)
     {
-        PulseMetrics.Transport.PACKETS_RECEIVED.Add(1);
-        PulseMetrics.Transport.BYTES_RECEIVED.Add(message.Length);
+        PulseMetrics.Transport.PACKETS_RECEIVED.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.BYTES_RECEIVED.Add(message.Length, TRANSPORT_TAG);
 
         if (!messagePipe.OnDataReceived(new MessagePacket(message, peerIndex)))
             RecordCorruption(peerIndex);
@@ -298,7 +304,7 @@ public sealed class WebTransportHostedService(
         {
             logger.LogError("Outgoing WebTransport message ({Size} B) exceeds the {Cap} B buffer for peer {PeerIndex} — dropping.",
                 size, sendBuffer.Length, peerIndex);
-            PulseMetrics.Transport.SEND_FAILURES.Add(1);
+            PulseMetrics.Transport.SEND_FAILURES.Add(1, TRANSPORT_TAG);
             return;
         }
 
@@ -310,10 +316,10 @@ public sealed class WebTransportHostedService(
                         : SendDatagram(peerIndex, wtId, payload);
 
         if (!sent)
-            PulseMetrics.Transport.SEND_FAILURES.Add(1);
+            PulseMetrics.Transport.SEND_FAILURES.Add(1, TRANSPORT_TAG);
 
-        PulseMetrics.Transport.PACKETS_SENT.Add(1);
-        PulseMetrics.Transport.BYTES_SENT.Add(size);
+        PulseMetrics.Transport.PACKETS_SENT.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.BYTES_SENT.Add(size, TRANSPORT_TAG);
     }
 
     private bool SendDatagram(PeerIndex peerIndex, ulong wtId, ReadOnlySpan<byte> payload)
@@ -332,6 +338,7 @@ public sealed class WebTransportHostedService(
             logger.LogError(
                 "Unreliable message ({Size} B) exceeds the {Cap} B datagram cap for peer {PeerIndex} and was dropped — a message on the unreliable channel must fit the datagram budget; investigate the oversized message.",
                 payload.Length, options.MaxDatagramBytes, peerIndex);
+            PulseMetrics.WebTransport.DATAGRAMS_DROPPED_OVERSIZE.Add(1);
             return false;
         }
 

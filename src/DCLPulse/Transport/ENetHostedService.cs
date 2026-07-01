@@ -20,6 +20,9 @@ public sealed partial class ENetHostedService(
     CorruptedPacketLimiter corruptedPacketLimiter
 ) : BackgroundService
 {
+    // The transport dimension attached to every transport counter this service records.
+    private static readonly KeyValuePair<string, object?> TRANSPORT_TAG = PulseMetrics.Transport.Tag(TransportId.ENet);
+
     private readonly ENetTransportOptions options = options.Value;
 
     // Keyed by the server-allocated PeerIndex. Maintained exclusively on the ENet thread —
@@ -140,8 +143,8 @@ public sealed partial class ENetHostedService(
         string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);
         messagePipe.OnPeerDisconnected(peerIndex);
 
-        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
-        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1, TRANSPORT_TAG);
 
         logger.LogDebug("Peer teardown ({Context}): slot={Slot} peerIndex={PeerIndex} wallet={Wallet}.",
             contextForLog, slotId, peerIndex, walletId ?? "<none>");
@@ -187,10 +190,10 @@ public sealed partial class ENetHostedService(
         int result = peer.Send(channel.ChannelId, ref packet);
 
         if (result < 0)
-            PulseMetrics.Transport.SEND_FAILURES.Add(1);
+            PulseMetrics.Transport.SEND_FAILURES.Add(1, TRANSPORT_TAG);
 
-        PulseMetrics.Transport.PACKETS_SENT.Add(1);
-        PulseMetrics.Transport.BYTES_SENT.Add(size);
+        PulseMetrics.Transport.PACKETS_SENT.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.BYTES_SENT.Add(size, TRANSPORT_TAG);
     }
 
     private void HandleEvent(ref Event netEvent)
@@ -223,8 +226,8 @@ public sealed partial class ENetHostedService(
 
                 messagePipe.OnPeerConnected(peerIndex);
 
-                PulseMetrics.Transport.PEERS_CONNECTED.Add(1);
-                PulseMetrics.Transport.ACTIVE_PEERS.Add(1);
+                PulseMetrics.Transport.PEERS_CONNECTED.Add(1, TRANSPORT_TAG);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(1, TRANSPORT_TAG);
 
                 logger.LogDebug("Peer connected: {IP}:{Port} (slot={Slot}, peerIndex={PeerIndex}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, slotId, peerIndex);
@@ -262,8 +265,8 @@ public sealed partial class ENetHostedService(
 
                 netEvent.Packet.CopyTo(receiveBuffer);
 
-                PulseMetrics.Transport.PACKETS_RECEIVED.Add(1);
-                PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength);
+                PulseMetrics.Transport.PACKETS_RECEIVED.Add(1, TRANSPORT_TAG);
+                PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength, TRANSPORT_TAG);
 
                 if (!messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, packetLength), peerIndex)))
                     RecordCorruption(ref netEvent, peerIndex);

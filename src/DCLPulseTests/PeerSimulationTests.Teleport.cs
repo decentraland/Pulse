@@ -13,17 +13,12 @@ public partial class PeerSimulationTests
     {
         snapshotBoard.SetActive(peer);
 
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: seq * 10,
-            Parcel: 0,
-            LocalPosition: globalPosition, Velocity: Vector3.Zero,
-            GlobalPosition: globalPosition,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.Grounded,
-            GlideState: GlideState.PropClosed,
-            IsTeleport: true));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: seq, serverTick: seq * 10,
+            parcel: 0,
+            position: globalPosition,
+            animationFlags: PlayerAnimationFlags.Grounded,
+            isTeleport: true));
     }
 
     [Test]
@@ -33,7 +28,7 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages(); // consume PlayerJoined
 
-        PublishTeleportSnapshot(subject, seq: 2, new Vector3(10, 20, 30));
+        PublishTeleportSnapshot(subject, seq: 2, new Vector3(10, 20, 12));
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
@@ -42,9 +37,10 @@ public partial class PeerSimulationTests
         Assert.That(teleportMsg.Message.Teleported.SubjectId, Is.EqualTo(subject.Value));
         Assert.That(teleportMsg.Message.Teleported.Sequence, Is.EqualTo(2u));
         Assert.That(teleportMsg.Message.Teleported.ServerTick, Is.EqualTo(20u));
-        Assert.That(teleportMsg.Message.Teleported.State.Position.X, Is.EqualTo(10f));
-        Assert.That(teleportMsg.Message.Teleported.State.Position.Y, Is.EqualTo(20f));
-        Assert.That(teleportMsg.Message.Teleported.State.Position.Z, Is.EqualTo(30f));
+        // Position is parcel-local [0,16] on X/Z, so the assertions use in-range coords + a quantization tolerance.
+        Assert.That(teleportMsg.Message.Teleported.State.PositionXQuantized, Is.EqualTo(10f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(teleportMsg.Message.Teleported.State.PositionYQuantized, Is.EqualTo(20f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(teleportMsg.Message.Teleported.State.PositionZQuantized, Is.EqualTo(12f).Within(PlayerState.PositionZQuantizedStep));
     }
 
     [Test]
@@ -112,12 +108,12 @@ public partial class PeerSimulationTests
         Assert.That(first.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported), Is.True);
 
         // Second consecutive teleport without normal movement in between
-        PublishTeleportSnapshot(subject, seq: 3, new Vector3(50, 60, 70));
+        PublishTeleportSnapshot(subject, seq: 3, new Vector3(13, 60, 14));
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> second = DrainAllMessages();
         OutgoingMessage teleportMsg = second.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
-        Assert.That(teleportMsg.Message.Teleported.State.Position.X, Is.EqualTo(50f));
+        Assert.That(teleportMsg.Message.Teleported.State.PositionXQuantized, Is.EqualTo(13f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]
@@ -156,12 +152,12 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Second teleport
-        PublishTeleportSnapshot(subject, seq: 4, new Vector3(50, 60, 70));
+        PublishTeleportSnapshot(subject, seq: 4, new Vector3(13, 60, 14));
         simulation.SimulateTick(peers, tickCounter: 3);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage teleportMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
-        Assert.That(teleportMsg.Message.Teleported.State.Position.X, Is.EqualTo(50f));
+        Assert.That(teleportMsg.Message.Teleported.State.PositionXQuantized, Is.EqualTo(13f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]

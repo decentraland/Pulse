@@ -33,9 +33,6 @@ public sealed class FieldValidator(
         if (!IsValidParcel(input.State.ParcelIndex))
             return Reject(from, state, DisconnectReason.INVALID_INPUT_FIELD);
 
-        if (!IsValidPlayerStateFloats(input.State))
-            return Reject(from, state, DisconnectReason.INVALID_INPUT_FIELD);
-
         return true;
     }
 
@@ -48,9 +45,6 @@ public sealed class FieldValidator(
             return Reject(from, state, DisconnectReason.INVALID_EMOTE_FIELD);
 
         if (!IsValidParcel(emote.PlayerState.ParcelIndex))
-            return Reject(from, state, DisconnectReason.INVALID_EMOTE_FIELD);
-
-        if (!IsValidPlayerStateFloats(emote.PlayerState))
             return Reject(from, state, DisconnectReason.INVALID_EMOTE_FIELD);
 
         return true;
@@ -75,9 +69,6 @@ public sealed class FieldValidator(
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
         if (!IsValidParcel(initial.State.ParcelIndex))
-            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-
-        if (!IsValidPlayerStateFloats(initial.State))
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
         if (maxEmoteDurationMs > 0 && initial.HasEmoteDurationMs && initial.EmoteDurationMs > maxEmoteDurationMs)
@@ -110,26 +101,6 @@ public sealed class FieldValidator(
     }
 
     private bool IsValidParcel(int index) => parcelEncoder.IsValidIndex(index);
-
-    /// <summary>
-    ///     Rejects NaN/±Infinity on every client-supplied float in <see cref="PlayerState" />.
-    ///     These values would propagate into the snapshot ring and fan out to observers, where
-    ///     NaN breaks interpolation and inflates the <c>IsSameState</c> diff check (NaN != NaN
-    ///     under IEEE). Also rejects malformed proto with unset Position/Velocity, which would
-    ///     otherwise NRE in the handler. Optional fields (head yaw/pitch) are checked only
-    ///     when present.
-    /// </summary>
-    private static bool IsValidPlayerStateFloats(PlayerState s) =>
-        s.Position is not null
-     && s.Velocity is not null
-     && IsFinite(s.Position)
-     && IsFinite(s.Velocity)
-     && float.IsFinite(s.RotationY)
-     && float.IsFinite(s.MovementBlend)
-     && float.IsFinite(s.SlideBlend)
-     && (!s.HasHeadYaw || float.IsFinite(s.HeadYaw))
-     && (!s.HasHeadPitch || float.IsFinite(s.HeadPitch))
-     && (s.PointAt == null || IsFinite(s.PointAt));
 
     private static bool IsFinite(Vector3Proto? v) =>
         v is not null && float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);

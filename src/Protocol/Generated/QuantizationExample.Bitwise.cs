@@ -10,6 +10,8 @@ namespace Decentraland.Common
     public partial class PositionDelta
     {
         private float? _dx;
+        /// <summary>Coarsest quantization step of <see cref="DxQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float DxQuantizedStep = 0.0030518044f;
         /// <summary>Float accessor for <see cref="Dx"/>. Range [-100.0f, 100.0f], 16 bits, step ≈ 0.0030518.</summary>
         public float DxQuantized
         {
@@ -18,6 +20,8 @@ namespace Decentraland.Common
         }
 
         private float? _dy;
+        /// <summary>Coarsest quantization step of <see cref="DyQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float DyQuantizedStep = 0.0030518044f;
         /// <summary>Float accessor for <see cref="Dy"/>. Range [-100.0f, 100.0f], 16 bits, step ≈ 0.0030518.</summary>
         public float DyQuantized
         {
@@ -26,6 +30,8 @@ namespace Decentraland.Common
         }
 
         private float? _dz;
+        /// <summary>Coarsest quantization step of <see cref="DzQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float DzQuantizedStep = 0.0030518044f;
         /// <summary>Float accessor for <see cref="Dz"/>. Range [-100.0f, 100.0f], 16 bits, step ≈ 0.0030518.</summary>
         public float DzQuantized
         {
@@ -45,6 +51,8 @@ namespace Decentraland.Common
     public partial class PlayerInput
     {
         private float? _moveX;
+        /// <summary>Coarsest quantization step of <see cref="MoveXQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float MoveXQuantizedStep = 0.0078431373f;
         /// <summary>Float accessor for <see cref="MoveX"/>. Range [-1.0f, 1.0f], 8 bits, step ≈ 0.00784314.</summary>
         public float MoveXQuantized
         {
@@ -53,6 +61,8 @@ namespace Decentraland.Common
         }
 
         private float? _moveZ;
+        /// <summary>Coarsest quantization step of <see cref="MoveZQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float MoveZQuantizedStep = 0.0078431373f;
         /// <summary>Float accessor for <see cref="MoveZ"/>. Range [-1.0f, 1.0f], 8 bits, step ≈ 0.00784314.</summary>
         public float MoveZQuantized
         {
@@ -61,6 +71,8 @@ namespace Decentraland.Common
         }
 
         private float? _yaw;
+        /// <summary>Coarsest quantization step of <see cref="YawQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float YawQuantizedStep = 0.087912088f;
         /// <summary>Float accessor for <see cref="Yaw"/>. Range [-180.0f, 180.0f], 12 bits, step ≈ 0.0879121.</summary>
         public float YawQuantized
         {
@@ -80,6 +92,8 @@ namespace Decentraland.Common
     public partial class VelocityState
     {
         private float? _vx;
+        /// <summary>Coarsest quantization step of <see cref="VxQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float VxQuantizedStep = 0.78430157f;
         /// <summary>Float accessor for <see cref="Vx"/>. Range [-50.0f, 50.0f], power 2.0f, 8 bits (sign + 7-bit magnitude), near-zero step ≈ 0.00310001.</summary>
         public float VxQuantized
         {
@@ -88,6 +102,8 @@ namespace Decentraland.Common
         }
 
         private float? _vy;
+        /// <summary>Coarsest quantization step of <see cref="VyQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float VyQuantizedStep = 0.78430157f;
         /// <summary>Float accessor for <see cref="Vy"/>. Range [-50.0f, 50.0f], power 2.0f, 8 bits (sign + 7-bit magnitude), near-zero step ≈ 0.00310001.</summary>
         public float VyQuantized
         {
@@ -96,6 +112,8 @@ namespace Decentraland.Common
         }
 
         private float? _vz;
+        /// <summary>Coarsest quantization step of <see cref="VzQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float VzQuantizedStep = 0.78430157f;
         /// <summary>Float accessor for <see cref="Vz"/>. Range [-50.0f, 50.0f], power 2.0f, 8 bits (sign + 7-bit magnitude), near-zero step ≈ 0.00310001.</summary>
         public float VzQuantized
         {
@@ -115,6 +133,8 @@ namespace Decentraland.Common
     public partial class AvatarStateSnapshot
     {
         private float? _x;
+        /// <summary>Coarsest quantization step of <see cref="XQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float XQuantizedStep = 0.12500191f;
         /// <summary>Float accessor for <see cref="X"/>. Range [-4096.0f, 4096.0f], 16 bits, step ≈ 0.125002.</summary>
         public float XQuantized
         {
@@ -123,6 +143,8 @@ namespace Decentraland.Common
         }
 
         private float? _y;
+        /// <summary>Coarsest quantization step of <see cref="YQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float YQuantizedStep = 0.031251907f;
         /// <summary>Float accessor for <see cref="Y"/>. Range [-256.0f, 256.0f], 14 bits, step ≈ 0.0312519.</summary>
         public float YQuantized
         {
@@ -131,6 +153,8 @@ namespace Decentraland.Common
         }
 
         private float? _z;
+        /// <summary>Coarsest quantization step of <see cref="ZQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float ZQuantizedStep = 0.12500191f;
         /// <summary>Float accessor for <see cref="Z"/>. Range [-4096.0f, 4096.0f], 16 bits, step ≈ 0.125002.</summary>
         public float ZQuantized
         {
@@ -139,6 +163,8 @@ namespace Decentraland.Common
         }
 
         private float? _pitch;
+        /// <summary>Coarsest quantization step of <see cref="PitchQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float PitchQuantizedStep = 0.17595308f;
         /// <summary>Float accessor for <see cref="Pitch"/>. Range [-90.0f, 90.0f], 10 bits, step ≈ 0.175953.</summary>
         public float PitchQuantized
         {
@@ -147,6 +173,8 @@ namespace Decentraland.Common
         }
 
         private float? _yaw;
+        /// <summary>Coarsest quantization step of <see cref="YawQuantized"/>. Safe as an equality tolerance.</summary>
+        public const float YawQuantizedStep = 0.087912088f;
         /// <summary>Float accessor for <see cref="Yaw"/>. Range [-180.0f, 180.0f], 12 bits, step ≈ 0.0879121.</summary>
         public float YawQuantized
         {

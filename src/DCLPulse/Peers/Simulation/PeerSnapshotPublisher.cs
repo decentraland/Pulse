@@ -47,7 +47,9 @@ public sealed class PeerSnapshotPublisher(
     {
         uint seq = snapshotBoard.LastSeq(from) + 1;
         uint now = timeProvider.MonotonicTime;
-        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(state.ParcelIndex, state.Position);
+        // Decode position once for the global position the server needs (AoI); every other field is
+        // stored as the raw quantized code straight off the wire, no decode.
+        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(state.ParcelIndex, state.GetPosition());
 
         EmoteState? emoteState = emote is { } e
             ? new EmoteState(
@@ -58,20 +60,26 @@ public sealed class PeerSnapshotPublisher(
                 Mask: e.Mask)
             : null;
 
+        QuantizedPointAt? pointAt = state.GetPointAtRaw() is { } p ? new QuantizedPointAt(p.X, p.Y, p.Z) : null;
+
         var snapshot = new PeerSnapshot(
             Seq: seq,
             ServerTick: now,
             Parcel: state.ParcelIndex,
-            LocalPosition: state.Position,
+            PositionX: state.PositionX,
+            PositionY: state.PositionY,
+            PositionZ: state.PositionZ,
+            VelocityX: state.VelocityX,
+            VelocityY: state.VelocityY,
+            VelocityZ: state.VelocityZ,
             GlobalPosition: globalPosition,
-            Velocity: state.Velocity,
             RotationY: state.RotationY,
             JumpCount: state.JumpCount,
             MovementBlend: state.MovementBlend,
             SlideBlend: state.SlideBlend,
-            HeadYaw: state.GetHeadYaw(),
-            HeadPitch: state.GetHeadPitch(),
-            PointAt: state.GetPointAt(),
+            HeadYaw: state.HasHeadYaw ? state.HeadYaw : null,
+            HeadPitch: state.HasHeadPitch ? state.HeadPitch : null,
+            PointAt: pointAt,
             AnimationFlags: (PlayerAnimationFlags)state.StateFlags,
             GlideState: state.GlideState,
             Emote: emoteState,
@@ -95,9 +103,19 @@ public sealed class PeerSnapshotPublisher(
         uint now = timeProvider.MonotonicTime;
         Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(parcelIndex, localPosition);
 
-        float rotationY = 0;
-        float? headYaw = null, headPitch = null;
-        Vector3? pointAt = null;
+        // Encode the teleport's local position into the same quantized codes the wire uses by
+        // round-tripping through the generated setters — keeps min/max/bits in lockstep with the
+        // proto instead of duplicating them here.
+        var encoded = new PlayerState
+        {
+            PositionXQuantized = localPosition.X,
+            PositionYQuantized = localPosition.Y,
+            PositionZQuantized = localPosition.Z,
+        };
+
+        uint rotationY = 0;
+        uint? headYaw = null, headPitch = null;
+        QuantizedPointAt? pointAt = null;
 
         if (snapshotBoard.TryRead(from, out PeerSnapshot prev))
         {
@@ -111,9 +129,13 @@ public sealed class PeerSnapshotPublisher(
             Seq: seq,
             ServerTick: now,
             Parcel: parcelIndex,
-            LocalPosition: localPosition,
+            PositionX: encoded.PositionX,
+            PositionY: encoded.PositionY,
+            PositionZ: encoded.PositionZ,
+            VelocityX: 0,
+            VelocityY: 0,
+            VelocityZ: 0,
             GlobalPosition: globalPosition,
-            Velocity: Vector3.Zero,
             RotationY: rotationY,
             JumpCount: 0,
             MovementBlend: 0,

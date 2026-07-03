@@ -46,10 +46,9 @@ public class EmoteStopHandlerTests
         snapshotBoard.SetActive(peer);
 
         // Publish an emote snapshot first
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: 1, ServerTick: START_TIME, Parcel: 0,
-            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, null, default(PlayerAnimationFlags), default(GlideState),
-            Emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: 1, serverTick: START_TIME, parcel: 0,
+            emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 
@@ -68,9 +67,8 @@ public class EmoteStopHandlerTests
         snapshotBoard.SetActive(peer);
 
         // Publish a normal snapshot (no emote)
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: 1, ServerTick: START_TIME, Parcel: 0,
-            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, null, default(PlayerAnimationFlags), default(GlideState)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: 1, serverTick: START_TIME, parcel: 0));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 
@@ -86,10 +84,9 @@ public class EmoteStopHandlerTests
         snapshotBoard.SetActive(peer);
 
         // Publish an emote snapshot
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: 1, ServerTick: START_TIME, Parcel: 0,
-            default(Vector3), default(Vector3), default(Vector3), 0f, 0, 0f, 0f, null, null, null, default(PlayerAnimationFlags), default(GlideState),
-            Emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: 1, serverTick: START_TIME, parcel: 0,
+            emote: new EmoteState("dance", StartSeq: 1, StartTick: START_TIME)));
 
         handler.Handle(peers, peer, new ClientMessage { EmoteStop = new EmoteStop() });
 

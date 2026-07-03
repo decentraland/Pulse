@@ -43,16 +43,16 @@ public partial class PeerSimulationTests
         // carries the emote forward onto seq 3, the scan picks the real start (seq 2) via
         // ServerTick == StartTick — so EmoteStarted carries the position the subject had when
         // they began emoting, not a later carry-forward position.
-        PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 20f, 30f));
+        PublishEmoteSnapshot(subject, seq: 2, position: new Vector3(10f, 20f, 12f));
         PublishSnapshot(subject, seq: 3, position: new Vector3(99f, 99f, 99f));
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage emoteMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.EmoteStarted);
 
-        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.X, Is.EqualTo(10f));
-        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.Y, Is.EqualTo(20f));
-        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.Z, Is.EqualTo(30f));
+        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.PositionXQuantized, Is.EqualTo(10f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.PositionYQuantized, Is.EqualTo(20f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.PositionZQuantized, Is.EqualTo(12f).Within(PlayerState.PositionZQuantizedStep));
     }
 
     [Test]
@@ -63,15 +63,15 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Teleport is intermediate, followed by normal movement
-        PublishTeleportSnapshot(subject, seq: 2, new Vector3(50f, 60f, 70f));
-        PublishSnapshot(subject, seq: 3, position: new Vector3(51f, 60f, 70f));
+        PublishTeleportSnapshot(subject, seq: 2, new Vector3(13f, 6f, 14f));
+        PublishSnapshot(subject, seq: 3, position: new Vector3(14f, 6f, 14f));
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported), Is.True);
 
         OutgoingMessage teleportMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
-        Assert.That(teleportMsg.Message.Teleported.State.Position.X, Is.EqualTo(50f));
+        Assert.That(teleportMsg.Message.Teleported.State.PositionXQuantized, Is.EqualTo(13f).Within(PlayerState.PositionXQuantizedStep));
         Assert.That(teleportMsg.Message.Teleported.Sequence, Is.EqualTo(2u));
     }
 
@@ -114,15 +114,15 @@ public partial class PeerSimulationTests
 
         // Next tick: new movement at seq 4 (pos X=30)
         // Delta should diff from baseline = seq 2 (emote snapshot), not seq 3
-        PublishSnapshot(subject, seq: 4, position: new Vector3(30f, 0f, 0f));
+        PublishSnapshot(subject, seq: 4, position: new Vector3(13f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage deltaMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerStateDelta);
 
-        // Baseline was seq 2 (X=10), target is seq 4 (X=30) — X changed
+        // Baseline was seq 2 (X=10), target is seq 4 (X=13) — X changed
         Assert.That(deltaMsg.Message.PlayerStateDelta.HasPositionX, Is.True);
-        Assert.That(deltaMsg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(30f));
+        Assert.That(deltaMsg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(13f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]
@@ -250,21 +250,21 @@ public partial class PeerSimulationTests
         DrainAllMessages();
 
         // Teleport at seq 2, then normal movement at seq 3
-        PublishTeleportSnapshot(subject, seq: 2, new Vector3(100f, 0f, 0f));
-        PublishSnapshot(subject, seq: 3, position: new Vector3(101f, 0f, 0f));
+        PublishTeleportSnapshot(subject, seq: 2, new Vector3(10f, 0f, 0f));
+        PublishSnapshot(subject, seq: 3, position: new Vector3(11f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
         DrainAllMessages(); // Teleported
 
         // Next tick: new movement at seq 4
-        PublishSnapshot(subject, seq: 4, position: new Vector3(102f, 0f, 0f));
+        PublishSnapshot(subject, seq: 4, position: new Vector3(13f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 2);
 
         List<OutgoingMessage> messages = DrainAllMessages();
         OutgoingMessage deltaMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerStateDelta);
 
-        // Baseline was teleport at seq 2 (X=100), target is seq 4 (X=102)
+        // Baseline was teleport at seq 2 (X=10), target is seq 4 (X=13) — the codes differ so X is in the diff.
         Assert.That(deltaMsg.Message.PlayerStateDelta.HasPositionX, Is.True);
-        Assert.That(deltaMsg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(102f));
+        Assert.That(deltaMsg.Message.PlayerStateDelta.PositionXQuantized, Is.EqualTo(13f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]
@@ -276,7 +276,7 @@ public partial class PeerSimulationTests
 
         // Two teleports between ticks — only the final destination matters
         PublishTeleportSnapshot(subject, seq: 2, new Vector3(10f, 0f, 0f));
-        PublishTeleportSnapshot(subject, seq: 3, new Vector3(50f, 0f, 0f));
+        PublishTeleportSnapshot(subject, seq: 3, new Vector3(13f, 0f, 0f));
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
@@ -286,7 +286,7 @@ public partial class PeerSimulationTests
                        .ToList();
 
         Assert.That(teleports.Count, Is.EqualTo(1));
-        Assert.That(teleports[0].Message.Teleported.State.Position.X, Is.EqualTo(50f));
+        Assert.That(teleports[0].Message.Teleported.State.PositionXQuantized, Is.EqualTo(13f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]

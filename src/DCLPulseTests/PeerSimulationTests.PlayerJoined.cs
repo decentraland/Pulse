@@ -27,19 +27,17 @@ public partial class PeerSimulationTests
     [Test]
     public void PlayerJoined_ContainsFullState()
     {
-        var snapshot = new PeerSnapshot(
-            Seq: 5, ServerTick: 42,
-            Parcel: 0,
-            LocalPosition: new Vector3(1.0f, 2.0f, 3.0f),
-            GlobalPosition: new Vector3(1.0f, 2.0f, 3.0f),
-            Velocity: new Vector3(0.5f, 0f, -0.5f),
-            RotationY: 1.57f,
-            MovementBlend: 0.8f, SlideBlend: 0.2f,
-            JumpCount: 0,
-            HeadYaw: 0.3f, HeadPitch: -0.1f,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.Grounded,
-            GlideState: GlideState.PropClosed);
+        var snapshot = TestSnapshots.Make(
+            seq: 5, serverTick: 42,
+            parcel: 0,
+            position: new Vector3(1.0f, 2.0f, 3.0f),
+            velocity: new Vector3(0.5f, 0f, -0.5f),
+            rotationY: 1.57f,
+            movementBlend: 0.8f, slideBlend: 0.2f,
+            jumpCount: 2,
+            headYaw: 0.3f, headPitch: -0.1f,
+            animationFlags: PlayerAnimationFlags.Grounded,
+            glideState: GlideState.PropClosed);
 
         snapshotBoard.Publish(subject, snapshot);
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
@@ -50,12 +48,13 @@ public partial class PeerSimulationTests
         PlayerStateFull state = msg.Message.PlayerJoined.State;
         Assert.That(state.Sequence, Is.EqualTo(5u));
         Assert.That(state.ServerTick, Is.EqualTo(42u));
-        Assert.That(state.State.Position.X, Is.EqualTo(1.0f));
-        Assert.That(state.State.Position.Y, Is.EqualTo(2.0f));
-        Assert.That(state.State.Position.Z, Is.EqualTo(3.0f));
-        Assert.That(state.State.RotationY, Is.EqualTo(1.57f));
-        Assert.That(state.State.MovementBlend, Is.EqualTo(0.8f));
+        Assert.That(state.State.PositionXQuantized, Is.EqualTo(1.0f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(state.State.PositionYQuantized, Is.EqualTo(2.0f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(state.State.PositionZQuantized, Is.EqualTo(3.0f).Within(PlayerState.PositionZQuantizedStep));
+        Assert.That(state.State.RotationYQuantized, Is.EqualTo(1.57f).Within(PlayerState.RotationYQuantizedStep));
+        Assert.That(state.State.MovementBlendQuantized, Is.EqualTo(0.8f).Within(PlayerState.MovementBlendQuantizedStep));
         Assert.That(state.State.StateFlags, Is.EqualTo((uint)PlayerAnimationFlags.Grounded));
+        Assert.That(state.State.JumpCount, Is.EqualTo(2));
     }
 
     [Test]

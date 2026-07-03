@@ -762,16 +762,23 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private static PlayerState CreatePlayerState(PeerSnapshot snapshot)
     {
+        // Snapshot already holds the raw quantized codes — copy them straight onto the outgoing
+        // message, no re-encode.
         var state = new PlayerState
         {
             ParcelIndex = snapshot.Parcel,
-            Position = new Vector3 { X = snapshot.LocalPosition.X, Y = snapshot.LocalPosition.Y, Z = snapshot.LocalPosition.Z },
-            Velocity = new Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
+            PositionX = snapshot.PositionX,
+            PositionY = snapshot.PositionY,
+            PositionZ = snapshot.PositionZ,
+            VelocityX = snapshot.VelocityX,
+            VelocityY = snapshot.VelocityY,
+            VelocityZ = snapshot.VelocityZ,
             RotationY = snapshot.RotationY,
             MovementBlend = snapshot.MovementBlend,
             SlideBlend = snapshot.SlideBlend,
             StateFlags = (uint)snapshot.AnimationFlags,
             GlideState = snapshot.GlideState,
+            JumpCount = snapshot.JumpCount,
         };
 
         if (snapshot.HeadYaw.HasValue)
@@ -781,7 +788,12 @@ public sealed class PeerSimulation : IPeerSimulation
             state.HeadPitch = snapshot.HeadPitch.Value;
 
         if (snapshot.PointAt.HasValue)
-            state.PointAt = new Vector3 { X = snapshot.PointAt.Value.X, Y = snapshot.PointAt.Value.Y, Z = snapshot.PointAt.Value.Z };
+        {
+            QuantizedPointAt pointAt = snapshot.PointAt.Value;
+            state.PointAtX = pointAt.X;
+            state.PointAtY = pointAt.Y;
+            state.PointAtZ = pointAt.Z;
+        }
 
         return state;
     }

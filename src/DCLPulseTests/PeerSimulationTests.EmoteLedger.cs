@@ -33,7 +33,7 @@ public partial class PeerSimulationTests
         Assert.That(read.Emote.Value.StopReason, Is.Null);
 
         // Position still reflects the new snapshot's own data.
-        Assert.That(read.LocalPosition.X, Is.EqualTo(7f));
+        Assert.That(read.DecodePosition().X, Is.EqualTo(7f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]
@@ -147,7 +147,7 @@ public partial class PeerSimulationTests
 
         // Fallback picks the EARLIEST carry in range (seq 5), not the latest (seq 14).
         Assert.That(emoteMsg.Message.EmoteStarted.Sequence, Is.EqualTo(5u));
-        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.X, Is.EqualTo(5f));
+        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.PositionXQuantized, Is.EqualTo(5f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]
@@ -229,35 +229,20 @@ public partial class PeerSimulationTests
         // arriving after a fresh start — the point is just that ServerTick collides).
         snapshotBoard.SetActive(subject);
 
-        snapshotBoard.Publish(subject, new PeerSnapshot(
-            Seq: 2, ServerTick: 100, Parcel: 0,
-            LocalPosition: new Vector3(1f, 0f, 0f), GlobalPosition: new Vector3(1f, 0f, 0f), Velocity: Vector3.Zero,
-            RotationY: 0f, JumpCount: 0, MovementBlend: 0f, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed));
+        snapshotBoard.Publish(subject, TestSnapshots.Make(
+            seq: 2, serverTick: 100, parcel: 0,
+            position: new Vector3(1f, 0f, 0f)));
 
-        snapshotBoard.Publish(subject, new PeerSnapshot(
-            Seq: 3, ServerTick: 100, Parcel: 0,
-            LocalPosition: new Vector3(2f, 0f, 0f), GlobalPosition: new Vector3(2f, 0f, 0f), Velocity: Vector3.Zero,
-            RotationY: 0f, JumpCount: 0, MovementBlend: 0f, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Emote: new EmoteState("wave", StartSeq: 3, StartTick: 100)));
+        snapshotBoard.Publish(subject, TestSnapshots.Make(
+            seq: 3, serverTick: 100, parcel: 0,
+            position: new Vector3(2f, 0f, 0f),
+            emote: new EmoteState("wave", StartSeq: 3, StartTick: 100)));
 
         // Seq 4: a trailing carry — same ServerTick as the "start", but Seq differs so it
         // must NOT be treated as a real start.
-        snapshotBoard.Publish(subject, new PeerSnapshot(
-            Seq: 4, ServerTick: 100, Parcel: 0,
-            LocalPosition: new Vector3(3f, 0f, 0f), GlobalPosition: new Vector3(3f, 0f, 0f), Velocity: Vector3.Zero,
-            RotationY: 0f, JumpCount: 0, MovementBlend: 0f, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed));
+        snapshotBoard.Publish(subject, TestSnapshots.Make(
+            seq: 4, serverTick: 100, parcel: 0,
+            position: new Vector3(3f, 0f, 0f)));
 
         simulation.SimulateTick(peers, tickCounter: 1);
 
@@ -267,7 +252,7 @@ public partial class PeerSimulationTests
         Assert.That(emoteMsg.Message.EmoteStarted.Sequence, Is.EqualTo(3u),
             "Scan must pick seq 3 (the real start, Seq == StartSeq), not seq 4 (carry with the same ServerTick).");
 
-        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.Position.X, Is.EqualTo(2f));
+        Assert.That(emoteMsg.Message.EmoteStarted.PlayerState.PositionXQuantized, Is.EqualTo(2f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]

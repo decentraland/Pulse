@@ -24,22 +24,21 @@ public class PeerViewDiffTests
         Vector3? pointAt = null,
         PlayerAnimationFlags animationFlags = PlayerAnimationFlags.None,
         GlideState glideState = GlideState.PropClosed) =>
-        new (
-            Seq: seq,
-            ServerTick: serverTick,
-            Parcel: parcel,
-            LocalPosition: localPosition ?? Vector3.Zero,
-            GlobalPosition: localPosition ?? Vector3.Zero,
-            Velocity: velocity ?? Vector3.Zero,
-            RotationY: rotationY,
-            JumpCount: jumpCount,
-            MovementBlend: movementBlend,
-            SlideBlend: slideBlend,
-            HeadYaw: headYaw,
-            HeadPitch: headPitch,
-            PointAt: pointAt,
-            AnimationFlags: animationFlags,
-            GlideState: glideState);
+        TestSnapshots.Make(
+            seq: seq,
+            serverTick: serverTick,
+            parcel: parcel,
+            position: localPosition ?? Vector3.Zero,
+            velocity: velocity ?? Vector3.Zero,
+            rotationY: rotationY,
+            jumpCount: jumpCount,
+            movementBlend: movementBlend,
+            slideBlend: slideBlend,
+            headYaw: headYaw,
+            headPitch: headPitch,
+            pointAt: pointAt,
+            animationFlags: animationFlags,
+            glideState: glideState);
 
     // ── Always returns a delta ──────────────────────────────────────
 
@@ -362,7 +361,7 @@ public class PeerViewDiffTests
 
         PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(SUBJECT, from, to, PeerViewSimulationTier.TIER_0);
 
-        // FloatEquals(10f, null) is false, but to.HeadYaw.HasValue is false → guard prevents setting
+        // from.HeadYaw != to.HeadYaw is true, but to.HeadYaw.HasValue is false → guard prevents setting
         Assert.That(delta.HasHeadYaw, Is.False);
     }
 

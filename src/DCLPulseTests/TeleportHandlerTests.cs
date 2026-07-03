@@ -111,7 +111,10 @@ public class TeleportHandlerTests
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.Realm, Is.EqualTo("realm-a"));
         Assert.That(snapshot.Seq, Is.EqualTo(1));
-        Assert.That(snapshot.LocalPosition, Is.EqualTo(new Vector3(4, 5, 6)));
+        Vector3 localDecoded = snapshot.DecodePosition();
+        Assert.That(localDecoded.X, Is.EqualTo(4f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(localDecoded.Y, Is.EqualTo(5f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(localDecoded.Z, Is.EqualTo(6f).Within(PlayerState.PositionZQuantizedStep));
     }
 
     [Test]

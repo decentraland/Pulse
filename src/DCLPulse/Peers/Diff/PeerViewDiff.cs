@@ -1,12 +1,13 @@
 ﻿using Decentraland.Pulse;
-using static Pulse.Peers.DiffComparison;
 
 namespace Pulse.Peers;
 
 public static class PeerViewDiff
 {
     /// <summary>
-    ///     Creates a diff message between two snapshots based on the given tier.
+    ///     Creates a diff message between two snapshots based on the given tier. Snapshots hold the
+    ///     raw quantized wire codes, so fields are compared and copied as exact uints — any one-code
+    ///     change is a diff, and the code goes onto the wire without a decode/re-encode step.
     /// </summary>
     public static PlayerStateDeltaTier0 CreateMessage(PeerIndex subjectId, PeerSnapshot from, PeerSnapshot to, PeerViewSimulationTier tier)
     {
@@ -21,20 +22,14 @@ public static class PeerViewDiff
         // TIER_0: animation details and head IK
         if (tier.Equals(PeerViewSimulationTier.TIER_0))
         {
-            if (!FloatEquals(from.SlideBlend, to.SlideBlend))
-            {
-                delta.SlideBlendQuantized = to.SlideBlend;
-            }
+            if (from.SlideBlend != to.SlideBlend)
+                delta.SlideBlend = to.SlideBlend;
 
-            if (!FloatEquals(from.HeadYaw, to.HeadYaw) && to.HeadYaw.HasValue)
-            {
-                delta.HeadYawQuantized = to.HeadYaw.Value;
-            }
+            if (from.HeadYaw != to.HeadYaw && to.HeadYaw.HasValue)
+                delta.HeadYaw = to.HeadYaw.Value;
 
-            if (!FloatEquals(from.HeadPitch, to.HeadPitch) && to.HeadPitch.HasValue)
-            {
-                delta.HeadPitchQuantized = to.HeadPitch.Value;
-            }
+            if (from.HeadPitch != to.HeadPitch && to.HeadPitch.HasValue)
+                delta.HeadPitch = to.HeadPitch.Value;
         }
 
         if (from.AnimationFlags != to.AnimationFlags)
@@ -44,51 +39,52 @@ public static class PeerViewDiff
         if (from.GlideState != to.GlideState)
             delta.GlideState = to.GlideState;
 
-        if (!FloatEquals(from.Parcel, to.Parcel))
+        if (from.Parcel != to.Parcel)
             delta.ParcelIndex = to.Parcel;
 
-        if (!FloatEquals(from.LocalPosition.X, to.LocalPosition.X))
-            delta.PositionXQuantized = to.LocalPosition.X;
+        if (from.PositionX != to.PositionX)
+            delta.PositionX = to.PositionX;
 
-        if (!FloatEquals(from.LocalPosition.Y, to.LocalPosition.Y))
-            delta.PositionYQuantized = to.LocalPosition.Y;
+        if (from.PositionY != to.PositionY)
+            delta.PositionY = to.PositionY;
 
-        if (!FloatEquals(from.LocalPosition.Z, to.LocalPosition.Z))
-            delta.PositionZQuantized = to.LocalPosition.Z;
+        if (from.PositionZ != to.PositionZ)
+            delta.PositionZ = to.PositionZ;
 
-        if (!FloatEquals(from.RotationY, to.RotationY))
-            delta.RotationYQuantized = to.RotationY;
+        if (from.RotationY != to.RotationY)
+            delta.RotationY = to.RotationY;
 
-        if (!FloatEquals(from.JumpCount, to.JumpCount))
+        if (from.JumpCount != to.JumpCount)
             delta.JumpCount = to.JumpCount;
 
-        // Peers can point up to 100m from them
         if (to.PointAt.HasValue)
         {
-            if (!from.PointAt.HasValue || !FloatEquals(from.PointAt.Value.X, to.PointAt.Value.X))
-                delta.PointAtXQuantized = to.PointAt.Value.X;
+            QuantizedPointAt toPointAt = to.PointAt.Value;
 
-            if (!from.PointAt.HasValue || !FloatEquals(from.PointAt.Value.Y, to.PointAt.Value.Y))
-                delta.PointAtYQuantized = to.PointAt.Value.Y;
+            if (!from.PointAt.HasValue || from.PointAt.Value.X != toPointAt.X)
+                delta.PointAtX = toPointAt.X;
 
-            if (!from.PointAt.HasValue || !FloatEquals(from.PointAt.Value.Z, to.PointAt.Value.Z))
-                delta.PointAtZQuantized = to.PointAt.Value.Z;
+            if (!from.PointAt.HasValue || from.PointAt.Value.Y != toPointAt.Y)
+                delta.PointAtY = toPointAt.Y;
+
+            if (!from.PointAt.HasValue || from.PointAt.Value.Z != toPointAt.Z)
+                delta.PointAtZ = toPointAt.Z;
         }
 
         // TIER_2: spatial state flags only
         if (tier.Equals(PeerViewSimulationTier.TIER_0) || tier.Equals(PeerViewSimulationTier.TIER_1))
         {
-            if (!FloatEquals(from.Velocity.X, to.Velocity.X))
-                delta.VelocityXQuantized = to.Velocity.X;
+            if (from.VelocityX != to.VelocityX)
+                delta.VelocityX = to.VelocityX;
 
-            if (!FloatEquals(from.Velocity.Y, to.Velocity.Y))
-                delta.VelocityYQuantized = to.Velocity.Y;
+            if (from.VelocityY != to.VelocityY)
+                delta.VelocityY = to.VelocityY;
 
-            if (!FloatEquals(from.Velocity.Z, to.Velocity.Z))
-                delta.VelocityZQuantized = to.Velocity.Z;
+            if (from.VelocityZ != to.VelocityZ)
+                delta.VelocityZ = to.VelocityZ;
 
-            if (!FloatEquals(from.MovementBlend, to.MovementBlend))
-                delta.MovementBlendQuantized = to.MovementBlend;
+            if (from.MovementBlend != to.MovementBlend)
+                delta.MovementBlend = to.MovementBlend;
         }
 
         // Sequence increment is controlled by "PlayerStateInputHandler",

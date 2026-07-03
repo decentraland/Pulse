@@ -183,6 +183,21 @@ public class PeerSnapshotPublisherTests
     }
 
     [Test]
+    public void PublishTeleport_GlobalPositionAgreesWithBroadcastCodes_WhenPositionExceedsQuantizationRange()
+    {
+        // The quantized setters clamp the stored codes to [0,16]x[0,200]x[0,16]; GlobalPosition
+        // (AoI placement) must be derived from those same codes, or the server indexes the peer
+        // where no observer renders it. ValidateTeleport only checks finiteness, so an
+        // out-of-range position reaches the publisher.
+        publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(20f, 250f, -3f), realm: "realm-a");
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Vector3 expected = parcelEncoder.DecodeToGlobalPosition(0, snapshot.DecodePosition());
+        Assert.That(snapshot.GlobalPosition, Is.EqualTo(expected),
+            "GlobalPosition must match what observers decode from the broadcast position codes.");
+    }
+
+    [Test]
     public void PublishTeleport_RefreshesSpatialGridAtNewGlobalPosition()
     {
         int parcelIndex = parcelEncoder.Encode(9, 14);

@@ -101,7 +101,6 @@ public sealed class PeerSnapshotPublisher(
     {
         uint seq = snapshotBoard.LastSeq(from) + 1;
         uint now = timeProvider.MonotonicTime;
-        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(parcelIndex, localPosition);
 
         // Encode the teleport's local position into the same quantized codes the wire uses by
         // round-tripping through the generated setters — keeps min/max/bits in lockstep with the
@@ -112,6 +111,13 @@ public sealed class PeerSnapshotPublisher(
             PositionYQuantized = localPosition.Y,
             PositionZQuantized = localPosition.Z,
         };
+
+        // Derive the AoI position from the decoded codes, not the raw request floats: the setters
+        // clamp to the quantization range, and observers only ever see the codes — using the raw
+        // position here would index the peer where no observer renders it. The cache reset is
+        // required because the setters memoize their unclamped input.
+        encoded.ResetDecodedCache();
+        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(parcelIndex, encoded.GetPosition());
 
         uint rotationY = 0;
         uint? headYaw = null, headPitch = null;

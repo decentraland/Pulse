@@ -94,28 +94,10 @@ public class SpatialInterestBenchmarks
 
             _snapshotBoard.SetActive(peer);
 
-            _snapshotBoard.Publish(peer, new PeerSnapshot(
-                Seq: 1, ServerTick: 0, Parcel: 0,
-                LocalPosition: pos, Velocity: Vector3.Zero,
-                GlobalPosition: pos,
-                RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-                HeadYaw: null, HeadPitch: null,
-                PointAt: null,
-                AnimationFlags: PlayerAnimationFlags.None,
-                GlideState: GlideState.PropClosed,
-                Realm: "benchmark"));
+            _snapshotBoard.Publish(peer, MakeSnapshot(pos));
         }
 
-        _observerSnapshot = new PeerSnapshot(
-            Seq: 1, ServerTick: 0, Parcel: 0,
-            LocalPosition: Vector3.Zero, Velocity: Vector3.Zero,
-            GlobalPosition: Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Realm: "benchmark");
+        _observerSnapshot = MakeSnapshot(Vector3.Zero);
 
         // Worker W observes from peer W's actual world position
         _workerCollectors = new InterestCollector[WORKER_COUNT];
@@ -128,6 +110,31 @@ public class SpatialInterestBenchmarks
             _workerObservers[w] = new PeerIndex((uint)w);
             _snapshotBoard.TryRead(new PeerIndex((uint)w), out _workerObserverSnapshots[w]);
         }
+    }
+
+    // Builds a PeerSnapshot from a world position. Positional fields hold raw quantized codes; the
+    // AoI reads GlobalPosition (the unquantized world coordinate) for its distance math, so that is
+    // kept exact while the codes are encoded via the PlayerState accessors like production does.
+    private static PeerSnapshot MakeSnapshot(Vector3 pos)
+    {
+        var e = new PlayerState
+        {
+            PositionXQuantized = pos.X,
+            PositionYQuantized = pos.Y,
+            PositionZQuantized = pos.Z,
+        };
+
+        return new PeerSnapshot(
+            Seq: 1, ServerTick: 0, Parcel: 0,
+            PositionX: e.PositionX, PositionY: e.PositionY, PositionZ: e.PositionZ,
+            VelocityX: 0, VelocityY: 0, VelocityZ: 0,
+            GlobalPosition: pos,
+            RotationY: 0, JumpCount: 0, MovementBlend: 0, SlideBlend: 0,
+            HeadYaw: null, HeadPitch: null,
+            PointAt: null,
+            AnimationFlags: PlayerAnimationFlags.None,
+            GlideState: GlideState.PropClosed,
+            Realm: "benchmark");
     }
 
     // ── Single-worker baselines ───────────────────────────────────────────────
@@ -501,7 +508,7 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        Vector3 observerPos = observerSnapshot.LocalPosition;
+        Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         // Build the 3×3 neighbourhood keys
         Span<long> neighborKeys = stackalloc long[9];
@@ -533,8 +540,8 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
 
-            float distX = subjectSnapshot.LocalPosition.X - observerPos.X;
-            float distZ = subjectSnapshot.LocalPosition.Z - observerPos.Z;
+            float distX = subjectSnapshot.GlobalPosition.X - observerPos.X;
+            float distZ = subjectSnapshot.GlobalPosition.Z - observerPos.Z;
             float distSq = (distX * distX) + (distZ * distZ);
 
             if (distSq > maxDistanceSq) continue;
@@ -623,7 +630,7 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        Vector3 observerPos = observerSnapshot.LocalPosition;
+        Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         for (int dx = -1; dx <= 1; dx++)
         for (int dz = -1; dz <= 1; dz++)
@@ -639,8 +646,8 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
                 if (subject == observer) continue;
                 if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
 
-                float distX = subjectSnapshot.LocalPosition.X - observerPos.X;
-                float distZ = subjectSnapshot.LocalPosition.Z - observerPos.Z;
+                float distX = subjectSnapshot.GlobalPosition.X - observerPos.X;
+                float distZ = subjectSnapshot.GlobalPosition.Z - observerPos.Z;
                 float distSq = (distX * distX) + (distZ * distZ);
 
                 if (distSq > maxDistanceSq) continue;

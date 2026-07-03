@@ -2,8 +2,6 @@ using Decentraland.Pulse;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using System.Numerics;
-using static Pulse.Peers.DiffComparison;
 
 namespace Pulse.Messaging;
 
@@ -37,30 +35,37 @@ public class PlayerStateInputHandler(
 
         PeerSnapshot snapshot = snapshotPublisher.PublishFromPlayerState(from, state);
 
-        logger.LogDebug("Received input from {Peer} with position {GlobalPosition}, rotation {RotationY}, velocity {Velocity}, movement blend {MovementBlend}, anim state {AnimationFlags}",
-            from.Value, snapshot.GlobalPosition, snapshot.RotationY, snapshot.Velocity, snapshot.MovementBlend, snapshot.AnimationFlags);
+        logger.LogDebug("Received input from {Peer} at {GlobalPosition}, anim state {AnimationFlags}",
+            from.Value, snapshot.GlobalPosition, snapshot.AnimationFlags);
     }
 
+    // Compare the raw quantized codes the client sent against the codes already stored — exact uint
+    // equality, so a stopped peer re-sending the same codes suppresses the republish (and its seq bump)
+    // regardless of any float rounding.
     private static bool IsSameState(in PeerSnapshot current, PlayerState incoming) =>
         current.Parcel == incoming.ParcelIndex
-        && current.LocalPosition == (Vector3)incoming.Position
-        && current.Velocity == (Vector3)incoming.Velocity
-        && FloatEquals(current.RotationY, incoming.RotationY)
-        && FloatEquals(current.MovementBlend, incoming.MovementBlend)
-        && FloatEquals(current.SlideBlend, incoming.SlideBlend)
-        && FloatEquals(current.HeadYaw, incoming.GetHeadYaw(), 0.5f)
-        && FloatEquals(current.HeadPitch, incoming.GetHeadPitch(), 0.5f)
-        && Vector3Equals(current.PointAt, incoming.GetPointAt(), 0.5f)
+        && current.PositionX == incoming.PositionX
+        && current.PositionY == incoming.PositionY
+        && current.PositionZ == incoming.PositionZ
+        && current.VelocityX == incoming.VelocityX
+        && current.VelocityY == incoming.VelocityY
+        && current.VelocityZ == incoming.VelocityZ
+        && current.RotationY == incoming.RotationY
+        && current.MovementBlend == incoming.MovementBlend
+        && current.SlideBlend == incoming.SlideBlend
+        && current.HeadYaw == (incoming.HasHeadYaw ? incoming.HeadYaw : null)
+        && current.HeadPitch == (incoming.HasHeadPitch ? incoming.HeadPitch : null)
+        && PointAtEquals(current.PointAt, incoming.GetPointAtRaw())
         && current.AnimationFlags == (PlayerAnimationFlags)incoming.StateFlags
         && current.GlideState == incoming.GlideState
         // Ensures that the first movement input after a teleport is always published,
         // even if the position/state values happen to be identical
         && !current.IsTeleport;
 
-    private static bool Vector3Equals(Vector3? a, Vector3? b, float tolerance) =>
+    private static bool PointAtEquals(QuantizedPointAt? a, (uint X, uint Y, uint Z)? b) =>
         (!a.HasValue && !b.HasValue)
         || (a.HasValue && b.HasValue
-            && FloatEquals(a.Value.X, b.Value.X, tolerance)
-            && FloatEquals(a.Value.Y, b.Value.Y, tolerance)
-            && FloatEquals(a.Value.Z, b.Value.Z, tolerance));
+            && a.Value.X == b.Value.X
+            && a.Value.Y == b.Value.Y
+            && a.Value.Z == b.Value.Z);
 }

@@ -46,13 +46,27 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
    ```protobuf
    import "decentraland/common/options.proto";
 
-   // Float-as-uint32, clamped and quantized to N bits:
-   optional uint32 position_x = 6 [(decentraland.common.quantized) = { min: 0, max: 16, bits: 8 }];
+   // Float-as-uint32, clamped and uniformly quantized to N bits:
+   uint32 position_x = 2 [(decentraland.common.quantized) = { min: 0, max: 16, bits: 8 }];
+
+   // Signed float on a power-law curve — fine resolution near zero, coarse at the extremes;
+   // sign + (bits-1)-bit magnitude, symmetric [-max, max]; a stopped value encodes to exactly 0:
+   uint32 velocity_x = 5 [(decentraland.common.quantized_power) = { max: 50, pow: 2, bits: 8 }];
 
    // Integer packed into fewer than 32 bits:
    uint32 entity_id = 4 [(decentraland.common.bit_packed) = { bits: 20 }];
    ```
-   Rules of thumb: match existing tiering in `pulse_server.proto` (`PlayerStateDeltaTier0`); `optional` on a quantized field means it participates in the plugin-generated field_mask (absent fields don't hit the wire).
+   A field carries `quantized` **or** `quantized_power`, never both. `optional` on a quantized field makes it participate in the plugin-generated field_mask (absent fields don't hit the wire).
+
+   For each quantized `uint32` field the plugin generates (in `*.Bitwise.cs`) a `float {Name}Quantized` accessor (encode on set / decode on get) **and** a `public const float {Name}QuantizedStep` — the coarsest quantization step for that field (uniform step for `quantized`, worst-case top-of-range step for `quantized_power`), safe to use as an equality tolerance. In tests, assert decoded values with `Is.EqualTo(x).Within(PlayerState.{Name}QuantizedStep)` rather than hardcoding a magic tolerance.
+
+   **Quantization lives in two proto messages that must stay in lockstep.** A movement/animation field is quantized in *both*:
+   - `PlayerState` in `pulse_shared.proto` — the full state (STATE_FULL, PlayerJoined, EmoteStarted/Stopped, Teleported, plus the client's `PlayerStateInput` and handshake seed).
+   - `PlayerStateDeltaTier0` in `pulse_server.proto` — the per-tick delta.
+
+   Both must annotate a given field (`position_x`, `velocity_x`, `rotation_y`, `head_yaw`, `point_at_x`, …) with the **identical** `min`/`max`/`bits` (and `pow`) so a full snapshot and a stream of deltas decode onto the *same grid* — otherwise a resync / join / teleport lands the client on a different value than the deltas do. The field *numbers* differ between the two messages (that's fine — they're separate messages); only the quantization params must match. When you add or retune such a field, change it in **both** messages together. `DCLPulseTests/PlayerStateQuantizationTests` guards this: it round-trips both through the wire and asserts the decoded values are equal, failing if they drift. (The one intended difference: `PlayerStateDeltaTier0` marks every field `optional` because a diff only carries what changed; `PlayerState` keeps always-present fields non-optional and leaves only the genuinely optional ones — `head_yaw`, `head_pitch`, `point_at_*` — `optional`.)
+
+   **Server-side, a new quantized `PlayerState` field must also be threaded through the snapshot ledger**, which stores the raw quantized codes (not decoded floats) and diffs on them exactly: add a `uint`/`uint?` field to `PeerSnapshot`, populate it in `PeerSnapshotPublisher`, compare + emit it in `PeerViewDiff.CreateMessage` and `PlayerStateInputHandler.IsSameState`, and copy it in `PeerSimulation.CreatePlayerState`. Only `GlobalPosition` is kept decoded there — it's the one value the server itself consumes (interest management).
 
 3. **Rebuild** — proto regen runs automatically:
    ```bash
@@ -89,6 +103,7 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
 - **Don't hand-edit anything in `src/Protocol/Generated/`.** It's regenerated on every proto change. Put extensions in `ProtoTypesConversion.cs` instead.
 - **Don't change field numbers of existing fields** or reuse numbers of deleted fields — protobuf wire compatibility breaks silently. Mark old fields `reserved` if needed.
 - **Don't change quantization `min`/`max`/`bits` on a deployed field without coordinating client + server rollout** — encoded values won't round-trip across the version boundary.
+- **Don't retune (or add) a quantized field in only one of `PlayerState` / `PlayerStateDeltaTier0`** — they must carry identical `quantized` / `quantized_power` params, or a full state and its deltas decode onto different grids. `PlayerStateQuantizationTests` fails when they drift.
 - **Don't add new top-level proto files outside `decentraland/common/**` or `decentraland/pulse/**`** — the `_ProtoGlobs` in `Protocol.csproj` only sees those two subtrees.
 - **Don't skip regen by passing `-p:GenerateProto=false`** when you've changed `.proto`. That flag is for environments without the protocol repo.
 

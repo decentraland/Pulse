@@ -185,7 +185,11 @@ public class PlayerStateInputHandlerTests
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.GlobalPosition, Is.EqualTo(new Vector3(expectedGlobalX, expectedGlobalY, expectedGlobalZ)));
+        // GlobalPosition is derived from the decoded position codes, so it carries the same
+        // quantization error — assert per axis within the field's step, not exact equality.
+        Assert.That(snapshot.GlobalPosition.X, Is.EqualTo(expectedGlobalX).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(snapshot.GlobalPosition.Y, Is.EqualTo(expectedGlobalY).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(snapshot.GlobalPosition.Z, Is.EqualTo(expectedGlobalZ).Within(PlayerState.PositionZQuantizedStep));
         Vector3 localDecoded = snapshot.DecodePosition();
         Assert.That(localDecoded.X, Is.EqualTo(localPosition.X).Within(PlayerState.PositionXQuantizedStep));
         Assert.That(localDecoded.Y, Is.EqualTo(localPosition.Y).Within(PlayerState.PositionYQuantizedStep));

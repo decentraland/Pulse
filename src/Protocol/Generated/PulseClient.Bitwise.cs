@@ -9,42 +9,31 @@ namespace Decentraland.Pulse
 {
     public partial class TeleportRequest
     {
-        private float? _positionX;
         /// <summary>Coarsest quantization step of <see cref="PositionXQuantized"/>. Safe as an equality tolerance.</summary>
         public const float PositionXQuantizedStep = 0.062745098f;
         /// <summary>Float accessor for <see cref="PositionX"/>. Range [0.0f, 16.0f], 8 bits, step ≈ 0.0627451.</summary>
         public float PositionXQuantized
         {
-            get => _positionX ??= Quantize.Decode(PositionX, 0.0f, 16.0f, 8);
-            set { _positionX = value; PositionX = Quantize.Encode(value, 0.0f, 16.0f, 8); }
+            get => Quantize.Decode(PositionX, 0.0f, 16.0f, 8);
+            set => PositionX = Quantize.Encode(value, 0.0f, 16.0f, 8);
         }
 
-        private float? _positionY;
         /// <summary>Coarsest quantization step of <see cref="PositionYQuantized"/>. Safe as an equality tolerance.</summary>
         public const float PositionYQuantizedStep = 0.024417043f;
         /// <summary>Float accessor for <see cref="PositionY"/>. Range [0.0f, 200.0f], 13 bits, step ≈ 0.024417.</summary>
         public float PositionYQuantized
         {
-            get => _positionY ??= Quantize.Decode(PositionY, 0.0f, 200.0f, 13);
-            set { _positionY = value; PositionY = Quantize.Encode(value, 0.0f, 200.0f, 13); }
+            get => Quantize.Decode(PositionY, 0.0f, 200.0f, 13);
+            set => PositionY = Quantize.Encode(value, 0.0f, 200.0f, 13);
         }
 
-        private float? _positionZ;
         /// <summary>Coarsest quantization step of <see cref="PositionZQuantized"/>. Safe as an equality tolerance.</summary>
         public const float PositionZQuantizedStep = 0.062745098f;
         /// <summary>Float accessor for <see cref="PositionZ"/>. Range [0.0f, 16.0f], 8 bits, step ≈ 0.0627451.</summary>
         public float PositionZQuantized
         {
-            get => _positionZ ??= Quantize.Decode(PositionZ, 0.0f, 16.0f, 8);
-            set { _positionZ = value; PositionZ = Quantize.Encode(value, 0.0f, 16.0f, 8); }
-        }
-
-        /// <summary>Clears all cached decoded values. Call after mutating raw uint32 fields directly.</summary>
-        public void ResetDecodedCache()
-        {
-            _positionX = null;
-            _positionY = null;
-            _positionZ = null;
+            get => Quantize.Decode(PositionZ, 0.0f, 16.0f, 8);
+            set => PositionZ = Quantize.Encode(value, 0.0f, 16.0f, 8);
         }
 
         /// <summary>

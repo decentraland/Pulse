@@ -97,27 +97,13 @@ public sealed class PeerSnapshotPublisher(
     ///     <c>TeleportPerformed</c> event. Rotation and head-IK are inherited from the prior
     ///     snapshot if one exists — otherwise zero / null.
     /// </summary>
-    public PeerSnapshot PublishTeleport(PeerIndex from, int parcelIndex, Vector3 localPosition, string realm)
+    public PeerSnapshot PublishTeleport(PeerIndex from, TeleportRequest teleportRequest)
     {
         uint seq = snapshotBoard.LastSeq(from) + 1;
         uint now = timeProvider.MonotonicTime;
 
-        // Encode the teleport's local position into the same quantized codes the wire uses by
-        // round-tripping through the generated setters — keeps min/max/bits in lockstep with the
-        // proto instead of duplicating them here.
-        var encoded = new PlayerState
-        {
-            PositionXQuantized = localPosition.X,
-            PositionYQuantized = localPosition.Y,
-            PositionZQuantized = localPosition.Z,
-        };
-
-        // Derive the AoI position from the decoded codes, not the raw request floats: the setters
-        // clamp to the quantization range, and observers only ever see the codes — using the raw
-        // position here would index the peer where no observer renders it. The cache reset is
-        // required because the setters memoize their unclamped input.
-        encoded.ResetDecodedCache();
-        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(parcelIndex, encoded.GetPosition());
+        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(teleportRequest.ParcelIndex,
+            new Vector3(teleportRequest.PositionXQuantized, teleportRequest.PositionYQuantized, teleportRequest.PositionZQuantized));
 
         uint rotationY = 0;
         uint? headYaw = null, headPitch = null;
@@ -134,10 +120,10 @@ public sealed class PeerSnapshotPublisher(
         var snapshot = new PeerSnapshot(
             Seq: seq,
             ServerTick: now,
-            Parcel: parcelIndex,
-            PositionX: encoded.PositionX,
-            PositionY: encoded.PositionY,
-            PositionZ: encoded.PositionZ,
+            Parcel: teleportRequest.ParcelIndex,
+            PositionX: teleportRequest.PositionX,
+            PositionY: teleportRequest.PositionY,
+            PositionZ: teleportRequest.PositionZ,
             VelocityX: 0,
             VelocityY: 0,
             VelocityZ: 0,
@@ -152,7 +138,7 @@ public sealed class PeerSnapshotPublisher(
             AnimationFlags: PlayerAnimationFlags.Grounded,
             GlideState: GlideState.PropClosed,
             IsTeleport: true,
-            Realm: realm);
+            Realm: teleportRequest.Realm);
 
         snapshotBoard.Publish(from, in snapshot);
         spatialGrid.Set(from, snapshot.GlobalPosition);

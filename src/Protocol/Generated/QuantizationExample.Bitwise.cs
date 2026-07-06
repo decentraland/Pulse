@@ -46,6 +46,18 @@ namespace Decentraland.Common
             _dy = null;
             _dz = null;
         }
+
+        /// <summary>
+        ///     True when every quantized field holds a wire code within its declared bit width
+        ///     (<c>0 .. 2^bits-1</c>). The encoder never emits a code above this bound, so a larger
+        ///     value is a malformed/hostile message: decoding it would land far outside the field's
+        ///     <c>[min, max]</c> and, since the server relays raw codes verbatim, poison every observer.
+        ///     Reject before storing or relaying. Pure integer comparison — no decode.
+        /// </summary>
+        public bool AreQuantizedFieldsInRange() =>
+            Dx <= 65535u
+            && Dy <= 65535u
+            && Dz <= 65535u;
     }
 
     public partial class PlayerInput
@@ -87,6 +99,18 @@ namespace Decentraland.Common
             _moveZ = null;
             _yaw = null;
         }
+
+        /// <summary>
+        ///     True when every quantized field holds a wire code within its declared bit width
+        ///     (<c>0 .. 2^bits-1</c>). The encoder never emits a code above this bound, so a larger
+        ///     value is a malformed/hostile message: decoding it would land far outside the field's
+        ///     <c>[min, max]</c> and, since the server relays raw codes verbatim, poison every observer.
+        ///     Reject before storing or relaying. Pure integer comparison — no decode.
+        /// </summary>
+        public bool AreQuantizedFieldsInRange() =>
+            MoveX <= 255u
+            && MoveZ <= 255u
+            && Yaw <= 4095u;
     }
 
     public partial class VelocityState
@@ -128,6 +152,18 @@ namespace Decentraland.Common
             _vy = null;
             _vz = null;
         }
+
+        /// <summary>
+        ///     True when every quantized field holds a wire code within its declared bit width
+        ///     (<c>0 .. 2^bits-1</c>). The encoder never emits a code above this bound, so a larger
+        ///     value is a malformed/hostile message: decoding it would land far outside the field's
+        ///     <c>[min, max]</c> and, since the server relays raw codes verbatim, poison every observer.
+        ///     Reject before storing or relaying. Pure integer comparison — no decode.
+        /// </summary>
+        public bool AreQuantizedFieldsInRange() =>
+            Vx <= 255u
+            && Vy <= 255u
+            && Vz <= 255u;
     }
 
     public partial class AvatarStateSnapshot
@@ -191,6 +227,20 @@ namespace Decentraland.Common
             _pitch = null;
             _yaw = null;
         }
+
+        /// <summary>
+        ///     True when every quantized field holds a wire code within its declared bit width
+        ///     (<c>0 .. 2^bits-1</c>). The encoder never emits a code above this bound, so a larger
+        ///     value is a malformed/hostile message: decoding it would land far outside the field's
+        ///     <c>[min, max]</c> and, since the server relays raw codes verbatim, poison every observer.
+        ///     Reject before storing or relaying. Pure integer comparison — no decode.
+        /// </summary>
+        public bool AreQuantizedFieldsInRange() =>
+            X <= 65535u
+            && Y <= 16383u
+            && Z <= 65535u
+            && Pitch <= 1023u
+            && Yaw <= 4095u;
     }
 
 

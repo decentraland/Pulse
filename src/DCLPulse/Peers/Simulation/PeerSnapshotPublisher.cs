@@ -102,8 +102,8 @@ public sealed class PeerSnapshotPublisher(
         uint seq = snapshotBoard.LastSeq(from) + 1;
         uint now = timeProvider.MonotonicTime;
 
-        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(teleportRequest.ParcelIndex,
-            new Vector3(teleportRequest.PositionXQuantized, teleportRequest.PositionYQuantized, teleportRequest.PositionZQuantized));
+        Vector3 localPosition = new(teleportRequest.PositionXQuantized, teleportRequest.PositionYQuantized, teleportRequest.PositionZQuantized);
+        Vector3 globalPosition = parcelEncoder.DecodeToGlobalPosition(teleportRequest.ParcelIndex, localPosition);
 
         uint rotationY = 0;
         uint? headYaw = null, headPitch = null;

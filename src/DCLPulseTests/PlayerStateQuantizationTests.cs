@@ -62,4 +62,34 @@ public class PlayerStateQuantizationTests
             Assert.That(s.PointAtZQuantized, Is.EqualTo(d.PointAtZQuantized), "point_at_z");
         });
     }
+
+    /// <summary>
+    ///     TeleportRequest carries a parcel-local position on the same grid as PlayerState, so its
+    ///     position_x/y/z must quantize identically — otherwise a teleport and the movement that
+    ///     follows it would place the peer on different grids.
+    /// </summary>
+    [Test]
+    public void TeleportRequest_QuantizesPositionIdenticallyTo_PlayerState()
+    {
+        const float posX = 5.3f, posY = 73.1f, posZ = 11.9f;
+
+        var teleport = new TeleportRequest
+        {
+            PositionXQuantized = posX, PositionYQuantized = posY, PositionZQuantized = posZ,
+        };
+        var state = new PlayerState
+        {
+            PositionXQuantized = posX, PositionYQuantized = posY, PositionZQuantized = posZ,
+        };
+
+        TeleportRequest t = TeleportRequest.Parser.ParseFrom(teleport.ToByteArray());
+        PlayerState s = PlayerState.Parser.ParseFrom(state.ToByteArray());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(t.PositionXQuantized, Is.EqualTo(s.PositionXQuantized), "position_x");
+            Assert.That(t.PositionYQuantized, Is.EqualTo(s.PositionYQuantized), "position_y");
+            Assert.That(t.PositionZQuantized, Is.EqualTo(s.PositionZQuantized), "position_z");
+        });
+    }
 }

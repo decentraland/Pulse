@@ -167,6 +167,29 @@ namespace Decentraland.Pulse
             _pointAtY = null;
             _pointAtZ = null;
         }
+
+        /// <summary>
+        ///     True when every quantized field holds a wire code within its declared bit width
+        ///     (<c>0 .. 2^bits-1</c>). The encoder never emits a code above this bound, so a larger
+        ///     value is a malformed/hostile message: decoding it would land far outside the field's
+        ///     <c>[min, max]</c> and, since the server relays raw codes verbatim, poison every observer.
+        ///     Reject before storing or relaying. Pure integer comparison — no decode.
+        /// </summary>
+        public bool AreQuantizedFieldsInRange() =>
+            PositionX <= 255u
+            && PositionY <= 8191u
+            && PositionZ <= 255u
+            && VelocityX <= 255u
+            && VelocityY <= 255u
+            && VelocityZ <= 255u
+            && RotationY <= 127u
+            && MovementBlend <= 31u
+            && SlideBlend <= 15u
+            && HeadYaw <= 127u
+            && HeadPitch <= 127u
+            && PointAtX <= 131071u
+            && PointAtY <= 127u
+            && PointAtZ <= 131071u;
     }
 
 

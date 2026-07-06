@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Google.Protobuf;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
@@ -146,7 +147,7 @@ public class PeerSnapshotPublisherTests
     [Test]
     public void PublishTeleport_WithoutPriorSnapshot_DefaultsRotationAndHeadIKAndPointAt()
     {
-        publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(1f, 0f, 1f), realm: "realm-a");
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(1f, 0f, 1f), "realm-a"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.IsTeleport, Is.True);
@@ -169,7 +170,7 @@ public class PeerSnapshotPublisherTests
             pointAt: new Vector3(7f, 8f, 9f), realm: "realm-prior");
         snapshotBoard.Publish(peer, prior);
 
-        publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(1f, 0f, 1f), realm: "realm-b");
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(1f, 0f, 1f), "realm-b"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         // Rotation / head-IK / point-at are inherited from the prior snapshot verbatim as raw codes.
@@ -187,9 +188,9 @@ public class PeerSnapshotPublisherTests
     {
         // The quantized setters clamp the stored codes to [0,16]x[0,200]x[0,16]; GlobalPosition
         // (AoI placement) must be derived from those same codes, or the server indexes the peer
-        // where no observer renders it. ValidateTeleport only checks finiteness, so an
+        // where no observer renders it. ValidateTeleport does not range-check position, so an
         // out-of-range position reaches the publisher.
-        publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(20f, 250f, -3f), realm: "realm-a");
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(20f, 250f, -3f), "realm-a"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Vector3 expected = parcelEncoder.DecodeToGlobalPosition(0, snapshot.DecodePosition());
@@ -201,7 +202,7 @@ public class PeerSnapshotPublisherTests
     public void PublishTeleport_RefreshesSpatialGridAtNewGlobalPosition()
     {
         int parcelIndex = parcelEncoder.Encode(9, 14);
-        publisher.PublishTeleport(peer, parcelIndex, localPosition: new Vector3(3f, 0f, 5f), realm: "realm-a");
+        publisher.PublishTeleport(peer, Teleport(parcelIndex, new Vector3(3f, 0f, 5f), "realm-a"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(spatialGrid.GetPeers(snapshot.GlobalPosition), Does.Contain(peer));
@@ -258,4 +259,16 @@ public class PeerSnapshotPublisherTests
             VelocityZQuantized = vel.Z,
         };
     }
+
+    // Round-trip through the wire so reads decode the stored (clamped) codes like a real deserialized
+    // request would — not the setter's cached, pre-clamp float. Mirrors what the server sees.
+    private static TeleportRequest Teleport(int parcelIndex, Vector3 localPosition, string realm) =>
+        TeleportRequest.Parser.ParseFrom(new TeleportRequest
+        {
+            ParcelIndex = parcelIndex,
+            PositionXQuantized = localPosition.X,
+            PositionYQuantized = localPosition.Y,
+            PositionZQuantized = localPosition.Z,
+            Realm = realm,
+        }.ToByteArray());
 }

@@ -16,8 +16,8 @@ The protocol is the single source of truth for the wire format. It lives in a **
 |---|---|---|
 | Proto sources | `../protocol/proto/decentraland/` | **Sibling repo** — edit these |
 | Pulse-specific protos | `../protocol/proto/decentraland/pulse/` | Three files: `pulse_client.proto` (C→S messages + `ClientMessage` envelope), `pulse_server.proto` (S→C messages + `ServerMessage` envelope), `pulse_shared.proto` (types referenced by both directions: `PlayerState`, `GlideState`, `PlayerAnimationFlags`) |
-| Shared primitives | `../protocol/proto/decentraland/common/` | `vectors.proto`, `options.proto` (custom `quantized` / `bit_packed`), etc. |
-| Bitwise plugin | `../protocol/protoc-gen-bitwise/plugin.js` | Node/JS protoc plugin — emits C# `Encode`/`Decode` partials |
+| Shared primitives | `../protocol/proto/decentraland/common/` | `vectors.proto`, `options.proto` (custom `quantized` / `quantized_power` / `bit_packed`), etc. |
+| Bitwise plugin | `../protocol/protoc-gen-bitwise/plugin.js` | Node/JS protoc plugin — emits C# quantized-accessor partials (`*.Bitwise.cs`) |
 | Plugin runtime | `../protocol/protoc-gen-bitwise/runtime/cs/{BitReader,BitWriter,Quantize}.cs` | `Quantize.cs` is copied into `Generated/` at build time |
 | Plugin wrapper (this repo) | `tools/protoc-gen-bitwise/{protoc-gen-bitwise.cmd,.sh}` | Invokes the sibling `plugin.js` with `node` |
 | Generated C# | `src/Protocol/Generated/` | **Do not hand-edit** — overwritten on build |
@@ -56,7 +56,7 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
    // Integer packed into fewer than 32 bits:
    uint32 entity_id = 4 [(decentraland.common.bit_packed) = { bits: 20 }];
    ```
-   A field carries `quantized` **or** `quantized_power`, never both. `optional` on a quantized field makes it participate in the plugin-generated field_mask (absent fields don't hit the wire).
+   A field carries `quantized` **or** `quantized_power`, never both. `optional` on a quantized field uses native protobuf per-field presence (absent fields don't hit the wire; no plugin-generated mask).
 
    For each quantized `uint32` field the plugin generates (in `*.Bitwise.cs`) a `float {Name}Quantized` accessor (encode on set / decode on get) **and** a `public const float {Name}QuantizedStep` — the coarsest quantization step for that field (uniform step for `quantized`, worst-case top-of-range step for `quantized_power`), safe to use as an equality tolerance. In tests, assert decoded values with `Is.EqualTo(x).Within(PlayerState.{Name}QuantizedStep)` rather than hardcoding a magic tolerance.
 
@@ -124,4 +124,4 @@ After regeneration:
 - **`node: command not found` / `'node' is not recognized`:** the plugin wrapper in `tools/protoc-gen-bitwise/` runs `node`. Install Node 16+ and ensure it's on PATH, or build with `-p:GenerateProto=false` to use the committed `Generated/` files.
 - **`protoc-gen-bitwise: Plugin failed`:** the sibling `../protocol/protoc-gen-bitwise/plugin.js` is missing or `_ProtocolRepo` doesn't point at your `../protocol` checkout. Confirm the protocol repo is a sibling of Pulse (or override `/p:_ProtocolRepo=...`).
 - **Generated files not refreshing:** delete `src/Protocol/Generated/.proto.stamp` to force regen on next build.
-- **Bitwise output missing for a message:** the plugin only emits `Encode`/`Decode` for messages that contain at least one `[(quantized)]` or `[(bit_packed)]` field (directly or transitively). Pure protobuf messages get `csharp_out` only — that's expected.
+- **Bitwise output missing for a message:** the plugin only emits a `*.Bitwise.cs` partial for messages that contain at least one `[(quantized)]` or `[(bit_packed)]` field (directly or transitively). Pure protobuf messages get `csharp_out` only — that's expected.

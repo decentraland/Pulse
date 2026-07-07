@@ -51,6 +51,10 @@ WatchForStopFile(lifeCycleCts);
 var sharedTransport = new ENetTransport(new ENetTransportOptions { PeerLimit = options.BotCount });
 sharedTransport.Initialize();
 
+// Scene-listener mode: connect receive-only for a fixed parcel set, never simulate or send.
+if (!string.IsNullOrWhiteSpace(options.SceneListenerParcels))
+    return await RunSceneListenerAsync();
+
 // When running as a worker child, accounts are pre-created by the orchestrator
 var accountNames = new string[options.BotCount];
 
@@ -167,6 +171,128 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
 
     Console.WriteLine($"[{accountName}] Ready.");
     return session;
+}
+
+// --- Scene-listener mode ---
+
+async Task<int> RunSceneListenerAsync()
+{
+    List<int> parcelIndices = ParseListenerParcels(options.SceneListenerParcels);
+
+    if (parcelIndices.Count == 0)
+    {
+        Console.Error.WriteLine(
+            "No valid parcels in --scene-listener-parcels; expected comma-separated x:z coordinates (e.g. -7:0,-6:0).");
+        return 1;
+    }
+
+    string listenerAccount = options.AccountPrefix;
+
+    Console.WriteLine($"[{listenerAccount}] Ensuring account exists..");
+    await MetaForge.RunCommandAsync($"account create {listenerAccount} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+
+    Console.WriteLine($"[{listenerAccount}] Signing auth chain..");
+    LoginResult login = await authenticator.LoginAsync(listenerAccount, lifeCycleCts.Token);
+
+    var pipe = new MessagePipe();
+    var listenerTransport = new BotTransport(sharedTransport, pipe);
+    var service = new PulseMultiplayerService(listenerTransport, pipe);
+
+    Console.WriteLine($"[{listenerAccount}] Connecting as scene listener to {options.ServerIp}:{options.ServerPort} " +
+                      $"for parcels [{options.SceneListenerParcels}] in realm '{options.Realm}'..");
+
+    await service.ConnectAsSceneListenerAsync(options.ServerIp, options.ServerPort, login.AuthChainJson,
+        options.Realm, parcelIndices, lifeCycleCts.Token);
+
+    Console.WriteLine($"[{listenerAccount}] Scene listener ready. Observing {parcelIndices.Count} parcel(s). Press Ctrl+C to quit.");
+
+    await ProcessListenerEventsAsync(listenerAccount, service);
+
+    await service.DisconnectAsync(DisconnectReason.GRACEFUL, CancellationToken.None);
+    service.Dispose();
+    await Task.Delay(200);
+    sharedTransport.Dispose();
+    return 0;
+}
+
+List<int> ParseListenerParcels(string spec)
+{
+    var indices = new List<int>();
+
+    foreach (string token in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        string[] parts = token.Split(':');
+
+        if (parts.Length != 2
+            || !int.TryParse(parts[0], out int parcelX)
+            || !int.TryParse(parts[1], out int parcelZ))
+        {
+            Console.Error.WriteLine($"Ignoring malformed parcel token '{token}'; expected 'x:z'.");
+            continue;
+        }
+
+        int index = parcelEncoder.Encode(parcelX, parcelZ);
+
+        if (!indices.Contains(index))
+            indices.Add(index);
+    }
+
+    return indices;
+}
+
+// Receive-only: subscribe to the positional stream and log each message with subject id + parcel.
+// Never sends anything back to the server after the handshake.
+async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerService service)
+{
+    string Parcel(int index)
+    {
+        parcelEncoder.Decode(index, out int x, out int z);
+        return $"{x}:{z}";
+    }
+
+    try
+    {
+        await foreach (ServerMessage message in service.SubscribeAllAsync(lifeCycleCts.Token,
+                           ServerMessage.MessageOneofCase.PlayerJoined,
+                           ServerMessage.MessageOneofCase.PlayerLeft,
+                           ServerMessage.MessageOneofCase.PlayerStateDelta,
+                           ServerMessage.MessageOneofCase.PlayerStateFull,
+                           ServerMessage.MessageOneofCase.Teleported))
+        {
+            switch (message.MessageCase)
+            {
+                case ServerMessage.MessageOneofCase.PlayerJoined:
+                    PlayerJoined joined = message.PlayerJoined;
+                    Console.WriteLine($"[{accountName}] PlayerJoined subject={joined.State.SubjectId} " +
+                                      $"parcel={Parcel(joined.State.State.ParcelIndex)} user={joined.UserId}");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerLeft:
+                    Console.WriteLine($"[{accountName}] PlayerLeft subject={message.PlayerLeft.SubjectId}");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerStateDelta:
+                    PlayerStateDeltaTier0 delta = message.PlayerStateDelta;
+                    // parcel_index is an optional delta field, only present when it changed.
+                    string deltaParcel = delta.HasParcelIndex ? Parcel(delta.ParcelIndex) : "(unchanged)";
+                    Console.WriteLine($"[{accountName}] PlayerStateDelta subject={delta.SubjectId} " +
+                                      $"parcel={deltaParcel} seq={delta.NewSeq}");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerStateFull:
+                    PlayerStateFull full = message.PlayerStateFull;
+                    Console.WriteLine($"[{accountName}] PlayerStateFull subject={full.SubjectId} " +
+                                      $"parcel={Parcel(full.State.ParcelIndex)} seq={full.Sequence}");
+                    break;
+                case ServerMessage.MessageOneofCase.Teleported:
+                    TeleportPerformed teleport = message.Teleported;
+                    Console.WriteLine($"[{accountName}] Teleported subject={teleport.SubjectId} " +
+                                      $"parcel={Parcel(teleport.State.ParcelIndex)} seq={teleport.Sequence}");
+                    break;
+            }
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Graceful shutdown (Ctrl+C / stop file) cancels the subscription.
+    }
 }
 
 // --- Shutdown helpers ---

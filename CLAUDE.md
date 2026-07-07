@@ -156,6 +156,13 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 - Sent when a received STATE_DELTA can't be applied (gap in seq)
 - Server responds with STATE_FULL (or targeted delta when `Peers.ResyncWithDelta` is enabled)
 
+**SCENE_LISTENER_HANDSHAKE** (ch0, reliable)
+- Alternative to `HANDSHAKE`: same Decentraland ECDSA auth chain, plus a required `realm` (same rules as `TeleportRequest.realm`) and an immutable set of `ParcelEncoder`-packed parcel indices announced once at connect
+- Authenticates a **receive-only listener**: it never becomes a subject (no snapshot/grid registration, so players can never see it) and observes only players inside its announced parcels, in the given realm
+- Receives the positional stream only — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`; emote and profile-version messages are suppressed for listener observers
+- `RESYNC_REQUEST` remains allowed (client-driven gap recovery); every other inbound message from a listener is silently dropped and counted
+- The parcel set cannot be changed without reconnecting; re-announcing requires a fresh connection
+
 ### Server → Client
 
 **STATE_FULL** (ch0, reliable)

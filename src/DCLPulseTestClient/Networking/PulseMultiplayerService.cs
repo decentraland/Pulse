@@ -55,6 +55,44 @@ public partial class PulseMultiplayerService(
         }
     }
 
+    public async Task ConnectAsSceneListenerAsync(string address, int port, string authChain,
+        string realm, IReadOnlyList<int> parcelIndices, CancellationToken ct)
+    {
+        connectionLifeCycleCts.SafeCancelAndDispose();
+        connectionLifeCycleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        await transport.ConnectAsync(address, port, ct);
+
+        _ = RouteIncomingMessagesAsync(connectionLifeCycleCts.Token);
+
+        var request = new SceneListenerHandshakeRequest
+        {
+            AuthChain = ByteString.CopyFromUtf8(authChain),
+            Realm = realm,
+        };
+
+        request.ParcelIndices.AddRange(parcelIndices);
+
+        pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
+        {
+            SceneListenerHandshake = request,
+        }, PacketMode.RELIABLE));
+
+        await foreach (HandshakeResponse response in SubscribeAsync<HandshakeResponse>(
+                           ServerMessage.MessageOneofCase.Handshake, ct))
+        {
+            if (!response.Success)
+            {
+                connectionLifeCycleCts.SafeCancelAndDispose();
+                await transport.DisconnectAsync(DisconnectReason.AUTH_FAILED, ct);
+
+                throw new PulseException(response.HasError ? response.Error : "Scene-listener handshake failed");
+            }
+
+            break;
+        }
+    }
+
     public IAsyncEnumerable<T> SubscribeAsync<T>(ServerMessage.MessageOneofCase type, CancellationToken ct)
         where T : class
     {

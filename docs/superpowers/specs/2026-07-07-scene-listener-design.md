@@ -1,7 +1,7 @@
 # Scene Listener — Design
 
 Date: 2026-07-07
-Status: Approved design, pending implementation plan
+Status: Implemented
 
 ## Overview
 

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using Pulse.InterestManagement;
@@ -17,12 +18,14 @@ namespace Pulse.Messaging.Hardening;
 /// </summary>
 public sealed class FieldValidator(
     IOptions<FieldValidatorOptions> options,
+    IOptions<SceneListenerOptions> sceneListenerOptions,
     ParcelEncoder parcelEncoder,
     ITransport transport)
     : PeerDefense(transport, PulseMetrics.Hardening.FIELD_VALIDATION_FAILED)
 {
     private readonly int maxRealmLength = options.Value.MaxRealmLength;
     private readonly uint maxEmoteDurationMs = options.Value.MaxEmoteDurationMs;
+    private readonly int maxSceneListenerParcels = sceneListenerOptions.Value.MaxParcels;
 
     public bool ValidatePlayerStateInput(PeerIndex from, PeerState state, PlayerStateInput input)
     {
@@ -105,6 +108,43 @@ public sealed class FieldValidator(
         if (!request.AreQuantizedFieldsInRange())
             return Reject(from, state, DisconnectReason.INVALID_TELEPORT_FIELD);
 
+        return true;
+    }
+
+    /// <summary>
+    ///     Validates a scene-listener handshake: realm rules identical to
+    ///     <see cref="ValidateTeleport" />, every parcel index in range, and the deduped
+    ///     parcel count within <see cref="SceneListenerOptions.MaxParcels" /> — rejected,
+    ///     never clamped. On success <paramref name="parcels" /> holds the deduped set.
+    /// </summary>
+    public bool ValidateSceneListenerHandshake(PeerIndex from, PeerState state, SceneListenerHandshakeRequest request,
+        [NotNullWhen(true)] out HashSet<int>? parcels)
+    {
+        parcels = null;
+
+        if (string.IsNullOrEmpty(request.Realm))
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (maxRealmLength > 0 && request.Realm.Length > maxRealmLength)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        if (request.ParcelIndices.Count == 0)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        var deduped = new HashSet<int>();
+
+        foreach (int index in request.ParcelIndices)
+        {
+            if (!IsValidParcel(index))
+                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+            deduped.Add(index);
+        }
+
+        if (deduped.Count > maxSceneListenerParcels)
+            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        parcels = deduped;
         return true;
     }
 

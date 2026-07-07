@@ -24,12 +24,12 @@ public class FieldValidatorTests
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
     }
 
-    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000) =>
+    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 4) =>
         new (Options.Create(new FieldValidatorOptions
         {
             MaxRealmLength = maxRealmLength,
             MaxEmoteDurationMs = maxDurationMs,
-        }), parcelEncoder, transport);
+        }), Options.Create(new SceneListenerOptions { MaxParcels = maxParcels }), parcelEncoder, transport);
 
     private static PeerState NewState() => new (PeerConnectionState.AUTHENTICATED);
 
@@ -248,5 +248,80 @@ public class FieldValidatorTests
 
         Assert.That(v.ValidateTeleport(PEER, NewState(), msg), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
+    }
+
+    // ── SceneListener handshake ──────────────────────────────────────
+
+    private static SceneListenerHandshakeRequest ListenerRequest(string realm, params int[] parcels)
+    {
+        var request = new SceneListenerHandshakeRequest { Realm = realm };
+        request.ParcelIndices.AddRange(parcels);
+        return request;
+    }
+
+    [Test]
+    public void SceneListener_ValidRequest_ReturnsDedupedParcels()
+    {
+        FieldValidator v = Create();
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", 10, 11, 10), out HashSet<int>? parcels);
+
+        Assert.That(ok, Is.True);
+        Assert.That(parcels, Is.EquivalentTo(new[] { 10, 11 }));
+    }
+
+    [Test]
+    public void SceneListener_EmptyRealm_Rejects()
+    {
+        FieldValidator v = Create();
+        PeerState state = NewState();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, state, ListenerRequest("", 10), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
+    }
+
+    [Test]
+    public void SceneListener_EmptyParcelList_Rejects()
+    {
+        FieldValidator v = Create();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_InvalidParcelIndex_Rejects()
+    {
+        FieldValidator v = Create();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", -1), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_OverCapAfterDedup_Rejects()
+    {
+        FieldValidator v = Create();
+        // Fixture MaxParcels = 4; five distinct parcels must reject, duplicates must not count.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", 1, 2, 3, 4, 5), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_DuplicatesWithinCap_Accepted()
+    {
+        FieldValidator v = Create();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", 1, 1, 2, 2, 3, 3), out HashSet<int>? parcels), Is.True);
+        Assert.That(parcels!.Count, Is.EqualTo(3));
+    }
+
+    [Test]
+    public void SceneListener_RealmTooLong_Rejects()
+    {
+        FieldValidator v = Create();
+        // Default fixture MaxRealmLength = 128; a 300-char realm exceeds it.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest(new string('a', 300), 1), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 }

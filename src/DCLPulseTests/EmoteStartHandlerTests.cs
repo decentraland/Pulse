@@ -47,6 +47,7 @@ public class EmoteStartHandlerTests
                 {
                     MaxRealmLength = 0, MaxEmoteDurationMs = 0,
                 }),
+                Options.Create(new SceneListenerOptions()),
                 parcelEncoder,
                 Substitute.For<ITransport>()));
         peers = new Dictionary<PeerIndex, PeerState>();

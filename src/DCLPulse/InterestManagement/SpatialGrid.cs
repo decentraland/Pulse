@@ -76,6 +76,12 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
     public HashSet<PeerIndex>? GetPeers(Vector3 position) =>
         cells.GetValueOrDefault(ComputeKey(position));
 
+    public HashSet<PeerIndex>? GetPeersByCell(long cellKey) =>
+        cells.GetValueOrDefault(cellKey);
+
+    public long ComputeCellKey(float x, float z) =>
+        PackKey(CellCoord(x), CellCoord(z));
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long ComputeKey(Vector3 position) =>
         PackKey(CellCoord(position.X), CellCoord(position.Z));

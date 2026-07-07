@@ -51,6 +51,7 @@ public class PlayerStateInputHandler(
         && current.VelocityY == incoming.VelocityY
         && current.VelocityZ == incoming.VelocityZ
         && current.RotationY == incoming.RotationY
+        && current.JumpCount == incoming.JumpCount
         && current.MovementBlend == incoming.MovementBlend
         && current.SlideBlend == incoming.SlideBlend
         && current.HeadYaw == (incoming.HasHeadYaw ? incoming.HeadYaw : null)

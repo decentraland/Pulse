@@ -45,7 +45,7 @@ public class FieldValidatorTests
         };
 
     private static TeleportRequest ValidTeleport(string realm = "main") =>
-        new () { Realm = realm, ParcelIndex = 100, Position = new Vector3() };
+        new () { Realm = realm, ParcelIndex = 100 };
 
     // ── PlayerStateInput ─────────────────────────────────────────────
 
@@ -163,22 +163,6 @@ public class FieldValidatorTests
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
     }
 
-    // ── Numeric finiteness (NaN/Inf) ─────────────────────────────────
-    // PlayerState position/velocity/rotation/head are quantized uint32 fields now, so they can't
-    // carry NaN/Inf and no longer need per-field finiteness validation. TeleportRequest still
-    // carries a raw Vector3 position, so its finiteness check remains.
-
-    [Test]
-    public void NaNPosition_InTeleport_RejectsWithTeleportField()
-    {
-        FieldValidator v = Create();
-        TeleportRequest msg = ValidTeleport();
-        msg.Position = new Vector3 { X = float.NaN, Y = 0, Z = 0 };
-
-        Assert.That(v.ValidateTeleport(PEER, NewState(), msg), Is.False);
-        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
-    }
-
     [Test]
     public void OutOfRangeParcel_InTeleport_Rejects()
     {
@@ -187,6 +171,82 @@ public class FieldValidatorTests
         msg.ParcelIndex = parcelEncoder.MaxIndexExclusive + 1;
 
         Assert.That(v.ValidateTeleport(PEER, NewState(),msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
+    }
+
+    // ── Quantized wire-code ranges ───────────────────────────────────
+    // Position/velocity/rotation/head are quantized uint32 fields now, so they can't carry NaN/Inf.
+    // But a hostile client can still send a raw code above the field's bit width — the server relays
+    // codes verbatim, so such a code would decode far outside [min, max] and poison every observer's
+    // view (and the server's own GlobalPosition). Reject before storing.
+
+    [Test]
+    public void OutOfRangeQuantizedCode_InInput_RejectsWithInvalidInputField()
+    {
+        FieldValidator v = Create();
+        // position_x is an 8-bit field: 255 is the top legal code, 256 is not producible by the encoder.
+        var msg = new PlayerStateInput { State = new PlayerState { ParcelIndex = 100, PositionX = 256 } };
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_INPUT_FIELD);
+    }
+
+    [Test]
+    public void TopLegalQuantizedCodes_InInput_Accepted()
+    {
+        FieldValidator v = Create();
+        // Boundary: the top code of every field must pass so honest clients at the range extremes
+        // aren't disconnected.
+        var msg = new PlayerStateInput
+        {
+            State = new PlayerState
+            {
+                ParcelIndex = 100,
+                PositionX = 255, PositionY = 8191, PositionZ = 255,
+                VelocityX = 255, VelocityY = 255, VelocityZ = 255,
+                RotationY = 127, MovementBlend = 31, SlideBlend = 15,
+                HeadYaw = 127, HeadPitch = 127,
+                PointAtX = 131071, PointAtY = 127, PointAtZ = 131071,
+            },
+        };
+
+        Assert.That(v.ValidatePlayerStateInput(PEER, NewState(), msg), Is.True);
+        transport.DidNotReceive().Disconnect(Arg.Any<PeerIndex>(), Arg.Any<DisconnectReason>());
+    }
+
+    [Test]
+    public void OutOfRangeQuantizedCode_InEmote_RejectsWithInvalidEmoteField()
+    {
+        FieldValidator v = Create();
+        EmoteStart msg = ValidEmoteStart();
+        msg.PlayerState = new PlayerState { ParcelIndex = 100, VelocityX = 256 };
+
+        Assert.That(v.ValidateEmoteStart(PEER, NewState(), msg), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_EMOTE_FIELD);
+    }
+
+    [Test]
+    public void OutOfRangeQuantizedCode_InHandshakeInitialState_RejectsWithInvalidHandshakeField()
+    {
+        FieldValidator v = Create();
+        var initial = new PlayerInitialState
+        {
+            State = new PlayerState { ParcelIndex = 100, PositionX = 256 },
+            Realm = "main",
+        };
+
+        Assert.That(v.ValidateHandshakeInitialState(PEER, NewState(), initial), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void OutOfRangeQuantizedCode_InTeleport_RejectsWithInvalidTeleportField()
+    {
+        FieldValidator v = Create();
+        TeleportRequest msg = ValidTeleport();
+        msg.PositionY = 8192; // 13-bit field: 8191 is the top legal code.
+
+        Assert.That(v.ValidateTeleport(PEER, NewState(), msg), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_TELEPORT_FIELD);
     }
 }

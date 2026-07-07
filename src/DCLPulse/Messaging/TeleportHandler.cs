@@ -1,4 +1,3 @@
-using Decentraland.Common;
 using Decentraland.Pulse;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
@@ -26,8 +25,6 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
 
         TeleportRequest request = message.Teleport;
         string realm = request.Realm;
-        Vector3 localPosition = request.Position;
-        int parcelIndex = request.ParcelIndex;
 
         // Read the prior realm before publishing so the realm-change log can compare against
         // the pre-teleport state. The publisher does its own snapshot read internally for
@@ -35,7 +32,7 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
         // they observe the same prior snapshot.
         string? previousRealm = snapshotBoard.TryRead(from, out PeerSnapshot prev) ? prev.Realm : null;
 
-        PeerSnapshot snapshot = snapshotPublisher.PublishTeleport(from, parcelIndex, localPosition, realm);
+        PeerSnapshot snapshot = snapshotPublisher.PublishTeleport(from, request);
 
         if (!string.Equals(previousRealm, realm, StringComparison.Ordinal))
         {

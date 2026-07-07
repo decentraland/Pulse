@@ -168,8 +168,9 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
         Teleport = new TeleportRequest
         {
             ParcelIndex = spawnParcelIndex,
-            Position = new Decentraland.Common.Vector3
-                { X = spawnRelativePosition.X, Y = spawnRelativePosition.Y, Z = spawnRelativePosition.Z },
+            PositionXQuantized = spawnRelativePosition.X,
+            PositionYQuantized = spawnRelativePosition.Y,
+            PositionZQuantized = spawnRelativePosition.Z,
             Realm = options.Realm,
         },
     }, PacketMode.RELIABLE));

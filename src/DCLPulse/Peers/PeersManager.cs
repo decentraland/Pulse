@@ -269,10 +269,33 @@ public sealed class PeersManager : BackgroundService
 
         incomingMessageCounters.Increment(message.MessageCase);
 
+        if (IsForbiddenForSceneListener(peers, evt.From, message))
+            return;
+
         if (messageHandlers.TryGetValue(message.MessageCase, out IMessageHandler? handler))
             handler.Handle(peers, evt.From, message);
         else
             logger.LogWarning("No handler found for message {MessageCase}, skipped processing", message.MessageCase);
+    }
+
+    /// <summary>
+    ///     Post-auth choke point for scene listeners: only <c>Resync</c> is processed — a
+    ///     listener never mutates state, so <c>Input</c>/emotes/<c>Teleport</c>/profile
+    ///     announcements and repeat handshakes are dropped silently (mirrors the pre-auth
+    ///     "non-handshake silently dropped" convention; no disconnect — a buggy listener
+    ///     degrades to noise, not connection churn). The parcel set is immutable by
+    ///     construction: no message can change it.
+    /// </summary>
+    internal static bool IsForbiddenForSceneListener(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
+    {
+        if (!peers.TryGetValue(from, out PeerState? state) || state.SceneListener == null)
+            return false;
+
+        if (message.MessageCase == ClientMessage.MessageOneofCase.Resync)
+            return false;
+
+        PulseMetrics.SceneListener.FORBIDDEN_MESSAGES_DROPPED.Add(1);
+        return true;
     }
 
     private long RunSimulationTick(

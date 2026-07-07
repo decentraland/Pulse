@@ -68,6 +68,8 @@ Override with `/p:_ProtocolRepo=...` or a local `Directory.Build.props` if your 
 
    **Server-side, a new quantized `PlayerState` field must also be threaded through the snapshot ledger**, which stores the raw quantized codes (not decoded floats) and diffs on them exactly: add a `uint`/`uint?` field to `PeerSnapshot`, populate it in `PeerSnapshotPublisher`, compare + emit it in `PeerViewDiff.CreateMessage` and `PlayerStateInputHandler.IsSameState`, and copy it in `PeerSimulation.CreatePlayerState`. Only `GlobalPosition` is kept decoded there — it's the one value the server itself consumes (interest management).
 
+   **Input-range validation is automatic** — the plugin emits a `bool AreQuantizedFieldsInRange()` on every message with quantized fields (a pure integer check that each raw code is within its `2^bits-1` bound), and `FieldValidator` already calls it on every inbound message (`PlayerStateInput`, `EmoteStart`, handshake `PlayerInitialState`, `TeleportRequest`). A new quantized field is therefore range-checked with no extra code — the server never relays a code that would decode outside the field's `[min, max]`.
+
 3. **Rebuild** — proto regen runs automatically:
    ```bash
    DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln

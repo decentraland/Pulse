@@ -162,7 +162,9 @@ public class TeleportHandlerTests
             {
                 Realm = realm,
                 ParcelIndex = parcelIndex,
-                Position = new Decentraland.Common.Vector3 { X = pos.X, Y = pos.Y, Z = pos.Z },
+                PositionXQuantized = pos.X,
+                PositionYQuantized = pos.Y,
+                PositionZQuantized = pos.Z,
             },
         };
     }

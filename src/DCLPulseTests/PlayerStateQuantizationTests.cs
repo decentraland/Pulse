@@ -1,5 +1,4 @@
 using Decentraland.Pulse;
-using Google.Protobuf;
 
 namespace DCLPulseTests;
 
@@ -10,9 +9,9 @@ public class PlayerStateQuantizationTests
     ///     PlayerState must quantize every shared field with the exact same options as
     ///     PlayerStateDeltaTier0, so a full state and a stream of deltas land on the same grid.
     ///     The two messages declare those options independently in the proto, so this locks them
-    ///     against drift: serialize both through the wire (which discards the setter's cached float
-    ///     and forces a decode of the stored uint32) and assert the decoded values are identical.
-    ///     Inputs are deliberately off-grid so a bits/min/max mismatch surfaces as a difference.
+    ///     against drift: set the same off-grid inputs on both and assert the decoded values match.
+    ///     Each accessor decodes the stored uint32 code with its own field's options, so identical
+    ///     options produce identical decoded values; a bits/min/max mismatch surfaces as a difference.
     /// </summary>
     [Test]
     public void PlayerState_QuantizesIdenticallyTo_PlayerStateDeltaTier0()
@@ -41,25 +40,49 @@ public class PlayerStateQuantizationTests
             PointAtXQuantized = pointAtX, PointAtYQuantized = pointAtY, PointAtZQuantized = pointAtZ,
         };
 
-        PlayerState s = PlayerState.Parser.ParseFrom(state.ToByteArray());
-        PlayerStateDeltaTier0 d = PlayerStateDeltaTier0.Parser.ParseFrom(delta.ToByteArray());
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.PositionXQuantized, Is.EqualTo(delta.PositionXQuantized), "position_x");
+            Assert.That(state.PositionYQuantized, Is.EqualTo(delta.PositionYQuantized), "position_y");
+            Assert.That(state.PositionZQuantized, Is.EqualTo(delta.PositionZQuantized), "position_z");
+            Assert.That(state.VelocityXQuantized, Is.EqualTo(delta.VelocityXQuantized), "velocity_x");
+            Assert.That(state.VelocityYQuantized, Is.EqualTo(delta.VelocityYQuantized), "velocity_y");
+            Assert.That(state.VelocityZQuantized, Is.EqualTo(delta.VelocityZQuantized), "velocity_z");
+            Assert.That(state.RotationYQuantized, Is.EqualTo(delta.RotationYQuantized), "rotation_y");
+            Assert.That(state.MovementBlendQuantized, Is.EqualTo(delta.MovementBlendQuantized), "movement_blend");
+            Assert.That(state.SlideBlendQuantized, Is.EqualTo(delta.SlideBlendQuantized), "slide_blend");
+            Assert.That(state.HeadYawQuantized, Is.EqualTo(delta.HeadYawQuantized), "head_yaw");
+            Assert.That(state.HeadPitchQuantized, Is.EqualTo(delta.HeadPitchQuantized), "head_pitch");
+            Assert.That(state.PointAtXQuantized, Is.EqualTo(delta.PointAtXQuantized), "point_at_x");
+            Assert.That(state.PointAtYQuantized, Is.EqualTo(delta.PointAtYQuantized), "point_at_y");
+            Assert.That(state.PointAtZQuantized, Is.EqualTo(delta.PointAtZQuantized), "point_at_z");
+        });
+    }
+
+    /// <summary>
+    ///     TeleportRequest carries a parcel-local position on the same grid as PlayerState, so its
+    ///     position_x/y/z must quantize identically — otherwise a teleport and the movement that
+    ///     follows it would place the peer on different grids.
+    /// </summary>
+    [Test]
+    public void TeleportRequest_QuantizesPositionIdenticallyTo_PlayerState()
+    {
+        const float posX = 5.3f, posY = 73.1f, posZ = 11.9f;
+
+        var teleport = new TeleportRequest
+        {
+            PositionXQuantized = posX, PositionYQuantized = posY, PositionZQuantized = posZ,
+        };
+        var state = new PlayerState
+        {
+            PositionXQuantized = posX, PositionYQuantized = posY, PositionZQuantized = posZ,
+        };
 
         Assert.Multiple(() =>
         {
-            Assert.That(s.PositionXQuantized, Is.EqualTo(d.PositionXQuantized), "position_x");
-            Assert.That(s.PositionYQuantized, Is.EqualTo(d.PositionYQuantized), "position_y");
-            Assert.That(s.PositionZQuantized, Is.EqualTo(d.PositionZQuantized), "position_z");
-            Assert.That(s.VelocityXQuantized, Is.EqualTo(d.VelocityXQuantized), "velocity_x");
-            Assert.That(s.VelocityYQuantized, Is.EqualTo(d.VelocityYQuantized), "velocity_y");
-            Assert.That(s.VelocityZQuantized, Is.EqualTo(d.VelocityZQuantized), "velocity_z");
-            Assert.That(s.RotationYQuantized, Is.EqualTo(d.RotationYQuantized), "rotation_y");
-            Assert.That(s.MovementBlendQuantized, Is.EqualTo(d.MovementBlendQuantized), "movement_blend");
-            Assert.That(s.SlideBlendQuantized, Is.EqualTo(d.SlideBlendQuantized), "slide_blend");
-            Assert.That(s.HeadYawQuantized, Is.EqualTo(d.HeadYawQuantized), "head_yaw");
-            Assert.That(s.HeadPitchQuantized, Is.EqualTo(d.HeadPitchQuantized), "head_pitch");
-            Assert.That(s.PointAtXQuantized, Is.EqualTo(d.PointAtXQuantized), "point_at_x");
-            Assert.That(s.PointAtYQuantized, Is.EqualTo(d.PointAtYQuantized), "point_at_y");
-            Assert.That(s.PointAtZQuantized, Is.EqualTo(d.PointAtZQuantized), "point_at_z");
+            Assert.That(teleport.PositionXQuantized, Is.EqualTo(state.PositionXQuantized), "position_x");
+            Assert.That(teleport.PositionYQuantized, Is.EqualTo(state.PositionYQuantized), "position_y");
+            Assert.That(teleport.PositionZQuantized, Is.EqualTo(state.PositionZQuantized), "position_z");
         });
     }
 }

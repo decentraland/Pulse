@@ -1,4 +1,3 @@
-using DCL.Auth;
 using Decentraland.Pulse;
 using Pulse.Messaging.Hardening;
 using Pulse.Metrics;
@@ -6,12 +5,11 @@ using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
-using System.Text.Json;
 
 namespace Pulse.Messaging;
 
 public class HandshakeHandler(MessagePipe messagePipe,
-    AuthChainValidator authChainValidator,
+    HandshakeAuthenticator authenticator,
     PeerStateFactory peerStateFactory,
     SnapshotBoard snapshotBoard,
     IdentityBoard identityBoard,
@@ -35,58 +33,43 @@ public class HandshakeHandler(MessagePipe messagePipe,
             return;
 
         HandshakeRequest handshakeRequest = message.Handshake;
-        string authChainJson = handshakeRequest.AuthChain.ToStringUtf8();
-        Dictionary<string, string>? headers = JsonSerializer.Deserialize(authChainJson, HandshakeJsonContext.Default.DictionaryStringString);
-
-        if (headers == null)
-        {
-            messagePipe.Send(new MessagePipe.OutgoingMessage(from, new ServerMessage
-            {
-                Handshake = new HandshakeResponse
-                {
-                    Success = false,
-                    Error = "Invalid auth chain JSON",
-                },
-            }, PacketMode.RELIABLE));
-
-            logger.LogInformation("Handshake validation failed: cannot parse auth-chain");
-
-            return;
-        }
 
         try
         {
-            IReadOnlyList<AuthLink> chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
+            HandshakeAuthenticator.AuthResult? auth = authenticator.Authenticate(handshakeRequest.AuthChain);
 
-            string timestamp = string.Empty;
-            string metadata = string.Empty;
-
-            foreach (KeyValuePair<string, string> kv in headers)
+            if (auth == null)
             {
-                if (kv.Key.Equals("x-identity-timestamp", StringComparison.OrdinalIgnoreCase))
-                    timestamp = kv.Value;
+                messagePipe.Send(new MessagePipe.OutgoingMessage(from, new ServerMessage
+                {
+                    Handshake = new HandshakeResponse
+                    {
+                        Success = false,
+                        Error = "Invalid auth chain JSON",
+                    },
+                }, PacketMode.RELIABLE));
 
-                if (kv.Key.Equals("x-identity-metadata", StringComparison.OrdinalIgnoreCase))
-                    metadata = kv.Value;
+                logger.LogInformation("Handshake validation failed: cannot parse auth-chain");
+
+                return;
             }
 
-            string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
-            AuthChainValidationResult result = authChainValidator.Validate(chain, expectedPayload);
+            (string userAddress, string timestamp) = auth.Value;
 
             // Platform ban list — checked before the replay cache so a banned wallet doesn't
             // consume an anti-replay slot. The ban list is populated by BansPollingHttpService on a
             // background timer; when the poller is disabled (no moderator token) the list is
             // empty and this check is a constant-time no-op.
-            if (existingState != null && banList.IsBanned(result.UserAddress))
+            if (existingState != null && banList.IsBanned(userAddress))
             {
-                RejectBanned(from, existingState, result.UserAddress);
+                RejectBanned(from, existingState, userAddress);
                 return;
             }
 
             // Replay guard — a valid signature alone isn't enough. Reject handshakes whose
             // (wallet, timestamp) pair has already been accepted within the anti-replay window.
             // The cache owns the disconnect; state flips to PENDING_DISCONNECT via PeerDefense.
-            if (existingState != null && !replayPolicy.TryAdmit(from, existingState, result.UserAddress, timestamp))
+            if (existingState != null && !replayPolicy.TryAdmit(from, existingState, userAddress, timestamp))
                 return;
 
             // Initial-state validation runs before the AUTHENTICATED transition: a malformed
@@ -100,7 +83,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
                 return;
 
             PeerState peer = peerStateFactory.Create();
-            peer.WalletId = result.UserAddress;
+            peer.WalletId = userAddress;
             peer.ConnectionState = PeerConnectionState.AUTHENTICATED;
 
             peers[from] = peer;
@@ -114,11 +97,11 @@ public class HandshakeHandler(MessagePipe messagePipe,
                 if (duplicatedPeer != from)
                 {
                     transport.Disconnect(duplicatedPeer, DisconnectReason.DUPLICATE_SESSION);
-                    logger.LogInformation("Duplicated peer found {Wallet}, disconnecting peer {Peer}", result.UserAddress, duplicatedPeer);
+                    logger.LogInformation("Duplicated peer found {Wallet}, disconnecting peer {Peer}", userAddress, duplicatedPeer);
                 }
             }
 
-            identityBoard.Set(from, result.UserAddress);
+            identityBoard.Set(from, userAddress);
             snapshotBoard.SetActive(from);
 
             SeedInitialState(from, handshakeRequest.InitialState);
@@ -131,7 +114,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
                 },
             }, PacketMode.RELIABLE));
 
-            logger.LogInformation("Peer handshake accepted with wallet {Wallet} - peerId {Peer}", result.UserAddress, from);
+            logger.LogInformation("Peer handshake accepted with wallet {Wallet} - peerId {Peer}", userAddress, from);
         }
         catch (Exception e)
         {

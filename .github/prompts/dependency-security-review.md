@@ -17,7 +17,8 @@ List every external dependency change visible in this PR:
 - New or changed entries in `Directory.Build.props` / `Directory.Build.targets`
 - New binary or native plugin files added or modified (`.dll`, `.so`, `.dylib`)
 - New build scripts, MSBuild targets, or package setup code that execute automatically
-- Changes to `src/Protocol/` that pull in new protobuf tooling or codegen dependencies
+- Changes to the `Decentraland.RustEthereum` pipeline: `RustEthereumVersion` in `src/Directory.Build.props`, `tools/fetch-rust-eth.{sh,ps1}`, `src/NuGet.config`, or `src/Directory.Build.targets`. This nupkg is downloaded from a GitHub Release into the gitignored `packages/` feed with **no checksum verification** — the version pin and the hardcoded release URL are the only integrity controls — and it contains native code that parses untrusted handshake input (ECDSA recovery). Treat a version bump as a native-binary change; review any change to the download URL, repository owner, or fetch logic line by line.
+- Changes to `src/Protocol/Protocol.csproj` or `tools/protoc-gen-bitwise/` that pull in new protobuf tooling or codegen dependencies
 
 For each item, state:
 - name
@@ -163,9 +164,9 @@ If the trigger is used purely to read labels/title/author and no PR code is exec
 
 For files under `.github/prompts/`, read the diff as if you were reviewing operational instructions for an LLM with workflow secrets. Flag any new instruction that tells the LLM to read filesystem paths, run shell commands, post to issues/PRs, or make network requests beyond what the calling workflow already allows. Watch especially for instructions that could escalate a downstream tool allowlist. If a prompt change implies a workflow change (or vice versa), check both sides.
 
-### Verdict
+### Folding into the verdict
 
-Output `DEPENDENCY_REVIEW: BLOCK` if any HIGH finding from W.1–W.10 is present. Output `DEPENDENCY_REVIEW: NEEDS_ATTENTION` if any MEDIUM finding without a HIGH. Same severity scale and markers as the dependency review above.
+W findings do not get their own verdict line — they feed the single verdict emitted in STEP 4: any HIGH W finding forces BLOCK; any MEDIUM W finding without a HIGH forces at least NEEDS_ATTENTION.
 
 --- STEP 4: OUTPUT ---
 Produce:
@@ -194,12 +195,12 @@ Use inline comments to flag:
 
 Do not claim to have inspected binary internals unless the PR actually contains inspectable source or metadata.
 
-At the end, emit exactly one:
+At the very end, emit exactly one verdict line — and never write these marker strings anywhere else in your output:
 DEPENDENCY_REVIEW: PASS
 DEPENDENCY_REVIEW: NEEDS_ATTENTION
 DEPENDENCY_REVIEW: BLOCK
 
 Use:
+- BLOCK if there is a clear high-risk issue that should be addressed before merge (including any HIGH finding from STEP W)
+- NEEDS_ATTENTION if human review is needed or important unknowns remain (including any MEDIUM finding from STEP W)
 - PASS only if no meaningful unresolved concerns remain
-- NEEDS_ATTENTION if human review is needed or important unknowns remain
-- BLOCK if there is a clear high-risk issue that should be addressed before merge

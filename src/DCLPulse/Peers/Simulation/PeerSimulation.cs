@@ -126,7 +126,7 @@ public sealed class PeerSimulation : IPeerSimulation
             {
                 if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= disconnectionCleanTimeoutMs)
                 {
-                    CleanupDisconnectedPeer(observerId);
+                    CleanupDisconnectedPeer(observerId, observerState);
                     continue;
                 }
             }
@@ -778,8 +778,14 @@ public sealed class PeerSimulation : IPeerSimulation
 
     // ── Cleanup ─────────────────────────────────────────────────────
 
-    private void CleanupDisconnectedPeer(PeerIndex peerId)
+    private void CleanupDisconnectedPeer(PeerIndex peerId, PeerState peerState)
     {
+        // A scene listener owns a CONNECTED gauge slot but no board entries — decrement it
+        // here so the inc at handshake and this dec stay symmetric. Read the descriptor
+        // before the boards are wiped below.
+        if (peerState.SceneListener != null)
+            PulseMetrics.SceneListener.CONNECTED.Add(-1);
+
         snapshotBoard.ClearActive(peerId);
         spatialGrid.Remove(peerId);
         identityBoard.Remove(peerId);

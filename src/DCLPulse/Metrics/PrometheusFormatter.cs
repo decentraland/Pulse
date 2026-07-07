@@ -18,6 +18,7 @@ internal static class PrometheusFormatter
         ClientMessage.MessageOneofCase.EmoteStart,
         ClientMessage.MessageOneofCase.EmoteStop,
         ClientMessage.MessageOneofCase.Teleport,
+        ClientMessage.MessageOneofCase.SceneListenerHandshake,
     ];
 
     private static readonly ServerMessage.MessageOneofCase[] OUTGOING_MESSAGE_TYPES =

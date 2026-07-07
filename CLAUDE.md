@@ -80,9 +80,11 @@ If `InitialState.emote_id` is set the seeded snapshot also carries an `EmoteStat
 ### Peer State Machine
 
 ```
-CONNECTING → PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
+PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
 ```
 
+- States live in `PeerConnectionState` (`src/DCLPulse/Peers/PeerConnectionState.cs`); `NONE` is the enum default, never assigned.
+- Server-initiated disconnects (handshake reject, `PeerDefense` kick) pass through `PENDING_DISCONNECT` first — `transport.Disconnect` called but ENet's disconnect event not yet emitted; inbound packets from the peer are skipped in that window — then `DISCONNECTING` when the event lands.
 - `PENDING_AUTH` deadline: **30 seconds**. Non-HANDSHAKE packets silently dropped.
 - Validation failure: send `HANDSHAKE_REJECT { reason }`, call `enet_peer_disconnect_later` (flushes reject before drop).
 - Deadline exceeded: `enet_peer_disconnect` immediately, no message.
@@ -93,17 +95,18 @@ CONNECTING → PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
 
 ## Serialization
 
-**Custom protoc plugin** generating bitwise-packed serializers from `.proto` files.
+**Custom protoc plugin** (`protoc-gen-bitwise`) generating quantized-accessor partials from `.proto` files.
 
-`.proto` is the single source of truth. Custom `QuantizedFloatOptions` field extension annotates float fields with `bits`, `min`, `max`. Plugin generates:
+`.proto` is the single source of truth (hosted in the sibling `@dcl/protocol` repo). Custom `QuantizedFloatOptions` field extension annotates fields with `bits`, `min`, `max`. Quantized values live in plain `uint32` proto fields — ordinary protobuf varints on the wire, not a hand-rolled bit stream. The plugin generates partial classes (`*.Bitwise.cs`) with float `{Field}Quantized` accessors backed by the static `Quantize` helpers (`src/Protocol/Generated/Quantize.cs`):
 
-**BitWriter / BitReader** implement quantization directly:
 ```
 encoded = round((clamp(value, min, max) - min) / (max - min) * (2^bits - 1))
 decoded = (encoded / (2^bits - 1)) * (max - min) + min
 ```
 
-Standard protobuf `optional` fields map to a plugin-generated field_mask on the wire — the schema stays clean, the wire encoding is compact.
+Velocity-style fields use the power-law variant (`Quantize.EncodePower` / `DecodePower`), which concentrates resolution near zero. Each accessor comes with a `{Field}QuantizedStep` constant — the coarsest grid step, safe as an equality tolerance.
+
+Standard protobuf `optional` fields provide per-field presence natively — unchanged fields are simply omitted from deltas; no custom field mask is generated.
 
 ---
 
@@ -161,8 +164,8 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **STATE_DELTA** (ch1, unreliable sequenced, per server tick)
 - Diff from last_sent_snapshot for each observer/subject pair
-- field_mask (from optional field presence) suppresses unchanged continuous fields
-- state_flags always present regardless of mask
+- optional-field presence suppresses unchanged continuous fields
+- state_flags always present regardless of field presence
 - Quantized floats, same ranges as MovementInput
 
 **EMOTE_STARTED** (ch0, reliable, broadcast to interest set)
@@ -202,7 +205,7 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **Simulation loop: scan → broadcast → stop → delta.** Each tick, the simulation scans intermediate snapshots and collects the last teleport, emote start, and emote stop. Only the final event of each type is broadcast — intermediate positions or superseded emotes are discarded. An emote that started and stopped in the same batch is invisible to the observer. Discrete events (teleport, emote start) suppress the unreliable delta for that tick to prevent baseline races. Emote stop does not suppress delta — the client needs the position update on resume.
 
-**Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
+**Protobuf `optional` fields carry delta presence.** The schema expresses intent with `optional`; standard protobuf field presence keeps unchanged fields off the wire. No plugin-generated mask is involved — the plugin only adds the quantized accessors and their step constants.
 
 **Snapshot publishing goes through `PeerSnapshotPublisher`.** Every handler that mutates peer state (`PlayerStateInputHandler`, `EmoteStartHandler`, `TeleportHandler`, the handshake initial-state seed) calls one of two methods on the publisher: `PublishFromPlayerState(from, state, EmoteInput?)` for `PlayerState`-shaped events, or `PublishTeleport(from, teleportRequest)` for teleports (reading the quantized position codes off the request). The publisher owns Seq numbering (`LastSeq + 1`), parcel→global decoding, head-IK lifting from `PlayerState`, the `SnapshotBoard.Publish` + `SpatialGrid.Set` pair, and emote-ledger bookkeeping (`StartSeq` is stamped to the new snapshot's `Seq`, `StartTick` defaults to `ServerTick` when caller leaves it null). Don't reconstruct a `PeerSnapshot` inline in a handler — add it to the publisher.
 
@@ -266,12 +269,14 @@ For full debugging workflows (local + remote Fargate, Rider setup, logpoints, po
 
 ## Files / Components Expected
 
-- `decentraland/common/options.proto` — defines `QuantizedFloatOptions` and `BitPackedOptions` as protobuf field extensions
+Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/Protocol/Directory.Build.props`); only the generated C# under `src/Protocol/Generated/` is committed here.
+
+- `decentraland/common/options.proto` — defines `QuantizedFloatOptions`, `QuantizedPowerFloatOptions`, and `BitPackedOptions` as protobuf field extensions
 - `decentraland/pulse/pulse_client.proto` — client→server messages and the `ClientMessage` envelope
-- `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and the only quantized message (`PlayerStateDeltaTier0`)
+- `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and its only quantized message (`PlayerStateDeltaTier0`)
 - `decentraland/pulse/pulse_shared.proto` — types referenced by both directions (`PlayerState`, `GlideState`, `PlayerAnimationFlags`); imported by both client and server protos
-- `protoc-gen-bitwise` — Node/JS plugin, reads `CodeGeneratorRequest`, emits C# serializers
-- `BitWriter` / `BitReader` (C#) — bit packing + quantization (`WriteQuantizedFloat` / `ReadQuantizedFloat`), used by generated C# serializers
+- `protoc-gen-bitwise` — Node/JS plugin in the protocol repo (wrappers in `tools/protoc-gen-bitwise/`), reads `CodeGeneratorRequest`, emits the `*.Bitwise.cs` quantized-accessor partials
+- `Quantize` (C#, `src/Protocol/Generated/Quantize.cs`) — static quantization helpers (`Encode` / `Decode`, power-law `EncodePower` / `DecodePower`) backing the generated `{Field}Quantized` accessors
 
 ## MetaForge — Test Account & Identity Toolkit
 

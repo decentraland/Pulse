@@ -242,6 +242,12 @@ List<int> ParseListenerParcels(string spec)
 
 // Receive-only: subscribe to the positional stream and log each message with subject id + parcel.
 // Never sends anything back to the server after the handshake.
+//
+// We ALSO subscribe to EmoteStarted/EmoteStopped/PlayerProfileVersionAnnounced — messages a scene
+// listener must NEVER receive. Without an active subscription the service silently drops them
+// (RouteIncomingMessagesAsync discards messages with no subscriber), so a "0 received" tally would
+// be true by construction rather than evidence. Subscribing turns any server-side leak into a
+// visible LEAK line and a non-zero counter.
 async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerService service)
 {
     string Parcel(int index)
@@ -250,6 +256,9 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
         return $"{x}:{z}";
     }
 
+    long positionalCount = 0;
+    long leakCount = 0;
+
     try
     {
         await foreach (ServerMessage message in service.SubscribeAllAsync(lifeCycleCts.Token,
@@ -257,20 +266,27 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
                            ServerMessage.MessageOneofCase.PlayerLeft,
                            ServerMessage.MessageOneofCase.PlayerStateDelta,
                            ServerMessage.MessageOneofCase.PlayerStateFull,
-                           ServerMessage.MessageOneofCase.Teleported))
+                           ServerMessage.MessageOneofCase.Teleported,
+                           // Leak-detection subscriptions: a scene listener must never see these.
+                           ServerMessage.MessageOneofCase.EmoteStarted,
+                           ServerMessage.MessageOneofCase.EmoteStopped,
+                           ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced))
         {
             switch (message.MessageCase)
             {
                 case ServerMessage.MessageOneofCase.PlayerJoined:
                     PlayerJoined joined = message.PlayerJoined;
+                    positionalCount++;
                     Console.WriteLine($"[{accountName}] PlayerJoined subject={joined.State.SubjectId} " +
                                       $"parcel={Parcel(joined.State.State.ParcelIndex)} user={joined.UserId}");
                     break;
                 case ServerMessage.MessageOneofCase.PlayerLeft:
+                    positionalCount++;
                     Console.WriteLine($"[{accountName}] PlayerLeft subject={message.PlayerLeft.SubjectId}");
                     break;
                 case ServerMessage.MessageOneofCase.PlayerStateDelta:
                     PlayerStateDeltaTier0 delta = message.PlayerStateDelta;
+                    positionalCount++;
                     // parcel_index is an optional delta field, only present when it changed.
                     string deltaParcel = delta.HasParcelIndex ? Parcel(delta.ParcelIndex) : "(unchanged)";
                     Console.WriteLine($"[{accountName}] PlayerStateDelta subject={delta.SubjectId} " +
@@ -278,13 +294,31 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
                     break;
                 case ServerMessage.MessageOneofCase.PlayerStateFull:
                     PlayerStateFull full = message.PlayerStateFull;
+                    positionalCount++;
                     Console.WriteLine($"[{accountName}] PlayerStateFull subject={full.SubjectId} " +
                                       $"parcel={Parcel(full.State.ParcelIndex)} seq={full.Sequence}");
                     break;
                 case ServerMessage.MessageOneofCase.Teleported:
                     TeleportPerformed teleport = message.Teleported;
+                    positionalCount++;
                     Console.WriteLine($"[{accountName}] Teleported subject={teleport.SubjectId} " +
                                       $"parcel={Parcel(teleport.State.ParcelIndex)} seq={teleport.Sequence}");
+                    break;
+                case ServerMessage.MessageOneofCase.EmoteStarted:
+                    leakCount++;
+                    Console.WriteLine($"[{accountName}] LEAK: EmoteStarted for subject {message.EmoteStarted.SubjectId} " +
+                                      "— server must never send this to a scene listener");
+                    break;
+                case ServerMessage.MessageOneofCase.EmoteStopped:
+                    leakCount++;
+                    Console.WriteLine($"[{accountName}] LEAK: EmoteStopped for subject {message.EmoteStopped.SubjectId} " +
+                                      "— server must never send this to a scene listener");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced:
+                    leakCount++;
+                    Console.WriteLine($"[{accountName}] LEAK: PlayerProfileVersionAnnounced for subject " +
+                                      $"{message.PlayerProfileVersionAnnounced.SubjectId} " +
+                                      "— server must never send this to a scene listener");
                     break;
             }
         }
@@ -293,6 +327,9 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
     {
         // Graceful shutdown (Ctrl+C / stop file) cancels the subscription.
     }
+
+    Console.WriteLine($"[{accountName}] Listener summary: positional messages={positionalCount}, " +
+                      $"suppressed-message LEAKS={leakCount}");
 }
 
 // --- Shutdown helpers ---

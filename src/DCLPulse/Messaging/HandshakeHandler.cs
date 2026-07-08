@@ -1,3 +1,4 @@
+using DCL.Auth;
 using Decentraland.Pulse;
 using Google.Protobuf;
 using Pulse.Messaging.Hardening;
@@ -15,7 +16,7 @@ namespace Pulse.Messaging;
 ///     ring + spatial grid) so other observers can see it.
 /// </summary>
 public class HandshakeHandler(MessagePipe messagePipe,
-    HandshakeAuthenticator authenticator,
+    AuthChainValidator authChainValidator,
     PeerStateFactory peerStateFactory,
     SnapshotBoard snapshotBoard,
     IdentityBoard identityBoard,
@@ -28,7 +29,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
     PeerSnapshotPublisher snapshotPublisher,
     ITimeProvider timeProvider,
     ILogger<HandshakeHandler> logger)
-    : HandshakeHandlerBase(messagePipe, authenticator, peerStateFactory, identityBoard, transport,
+    : HandshakeHandlerBase(messagePipe, authChainValidator, peerStateFactory, identityBoard, transport,
         attemptPolicy, preAuthAdmission, replayPolicy, banList, logger)
 {
     protected override string LogName => "Handshake";

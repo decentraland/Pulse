@@ -1,3 +1,4 @@
+using DCL.Auth;
 using Decentraland.Pulse;
 using Google.Protobuf;
 using Pulse.InterestManagement;
@@ -19,7 +20,7 @@ namespace Pulse.Messaging;
 ///     can mutate it.
 /// </summary>
 public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
-    HandshakeAuthenticator authenticator,
+    AuthChainValidator authChainValidator,
     PeerStateFactory peerStateFactory,
     IdentityBoard identityBoard,
     ITransport transport,
@@ -30,7 +31,7 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
     FieldValidator fieldValidator,
     SceneListenerCellMapper cellMapper,
     ILogger<SceneListenerHandshakeHandler> logger)
-    : HandshakeHandlerBase(messagePipe, authenticator, peerStateFactory, identityBoard, transport,
+    : HandshakeHandlerBase(messagePipe, authChainValidator, peerStateFactory, identityBoard, transport,
         attemptPolicy, preAuthAdmission, replayPolicy, banList, logger)
 {
     protected override string LogName => "Scene-listener handshake";

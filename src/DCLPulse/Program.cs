@@ -83,7 +83,6 @@ builder.Services.AddSingleton<EmoteStopHandler>();
 builder.Services.AddSingleton<EmoteCompleter>();
 builder.Services.AddSingleton<TeleportHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new RustEthereumSignVerifier()));
-builder.Services.AddSingleton<HandshakeAuthenticator>();
 builder.Services.AddSingleton<SceneListenerCellMapper>();
 builder.Services.AddSingleton<SceneListenerHandshakeHandler>();
 

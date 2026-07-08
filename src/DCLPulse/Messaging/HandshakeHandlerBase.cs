@@ -1,3 +1,4 @@
+using DCL.Auth;
 using Decentraland.Pulse;
 using Google.Protobuf;
 using Pulse.Messaging.Hardening;
@@ -6,6 +7,7 @@ using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
+using System.Text.Json;
 
 namespace Pulse.Messaging;
 
@@ -23,7 +25,7 @@ namespace Pulse.Messaging;
 /// </summary>
 public abstract class HandshakeHandlerBase(
     MessagePipe messagePipe,
-    HandshakeAuthenticator authenticator,
+    AuthChainValidator authChainValidator,
     PeerStateFactory peerStateFactory,
     IdentityBoard identityBoard,
     ITransport transport,
@@ -51,7 +53,7 @@ public abstract class HandshakeHandlerBase(
 
         try
         {
-            HandshakeAuthenticator.AuthResult? auth = authenticator.Authenticate(GetAuthChain(message));
+            (string Wallet, string Timestamp)? auth = Authenticate(GetAuthChain(message));
 
             if (auth == null)
             {
@@ -145,6 +147,40 @@ public abstract class HandshakeHandlerBase(
     protected abstract void LogAccepted(PeerIndex from, PeerState peer);
 
     // ── Shared mechanics ────────────────────────────────────────────
+
+    /// <summary>
+    ///     Parses the signed-fetch headers JSON, rebuilds the expected connect payload, and
+    ///     validates the ECDSA auth chain. Returns null when the JSON cannot be parsed; throws
+    ///     (same exceptions as <see cref="AuthChainValidator.Validate" />) when the chain is
+    ///     invalid — the caller's try/catch turns both into a handshake reject.
+    /// </summary>
+    private (string Wallet, string Timestamp)? Authenticate(ByteString authChain)
+    {
+        string authChainJson = authChain.ToStringUtf8();
+        Dictionary<string, string>? headers = JsonSerializer.Deserialize(authChainJson, HandshakeJsonContext.Default.DictionaryStringString);
+
+        if (headers == null)
+            return null;
+
+        IReadOnlyList<AuthLink> chain = AuthChainParser.ParseFromSignedFetchHeaders(headers);
+
+        string timestamp = string.Empty;
+        string metadata = string.Empty;
+
+        foreach (KeyValuePair<string, string> kv in headers)
+        {
+            if (kv.Key.Equals("x-identity-timestamp", StringComparison.OrdinalIgnoreCase))
+                timestamp = kv.Value;
+
+            if (kv.Key.Equals("x-identity-metadata", StringComparison.OrdinalIgnoreCase))
+                metadata = kv.Value;
+        }
+
+        string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
+        AuthChainValidationResult result = authChainValidator.Validate(chain, expectedPayload);
+
+        return (result.UserAddress, timestamp);
+    }
 
     private void EvictDuplicateSession(PeerIndex from, string wallet)
     {

@@ -135,34 +135,9 @@ public sealed class PeerSimulation : IPeerSimulation
                 continue;
 
             if (observerState.SceneListener is { } listener)
-            {
                 SimulateSceneListenerObserver(observerId, observerState, listener, tickCounter);
-                continue;
-            }
-
-            if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
-                continue;
-
-            if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
-            {
-                views = new Dictionary<PeerIndex, PeerToPeerView>();
-                observerViews[observerId] = views;
-            }
-
-            collector.Clear();
-            areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
-
-            if (selfMirrorEnabled)
-                collector.Add(observerId, selfMirrorTier);
-
-            string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
-
-            ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter);
-
-            observerState.ResyncRequests?.Clear();
-
-            if (tickCounter % SWEEP_INTERVAL == 0)
-                SweepStaleViews(observerId, views, tickCounter);
+            else
+                SimulatePlayerObserver(observerId, observerState, tickCounter);
         }
 
         foreach (PeerIndex pi in peersToBeRemoved)
@@ -179,7 +154,27 @@ public sealed class PeerSimulation : IPeerSimulation
         observerViews.Remove(observerId);
     }
 
-    // ── Scene-listener observers ────────────────────────────────────
+    // ── Per-observer simulation paths ───────────────────────────────
+
+    /// <summary>
+    ///     Player observers are subjects too: the radius AoI query is centered on their own
+    ///     published snapshot, so until the handshake seed or a teleport lands one there is
+    ///     nothing to query from and the tick is skipped. Full message surface, distance tiers,
+    ///     optional self-mirror.
+    /// </summary>
+    private void SimulatePlayerObserver(PeerIndex observerId, PeerState observerState, uint tickCounter)
+    {
+        if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
+            return;
+
+        collector.Clear();
+        areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
+
+        if (selfMirrorEnabled)
+            collector.Add(observerId, selfMirrorTier);
+
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false);
+    }
 
     /// <summary>
     ///     Scene listeners have no snapshot of their own — their interest set is the fixed
@@ -188,26 +183,39 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     private void SimulateSceneListenerObserver(PeerIndex observerId, PeerState observerState, SceneListenerState listener, uint tickCounter)
     {
+        collector.Clear();
+        CollectSceneListenerSubjects(observerId, listener);
+
+        PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
+
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: true);
+    }
+
+    /// <summary>
+    ///     Shared tail of both observer paths: resolve the observer's view map, walk the freshly
+    ///     filled collector via <see cref="ProcessVisibleSubjects" />, drop unconsumed resync
+    ///     requests (AoI enforcement — see <see cref="Messaging.ResyncRequestHandler" />), and
+    ///     periodically sweep views whose subjects left the interest set.
+    /// </summary>
+    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly)
+    {
         if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
             views = new Dictionary<PeerIndex, PeerToPeerView>();
             observerViews[observerId] = views;
         }
 
-        collector.Clear();
-        CollectSceneListenerSubjects(observerId, listener);
-
-        PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
-
         string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
-        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly: true);
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly);
 
         observerState.ResyncRequests?.Clear();
 
         if (tickCounter % SWEEP_INTERVAL == 0)
             SweepStaleViews(observerId, views, tickCounter);
     }
+
+    // ── Scene-listener interest collection ──────────────────────────
 
     /// <summary>
     ///     Fills the collector with subjects standing inside the listener's parcels: union the
@@ -251,7 +259,7 @@ public sealed class PeerSimulation : IPeerSimulation
         Dictionary<PeerIndex, PeerToPeerView> views,
         Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter,
-        bool positionalOnly = false)
+        bool positionalOnly)
     {
         for (var i = 0; i < collector.Count; i++)
         {

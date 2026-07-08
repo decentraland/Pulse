@@ -95,9 +95,9 @@ Listener-specific validation (`FieldValidator.ValidateSceneListenerHandshake`):
   `TeleportRequest.realm`).
 - `parcel_indices` non-empty; every index passes `ParcelEncoder.IsValidIndex`.
 - After in-place dedup, count ≤ `SceneListener:MaxParcels`.
-- Any failure → `HandshakeResponse { Success = false }` +
-  `INVALID_HANDSHAKE_FIELD` disconnect, before the peer ever reaches
-  `AUTHENTICATED` — same convention as malformed `PlayerInitialState` seeds.
+- Any failure → `INVALID_HANDSHAKE_FIELD` disconnect with **no**
+  `HandshakeResponse`, before the peer ever reaches `AUTHENTICATED` — same
+  convention as malformed `PlayerInitialState` seeds.
 
 On success:
 

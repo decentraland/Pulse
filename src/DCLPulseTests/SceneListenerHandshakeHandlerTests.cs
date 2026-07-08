@@ -142,6 +142,30 @@ public class SceneListenerHandshakeHandlerTests
     }
 
     [Test]
+    public void Handle_AlreadyAuthenticatedPlayer_SilentlyDropped()
+    {
+        // An already-AUTHENTICATED player peer must not be convertible into a listener in place:
+        // duplicate-session eviction can't fire (duplicatedPeer == from), so without the
+        // PENDING_AUTH gate its live SnapshotBoard slot + SpatialGrid entry would linger as a
+        // frozen ghost avatar. The gate silently drops the message and leaves the peer untouched.
+        var player = new PeerState(PeerConnectionState.AUTHENTICATED) { WalletId = WALLET };
+        peers[peer] = player;
+
+        // Seed a player-phase snapshot slot so we can assert it survives untouched.
+        snapshotBoard.SetActive(peer);
+        snapshotBoard.Publish(peer, TestSnapshots.Make(seq: 7));
+
+        handler.Handle(peers, peer, BuildListenerHandshake("main", 10, 11));
+
+        Assert.That(peers[peer], Is.SameAs(player), "The peer's state object must be the exact same instance — no conversion.");
+        Assert.That(player.SceneListener, Is.Null, "No listener descriptor may be stamped onto an authenticated player.");
+        Assert.That(player.ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED), "Connection state must be unchanged.");
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True, "The player's snapshot slot must remain active.");
+        Assert.That(snapshot.Seq, Is.EqualTo(7u), "The player's snapshot slot must be untouched.");
+        transport.DidNotReceive().Disconnect(Arg.Any<PeerIndex>(), Arg.Any<DisconnectReason>());
+    }
+
+    [Test]
     public void Handle_InvalidAuthChainJson_RespondsWithError()
     {
         var request = new SceneListenerHandshakeRequest

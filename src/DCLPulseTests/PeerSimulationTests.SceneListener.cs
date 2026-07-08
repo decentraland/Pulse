@@ -122,6 +122,32 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void SceneListener_MidEmoteJoin_GetsPlayerJoinedButNoEmoteStarted()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+
+        // Subject is already mid-emote when the listener first sees it. A player observer would
+        // get a companion EmoteStarted alongside PlayerJoined (see
+        // PlayerJoined_AlsoAnnouncesActiveEmote_ForNewSubject); a positional-only listener must not.
+        snapshotBoard.SetActive(subject);
+        snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 2, serverTick: 20, parcel: 5,
+            globalPosition: new Vector3(8f, 0f, 8f), realm: "main",
+            emote: new EmoteState("wave", StartSeq: 2, StartTick: 20)));
+        spatialGrid.Set(subject, new Vector3(8f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<OutgoingMessage> messages = DrainAllMessages().Where(m => m.To == listener).ToList();
+        Assert.That(messages.Select(m => m.Message.MessageCase),
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined),
+            "The mid-emote subject must still be announced to the listener.");
+        Assert.That(messages.Select(m => m.Message.MessageCase),
+            Has.None.EqualTo(ServerMessage.MessageOneofCase.EmoteStarted),
+            "Listeners must not get the companion EmoteStarted that players receive on mid-emote join.");
+    }
+
+    [Test]
     public void SceneListener_ProfileAnnouncement_Suppressed()
     {
         var listener = new PeerIndex(9);

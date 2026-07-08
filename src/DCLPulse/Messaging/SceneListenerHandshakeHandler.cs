@@ -37,6 +37,14 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
         if (!peers.TryGetValue(from, out PeerState? existingState))
             return;
 
+        // Invariant: a listener is never a subject. Only a peer still in PENDING_AUTH may
+        // become one. Without this gate an already-AUTHENTICATED player could convert itself
+        // in place (duplicate-session eviction never fires since duplicatedPeer == from),
+        // leaving its live SnapshotBoard slot + SpatialGrid entry as a frozen ghost avatar.
+        // Also closes the PENDING_DISCONNECT resurrection window. Silent drop, per convention.
+        if (existingState.ConnectionState != PeerConnectionState.PENDING_AUTH)
+            return;
+
         if (!attemptPolicy.TryRecordAttempt(from, existingState))
             return;
 

@@ -240,6 +240,37 @@ public class HandshakeHandlerTests
         transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 
+    [Test]
+    public void Handle_CleanupOfEvictedPeer_ThirdHandshakeStillEvictsLiveSession()
+    {
+        var peerO = new PeerIndex(1);
+        var peerN = new PeerIndex(2);
+        var peerT = new PeerIndex(3);
+
+        peers = new Dictionary<PeerIndex, PeerState>
+        {
+            [peerO] = new (PeerConnectionState.PENDING_AUTH),
+            [peerN] = new (PeerConnectionState.PENDING_AUTH),
+            [peerT] = new (PeerConnectionState.PENDING_AUTH),
+        };
+
+        // Wallet W connects as O, then a second connection with W arrives as N and evicts O.
+        handler.Handle(peers, peerO, BuildHandshake(initialState: null));
+        handler.Handle(peers, peerN, BuildHandshake(initialState: null));
+        transport.Received(1).Disconnect(peerO, DisconnectReason.DUPLICATE_SESSION);
+
+        // O's DISCONNECTING cleanup runs ~5s later (CleanupDisconnectedPeer → identityBoard.Remove).
+        identityBoard.Remove(peerO);
+
+        Assert.That(identityBoard.TryGetPeerIndexByWallet(WALLET, out PeerIndex live), Is.True,
+            "cleanup of the evicted peer must not delete the live wallet binding");
+        Assert.That(live, Is.EqualTo(peerN));
+
+        // A third handshake with W must still detect N as the duplicate session and evict it.
+        handler.Handle(peers, peerT, BuildHandshake(initialState: null));
+        transport.Received(1).Disconnect(peerN, DisconnectReason.DUPLICATE_SESSION);
+    }
+
     private ClientMessage BuildHandshake(PlayerInitialState? initialState)
     {
         // The handshake handler reads x-identity-* headers from the JSON payload, parses the

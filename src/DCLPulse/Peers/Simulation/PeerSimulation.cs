@@ -144,9 +144,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
             collector.Clear();
             areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
-
-            if (selfMirrorEnabled)
-                collector.Add(observerId, selfMirrorTier);
+            AddSelfMirror(observerId, in observerSnapshot);
 
             string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
@@ -170,6 +168,23 @@ public sealed class PeerSimulation : IPeerSimulation
     public void RemoveObserver(PeerIndex observerId)
     {
         observerViews.Remove(observerId);
+    }
+
+    /// <summary>
+    ///     Inject the observer as its own subject so it receives its own state under
+    ///     <see cref="SELF_MIRROR_WALLET_ID" /> (a client-side animation-testing aid).
+    ///     <para />
+    ///     This bypasses the AoI, so it must re-apply the AoI's realm invariant itself: a peer
+    ///     with no realm yet (legacy connect, before its first teleport) is invisible to every
+    ///     observer — itself included — so it is not mirrored until a realm is set. Without this
+    ///     guard the self-mirror would emit a <c>PlayerJoined</c> carrying a realm-less snapshot.
+    /// </summary>
+    private void AddSelfMirror(PeerIndex observerId, in PeerSnapshot observerSnapshot)
+    {
+        if (!selfMirrorEnabled || observerSnapshot.Realm == null)
+            return;
+
+        collector.Add(observerId, selfMirrorTier);
     }
 
     // ── Per-subject orchestration ───────────────────────────────────
@@ -308,6 +323,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 UserId = userId,
                 ProfileVersion = profileVersion,
                 State = CreateFullState(subjectId, latestSnapshot),
+                Realm = latestSnapshot.Realm ?? string.Empty,
             },
         }, PacketMode.RELIABLE));
 
@@ -613,6 +629,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 Sequence = snapshot.Seq,
                 ServerTick = snapshot.ServerTick,
                 State = CreatePlayerState(snapshot),
+                Realm = snapshot.Realm ?? string.Empty,
             },
         }, PacketMode.RELIABLE);
 

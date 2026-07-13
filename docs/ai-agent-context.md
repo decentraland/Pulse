@@ -64,7 +64,7 @@ Defense-in-depth, all local, all fail-closed. Each has a dedicated class under `
 
 Players outside 100m (`SpatialAreaOfInterestOptions.MaxRadius`) receive no updates.
 
-**Realm partitioning.** `PeerSnapshot.Realm` gates visibility inside the area-of-interest collectors: observers only see subjects whose `Realm` string matches exactly. A single Pulse instance transparently hosts multiple realms that never see each other.
+**Realm partitioning.** `PeerSnapshot.Realm` gates visibility inside the area-of-interest collectors: observers only see subjects whose `Realm` string matches exactly. A single Pulse instance transparently hosts multiple realms that never see each other. The subject's realm rides along on `PlayerJoined` (on entry) and `Teleported` (a teleport may cross realms), so the client always knows which realm a peer belongs to.
 
 **Snapshot history:** Server keeps a small rolling ring of snapshots per subject (`SnapshotBoard`). `RESYNC_REQUEST` default response is `STATE_FULL`. When `Peers.ResyncWithDelta` is enabled, the server first attempts a targeted delta from the client's `knownSeq` baseline and falls back to `STATE_FULL` when that seq has been evicted from the ring.
 
@@ -78,7 +78,7 @@ Players outside 100m (`SpatialAreaOfInterestOptions.MaxRadius`) receive no updat
 
 **Stale-view sweep.** Every `SWEEP_INTERVAL` (≈100 ticks, ~5 s) `PeerSimulation.SweepStaleViews` prunes observer views for no-longer-visible subjects and emits `PlayerLeft`. Bounds memory and closes the same-wallet-reconnect "two views" window.
 
-**Self-mirror.** When `Peers.SelfMirrorEnabled=true`, each peer receives its own state as if from another peer under `SELF_MIRROR_WALLET_ID` at tier `SelfMirrorTier`. Client-side animation testing aid.
+**Self-mirror.** When `Peers.SelfMirrorEnabled=true`, each peer receives its own state as if from another peer under `SELF_MIRROR_WALLET_ID` at tier `SelfMirrorTier`. Client-side animation testing aid. The self-mirror is injected outside the AoI, so it re-applies the same realm invariant itself: a peer with no realm yet (legacy connect, before its first teleport) is not mirrored until a realm is set.
 
 ---
 
@@ -103,14 +103,14 @@ Proto-level names: see the `ClientMessage` / `ServerMessage` `oneof message` in 
 | Message | Channel | Description |
 | --- | --- | --- |
 | `Handshake` | 0 (reliable) | Auth accept/reject response. On reject, followed by `enet_peer_disconnect_later`. |
-| `PlayerJoined` | 0 (reliable, broadcast) | A peer entered the observer's interest set. |
+| `PlayerJoined` | 0 (reliable, broadcast) | A peer entered the observer's interest set. Carries `UserId, ProfileVersion, State` and the subject's `Realm` (the AoI partition it belongs to). |
 | `PlayerLeft` | 0 (reliable, broadcast) | A peer left the observer's interest set (distance, realm change, disconnect, or stale-view sweep). |
 | `PlayerStateFull` | 0 (reliable) | Full snapshot of a subject. Sent on zone entry or in response to `Resync`. |
 | `PlayerStateDelta` | 1 (unreliable sequenced) | Delta from `last_sent_snapshot`. Optional-field presence suppresses unchanged fields. State flags always present. |
 | `PlayerProfileVersionsAnnounced` | 0 (reliable, broadcast) | Fan-out of `ProfileAnnouncement` to observers. |
 | `EmoteStarted` | 0 (reliable, broadcast) | `SubjectId, Sequence, ServerTick, EmoteId, PlayerState`. Full `PlayerState` sent reliably because no further position updates arrive during the emote. |
 | `EmoteStopped` | 0 (reliable, broadcast) | `SubjectId, Sequence, ServerTick, Reason, PlayerState`. Reason = completed (one-shot duration expired) or cancelled (client `EmoteStop`). `PlayerState` lets the client snap to the correct position on resume. |
-| `Teleported` | 0 (reliable, broadcast) | Authoritative position + `ServerTick`. Client clears interpolation buffer and snaps. |
+| `Teleported` | 0 (reliable, broadcast) | Authoritative position + `ServerTick` + the subject's `Realm` (a teleport may move the peer to a different realm). Client clears interpolation buffer and snaps. |
 
 ---
 

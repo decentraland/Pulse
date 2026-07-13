@@ -158,6 +158,10 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 
 ### Server → Client
 
+**PLAYER_JOINED** (ch0, reliable, broadcast to interest set)
+- Sent when a subject first enters the observer's interest set
+- Carries `user_id`, `profile_version`, full `PlayerState`, and the subject's `realm` (its AoI partition)
+
 **STATE_FULL** (ch0, reliable)
 - Full snapshot of a subject's state
 - Sent on zone entry or in response to RESYNC_REQUEST
@@ -181,6 +185,7 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 
 **TELEPORT** (ch0, reliable, broadcast to interest set)
 - Server-authoritative teleport position with server_tick
+- Carries the subject's `realm` (a teleport may move the peer to a different realm)
 - Receiver clears interpolation buffer and snaps to position
 
 ---

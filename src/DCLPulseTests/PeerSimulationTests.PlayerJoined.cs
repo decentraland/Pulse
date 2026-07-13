@@ -58,6 +58,18 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void PlayerJoined_CarriesRealm()
+    {
+        snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 5, realm: "genesis"));
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        OutgoingMessage msg = DrainSingleMessage();
+        Assert.That(msg.Message.PlayerJoined.Realm, Is.EqualTo("genesis"));
+    }
+
+    [Test]
     public void PlayerJoined_NotSentOnSubsequentTicks()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));

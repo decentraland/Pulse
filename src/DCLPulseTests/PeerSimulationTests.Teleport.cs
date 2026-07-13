@@ -44,6 +44,26 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void Teleport_CarriesRealm()
+    {
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages(); // consume PlayerJoined
+
+        snapshotBoard.SetActive(subject);
+        snapshotBoard.Publish(subject, TestSnapshots.Make(
+            seq: 2, serverTick: 20,
+            position: new Vector3(10, 20, 12),
+            animationFlags: PlayerAnimationFlags.Grounded,
+            isTeleport: true, realm: "crossgate"));
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<OutgoingMessage> messages = DrainAllMessages();
+        OutgoingMessage teleportMsg = messages.First(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.Teleported);
+        Assert.That(teleportMsg.Message.Teleported.Realm, Is.EqualTo("crossgate"));
+    }
+
+    [Test]
     public void Teleport_ReplacesStateDelta()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));

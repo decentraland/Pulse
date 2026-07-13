@@ -84,8 +84,10 @@ public class SelfMirrorTests
     {
         snapshotBoard.SetActive(peer);
 
+        // A realm is required for the self-mirror (and AoI) to surface the peer — the peer sets
+        // one at handshake or via its first teleport. Carried forward onto later snapshots.
         snapshotBoard.Publish(peer, TestSnapshots.Make(
-            seq: seq, serverTick: seq * 10, position: position ?? Vector3.Zero));
+            seq: seq, serverTick: seq * 10, position: position ?? Vector3.Zero, realm: "genesis"));
     }
 
     private void PublishEmoteSnapshot(PeerIndex peer, uint seq, string emoteId = "wave",
@@ -217,6 +219,22 @@ public class SelfMirrorTests
 
         Assert.That(profileMsg.To, Is.EqualTo(observer));
         Assert.That(profileMsg.Message.PlayerProfileVersionAnnounced.Version, Is.EqualTo(42));
+    }
+
+    [Test]
+    public void SelfMirror_NotSentWhenObserverHasNoRealm()
+    {
+        // Legacy connect flow: the peer authenticates without an initial realm and hasn't
+        // teleported yet, so its latest snapshot has Realm == null. Such a peer is invisible
+        // to everyone in the AoI — the self-mirror must honour the same invariant.
+        snapshotBoard.ClearActive(observer);
+        snapshotBoard.SetActive(observer);
+        snapshotBoard.Publish(observer, TestSnapshots.Make(seq: 1, realm: null));
+
+        SetVisibleSubjects();
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        Assert.That(messagePipe.TryReadOutgoingMessage(out _), Is.False);
     }
 
     [Test]

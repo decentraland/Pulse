@@ -77,6 +77,17 @@ public class BucketHistogramTests
                 histogram.Record(i % 40);
         });
 
-        Assert.That(histogram.Snapshot().Count, Is.EqualTo(400_000));
+        HistogramSnapshot snap = histogram.Snapshot();
+
+        // 4 threads × 100k records of (i % 40). Each thread cycles 0..39 exactly 2500 times.
+        Assert.That(snap.Count, Is.EqualTo(400_000));
+
+        // Per-thread sum = 2500 × Σ(0..39) = 2500 × 780 = 1_950_000; ×4 threads = 7_800_000.
+        Assert.That(snap.Sum, Is.EqualTo(7_800_000));
+
+        // Bounds [10,20,30], value > bound → next bucket (== bound stays). Per 40-cycle:
+        // bucket0 = 0..10 (11), bucket1 = 11..20 (10), bucket2 = 21..30 (10), +Inf = 31..39 (9).
+        // ×2500 cycles ×4 threads → [110_000, 100_000, 100_000, 90_000].
+        Assert.That(snap.Counts, Is.EqualTo(new long[] { 110_000, 100_000, 100_000, 90_000 }));
     }
 }

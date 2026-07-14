@@ -7,6 +7,9 @@ namespace Pulse.Metrics;
 ///     <see cref="HistogramSnapshot" /> for percentile computation downstream.
 ///     Bucket bounds are inclusive upper edges; values above the last bound land in the
 ///     +Inf overflow bucket.
+///     Deliberate trade-off: all recording threads share one <c>counts</c> array, so adjacent
+///     longs can false-share a cache line. At current scale that's fine; if profiling ever shows
+///     cache-line contention the fix is per-worker sharding merged at <see cref="Snapshot" />.
 /// </summary>
 public sealed class BucketHistogram(long[] upperBounds)
 {

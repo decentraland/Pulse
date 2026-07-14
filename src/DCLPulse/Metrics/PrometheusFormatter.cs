@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
+using Pulse.Transport.Geo;
 
 namespace Pulse.Metrics;
 
@@ -70,6 +71,14 @@ internal static class PrometheusFormatter
 
         WriteHistogramHeader(writer, "dcl_pulse_outgoing_drain_cycle_us", "Outgoing queue drain-cycle duration in microseconds (non-empty cycles only)");
         WriteHistogramSeries(writer, "dcl_pulse_outgoing_drain_cycle_us", snap.Transport.OutgoingDrainCycleUs, labels: null);
+
+        WriteHistogramHeader(writer, "dcl_pulse_peer_rtt_ms", "ENet smoothed peer RTT in ms by peer continent, sampled every few seconds");
+
+        for (var i = 0; i < Continents.COUNT; i++)
+        {
+            HistogramSnapshot series = snap.Transport.PeerRttMs is { } rtt && i < rtt.Length ? rtt[i] : default(HistogramSnapshot);
+            WriteHistogramSeries(writer, "dcl_pulse_peer_rtt_ms", series, "region=\"" + Continents.LABELS[i] + "\"");
+        }
 
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);

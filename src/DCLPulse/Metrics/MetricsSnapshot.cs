@@ -22,6 +22,9 @@ public readonly record struct MetricsSnapshot
         public int IncomingQueueDepth { get; init; }
         public int OutgoingQueueDepth { get; init; }
         public HistogramSnapshot OutgoingDrainCycleUs { get; init; }
+
+        /// <summary>Peer RTT histograms indexed by (int)Continent — see Continents.LABELS.</summary>
+        public HistogramSnapshot[]? PeerRttMs { get; init; }
     }
 
     public readonly record struct HardeningSnapshot

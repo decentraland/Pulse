@@ -58,6 +58,19 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_banned_refused_total", "Handshake rejections and active-peer evictions triggered by the platform ban list", snap.Hardening.TotalBannedRefused);
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
 
+        WriteHistogramHeader(writer, "dcl_pulse_delta_staleness_ms", "Publish-to-fanout staleness of STATE_DELTA in ms, by AoI tier");
+        WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier0Ms, "tier=\"0\"");
+        WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier1Ms, "tier=\"1\"");
+        WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier2Ms, "tier=\"2\"");
+
+        WriteHistogramHeader(writer, "dcl_pulse_tick_duration_us", "Simulation tick wall time in microseconds");
+        WriteHistogramSeries(writer, "dcl_pulse_tick_duration_us", snap.Simulation.TickDurationUs, labels: null);
+
+        WriteCounter(writer, "dcl_pulse_tick_overruns_total", "Simulation ticks that exceeded the base tick budget", snap.Simulation.TotalTickOverruns);
+
+        WriteHistogramHeader(writer, "dcl_pulse_outgoing_drain_cycle_us", "Outgoing queue drain-cycle duration in microseconds (non-empty cycles only)");
+        WriteHistogramSeries(writer, "dcl_pulse_outgoing_drain_cycle_us", snap.Transport.OutgoingDrainCycleUs, labels: null);
+
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);
         WriteEnumCounters(writer, "dcl_pulse_outgoing_messages_total", "Total outgoing messages by type",
@@ -161,6 +174,73 @@ internal static class PrometheusFormatter
             writer.Write("\"} ");
             writer.WriteLine(counters.Read(type));
         }
+    }
+
+    private static void WriteHistogramHeader(StreamWriter writer, string name, string help)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.WriteLine(" histogram");
+    }
+
+    /// <summary>
+    ///     Emits one labeled series of a histogram: cumulative _bucket lines per Prometheus
+    ///     le semantics, then _sum and _count. Tolerates a default snapshot (null arrays) by
+    ///     emitting a zeroed +Inf bucket, so a collector that never recorded still exposes
+    ///     a well-formed series.
+    /// </summary>
+    private static void WriteHistogramSeries(StreamWriter writer, string name, in HistogramSnapshot histogram, string? labels)
+    {
+        long[] bounds = histogram.UpperBounds ?? [];
+        long[] counts = histogram.Counts ?? new long[bounds.Length + 1];
+        string bucketPrefix = labels is null ? "{le=\"" : "{" + labels + ",le=\"";
+        long cumulative = 0;
+
+        for (var i = 0; i < bounds.Length; i++)
+        {
+            cumulative += counts[i];
+            writer.Write(name);
+            writer.Write("_bucket");
+            writer.Write(bucketPrefix);
+            writer.Write(bounds[i]);
+            writer.Write("\"} ");
+            writer.WriteLine(cumulative);
+        }
+
+        cumulative += counts[bounds.Length];
+        writer.Write(name);
+        writer.Write("_bucket");
+        writer.Write(bucketPrefix);
+        writer.Write("+Inf\"} ");
+        writer.WriteLine(cumulative);
+
+        writer.Write(name);
+        writer.Write("_sum");
+        WriteLabelsAndValue(writer, labels, histogram.Sum);
+
+        writer.Write(name);
+        writer.Write("_count");
+        WriteLabelsAndValue(writer, labels, cumulative);
+    }
+
+    private static void WriteLabelsAndValue(StreamWriter writer, string? labels, long value)
+    {
+        if (labels is null)
+        {
+            writer.Write(' ');
+        }
+        else
+        {
+            writer.Write('{');
+            writer.Write(labels);
+            writer.Write("} ");
+        }
+
+        writer.WriteLine(value);
     }
 
     private static string ToSnakeCase(string pascalCase)

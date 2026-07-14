@@ -45,3 +45,40 @@ public readonly record struct HistogramSnapshot
         return UpperBounds.Length > 0 ? UpperBounds[^1] : 0;
     }
 }
+
+/// <summary>
+///     Display-side helpers. Merge sums per-bucket counts across snapshots that share the
+///     same bucket bounds (e.g. the 7 per-continent RTT histograms → one aggregate row on
+///     the console dashboard). Parts that are default (null arrays) are skipped.
+/// </summary>
+public static class HistogramSnapshots
+{
+    public static HistogramSnapshot Merge(HistogramSnapshot[]? parts)
+    {
+        if (parts == null)
+            return default(HistogramSnapshot);
+
+        long[]? counts = null;
+        long[]? bounds = null;
+        long total = 0, sum = 0;
+
+        foreach (HistogramSnapshot part in parts)
+        {
+            if (part.Counts == null)
+                continue;
+
+            bounds ??= part.UpperBounds;
+            counts ??= new long[part.Counts.Length];
+
+            for (var i = 0; i < part.Counts.Length && i < counts.Length; i++)
+                counts[i] += part.Counts[i];
+
+            total += part.Count;
+            sum += part.Sum;
+        }
+
+        return counts == null
+            ? default(HistogramSnapshot)
+            : new HistogramSnapshot { UpperBounds = bounds, Counts = counts, Count = total, Sum = sum };
+    }
+}

@@ -45,4 +45,25 @@ public class HistogramTrackerTests
         Assert.That(stats.PerSec, Is.EqualTo(0.0));
         Assert.That(stats.Window.P99, Is.EqualTo(0.0));
     }
+
+    [Test]
+    public void Merge_sums_counts_and_preserves_bounds()
+    {
+        var a = new HistogramSnapshot { UpperBounds = [10L, 20L], Counts = [1L, 0L, 2L], Count = 3, Sum = 45 };
+        var b = new HistogramSnapshot { UpperBounds = [10L, 20L], Counts = [0L, 4L, 0L], Count = 4, Sum = 60 };
+
+        HistogramSnapshot merged = HistogramSnapshots.Merge([a, default, b]);
+
+        Assert.That(merged.UpperBounds, Is.EqualTo(new long[] { 10, 20 }));
+        Assert.That(merged.Counts, Is.EqualTo(new long[] { 1, 4, 2 }));
+        Assert.That(merged.Count, Is.EqualTo(7));
+        Assert.That(merged.Sum, Is.EqualTo(105));
+    }
+
+    [Test]
+    public void Merge_of_null_or_all_default_is_default()
+    {
+        Assert.That(HistogramSnapshots.Merge(null).Count, Is.EqualTo(0));
+        Assert.That(HistogramSnapshots.Merge([default, default]).Counts, Is.Null);
+    }
 }

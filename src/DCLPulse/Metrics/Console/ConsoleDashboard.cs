@@ -117,6 +117,7 @@ public sealed class ConsoleDashboard(
     private readonly HistogramTracker deltaStalenessT2Tracker = new ();
     private readonly HistogramTracker tickDurationTracker = new ();
     private readonly HistogramTracker drainCycleTracker = new ();
+    private readonly HistogramTracker peerRttTracker = new ();
     private readonly RateTracker tickOverrunsTracker = new (SPARKLINE_MAX_SAMPLES);
 
     // Per-message-type rate trackers
@@ -160,6 +161,7 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView deltaStalenessT2 = new ();
     private readonly RateStatsView tickDuration = new ();
     private readonly RateStatsView drainCycle = new ();
+    private readonly RateStatsView peerRtt = new ();
     private readonly RateStatsView tickOverruns = new ();
 
     // Per-message-type views
@@ -191,6 +193,7 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline deltaStalenessT2Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline tickDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline drainCycleSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline peerRttSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline tickOverrunsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
@@ -355,6 +358,12 @@ public sealed class ConsoleDashboard(
         ShiftSample(drainCycleSparkline.Values, drainCycleStats.Window.P99);
         ShiftSample(tickOverrunsSparkline.Values, tickOverrunsRate.PerSec);
 
+        // Peer RTT — aggregate across continents; the per-region breakdown lives in Grafana,
+        // the TUI shows a single merged row.
+        RateStats peerRttStats = peerRttTracker.Update(HistogramSnapshots.Merge(snap.Transport.PeerRttMs), elapsed);
+        peerRtt.Apply(peerRttStats, v => v.ToString("N0"));
+        ShiftSample(peerRttSparkline.Values, peerRttStats.Window.P99);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -410,6 +419,7 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Δ Staleness T2 (ms)", deltaStalenessT2, deltaStalenessT2Sparkline.Style(STYLE_OUTBOUND)),
                 RateStatsRow("Tick Duration (µs)", tickDuration, tickDurationSparkline.Style(STYLE_PEERS)),
                 RateStatsRow("Drain Cycle (µs)", drainCycle, drainCycleSparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Peer RTT (ms)", peerRtt, peerRttSparkline.Style(STYLE_PEERS)),
                 RateStatsRow("Tick Overruns", tickOverruns, tickOverrunsSparkline.Style(STYLE_ERROR)),
             ]);
 

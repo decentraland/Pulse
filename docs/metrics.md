@@ -257,6 +257,32 @@ Outbound drain-cycle duration on the ENet thread, non-empty cycles only (empty c
 
 **Prometheus**: these are exposed as native histograms — `dcl_pulse_delta_staleness_ms{tier="0|1|2"}`, `dcl_pulse_tick_duration_us`, `dcl_pulse_outgoing_drain_cycle_us` (Tick Overruns is the `dcl_pulse_tick_overruns_total` counter). Use `histogram_quantile()` over the `_bucket` series for fleet-level percentiles; the dashboard percentile columns show the local value distribution (window / lifetime), not rate percentiles.
 
+### Peer RTT (ms)
+
+Distribution of connected peers' smoothed round-trip time, bucketed by peer continent. ENet maintains `peer->roundTripTime` automatically from the reliable-channel ACK flow — no probe packets, no client cooperation. A sweep on the ENet thread samples **every connected peer every 5 s** (`RTT_SAMPLE_INTERVAL_MS`) and records each peer's current RTT into its region's histogram, so the distribution is **peer-weighted**: a region with more connected peers contributes proportionally more samples.
+
+The `region` label is the continent resolved from the peer's IP against the geo-whois-asn-country (IP-allocation-registry) database described below. `unknown` folds together private/loopback IPs (local dev), addresses outside the loaded ranges or carrying unassigned country codes, and — when the database is absent from the image — every peer.
+
+**500 ms seed caveat**: ENet seeds `roundTripTime` at 500 ms until the first reliable-channel ACK sample lands. A peer connected for less than one ACK round can therefore contribute that 500 ms seed to its first sweep entry — accepted noise at a 5 s cadence rather than a reason to track per-peer connect ages.
+
+The console dashboard shows a single **Peer RTT (ms)** row that merges all seven per-continent histograms (`HistogramSnapshots.Merge`); the per-region breakdown is Grafana-only.
+
+**Prometheus**: exposed as a native histogram `dcl_pulse_peer_rtt_ms` with one `region` label per continent (`af`, `as`, `eu`, `na`, `oc`, `sa`, `unknown`). Per-region percentile:
+
+```promql
+histogram_quantile(0.5, sum by (le) (rate(dcl_pulse_peer_rtt_ms_bucket{region="as"}[5m])))
+```
+
+| Signal | Meaning |
+|---|---|
+| A region's p50 stable and low | Peers there are close to the deployment — healthy |
+| One region's p50 ≫ the others | Distance-dominated latency — a case for a closer regional deployment |
+| A region's p99 ≫ its own p50 | Tail of poorly-connected peers (mobile, congested last mile) in that region |
+| `unknown` dominating with a real player population | Geo database missing from the image, or peers behind private/CGNAT egress the DB can't place |
+| Everything near 500 ms right after a connect burst | The ENet seed showing through before ACK samples arrive — transient, ignore |
+
+**Data source**: [geo-whois-asn-country](https://github.com/sapics/ip-location-db) (CC0, public domain), the `-num` CSV variants. Each of the three Dockerfiles fetches the IPv4 and IPv6 CSVs into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. `ContinentResolver` loads them once at startup from `Transport:GeoDbDirectory` (default `geodb`, resolved against the app base directory; absolute paths are used as-is). Missing files are tolerated — every peer then reports under `region="unknown"`.
+
 ---
 
 ## Incoming Messages

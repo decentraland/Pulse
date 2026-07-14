@@ -26,5 +26,10 @@ ARG COMMIT_HASH=unknown
 ENV COMMIT_HASH=$COMMIT_HASH
 WORKDIR /app
 COPY --from=publish /app/publish .
+# Geo database (CC0, https://github.com/sapics/ip-location-db) — single fetch at image
+# build; the app never downloads at runtime. Refreshes with every image build.
+ADD https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv4-num.csv \
+    https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv6-num.csv \
+    /app/geodb/
 EXPOSE 7777/udp
 ENTRYPOINT ["dotnet", "DCLPulse.dll"]

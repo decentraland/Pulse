@@ -213,6 +213,52 @@ Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`
 
 ---
 
+## Latency metrics
+
+Histogram-backed timing metrics for the simulation and outbound-drain hot paths. The collector holds raw per-bucket counts; the dashboard's percentile columns describe the **value distribution** (ms/µs) — Window over the buckets that filled since the previous 500 ms snapshot, Lifetime over the cumulative buckets — not a rate. The sparkline plots the window P99, the tail we care about.
+
+### Δ Staleness T0 / T1 / T2 (ms)
+
+Publish→fan-out staleness of `STATE_DELTA` per AoI tier — `MonotonicTime − target.ServerTick` measured at `SendDelta`. Each tier gets its own histogram because tiers fan out on different cadences (`tierDivisor`: T0 every tick, T1 every 2nd, T2 every 4th).
+
+**Expected**: bounded by `tierDivisor × BaseTickMs` plus fan-out compute. T0 p99 is the **KR1.1 SLI**. Resync-path deltas are excluded by design — their target can be arbitrarily old when a subject idled after the client lost packets, which would pollute the histogram.
+
+| Signal | Meaning |
+|---|---|
+| P99 within the tier budget | Normal — deltas fan out promptly after publish |
+| Sustained P99 above the tier budget | Tick overrun or input backlog — cross-check Tick Duration and Incoming Queue |
+| T0 climbing while T1/T2 flat | Every-tick fan-out is the bottleneck — AoI set for the hot tier grew |
+
+### Tick Duration (µs)
+
+`SimulateTick` wall time across workers, recorded per tick in `PeersManager.RecordTickDuration`.
+
+**Expected**: well under `BaseTickMs × 1000`.
+
+| Signal | Meaning |
+|---|---|
+| Flat, well under budget | Healthy — plenty of headroom in the tick |
+| Creeping toward `BaseTickMs × 1000` | CPU saturation or AoI fan-out growth — precursor to Tick Overruns |
+
+### Tick Overruns
+
+Count of ticks that exceeded `BaseTickMs`. Rendered as a rate row (per-second), not a histogram.
+
+**Expected**: 0. Any sustained rate is an SLO breach — the simulation is not keeping tick cadence.
+
+### Drain Cycle (µs)
+
+Outbound drain-cycle duration on the ENet thread, non-empty cycles only (empty cycles are not recorded). Upper-bounds how long an outgoing message can wait for the ENet thread to service the queue.
+
+| Signal | Meaning |
+|---|---|
+| Low, stable | ENet thread drains each burst well within a service loop |
+| Growth alongside Outgoing Queue depth | ENet thread saturated — outbound is falling behind; reduce fan-out or serialization cost |
+
+**Prometheus**: these are exposed as native histograms — `dcl_pulse_delta_staleness_ms{tier="0|1|2"}`, `dcl_pulse_tick_duration_us`, `dcl_pulse_outgoing_drain_cycle_us` (Tick Overruns is the `dcl_pulse_tick_overruns_total` counter). Use `histogram_quantile()` over the `_bucket` series for fleet-level percentiles; the dashboard percentile columns show the local value distribution (window / lifetime), not rate percentiles.
+
+---
+
 ## Incoming Messages
 
 Per-message-type rates for `ClientMessage` variants. Shows how many of each message type the server processes per second.
@@ -257,7 +303,8 @@ Per-message-type rates for `ServerMessage` variants. Shows the server's output c
 
 ## Adding new metrics
 
-See the `/add-metric` skill (`/.claude/skills/add-metric/SKILL.md`) for step-by-step instructions covering three patterns:
+See the `/add-metric` skill (`/.claude/skills/add-metric/SKILL.md`) for step-by-step instructions covering four patterns:
 - **Pattern A**: Counter-based (System.Diagnostics.Metrics) — for hot-path values
 - **Pattern B**: Sampled (direct read) — for queue depths and gauges
 - **Pattern C**: Per-enum collection — for counting by message type or enum variant
+- **Pattern D**: Histogram — for latency/duration value distributions (percentiles over buckets)

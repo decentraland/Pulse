@@ -111,6 +111,14 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker bannedRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
 
+    // Latency trackers — histogram-backed; percentile columns show value distribution (ms/µs).
+    private readonly HistogramTracker deltaStalenessT0Tracker = new ();
+    private readonly HistogramTracker deltaStalenessT1Tracker = new ();
+    private readonly HistogramTracker deltaStalenessT2Tracker = new ();
+    private readonly HistogramTracker tickDurationTracker = new ();
+    private readonly HistogramTracker drainCycleTracker = new ();
+    private readonly RateTracker tickOverrunsTracker = new (SPARKLINE_MAX_SAMPLES);
+
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
         INCOMING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
@@ -147,6 +155,12 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView handshakeReplayRejected = new ();
     private readonly RateStatsView bannedRefused = new ();
     private readonly RateStatsView corruptedPacket = new ();
+    private readonly RateStatsView deltaStalenessT0 = new ();
+    private readonly RateStatsView deltaStalenessT1 = new ();
+    private readonly RateStatsView deltaStalenessT2 = new ();
+    private readonly RateStatsView tickDuration = new ();
+    private readonly RateStatsView drainCycle = new ();
+    private readonly RateStatsView tickOverruns = new ();
 
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
@@ -172,6 +186,12 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline handshakeReplayRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline bannedRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline deltaStalenessT0Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline deltaStalenessT1Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline deltaStalenessT2Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline tickDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline drainCycleSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline tickOverrunsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -312,6 +332,29 @@ public sealed class ConsoleDashboard(
         ShiftSample(bannedRefusedSparkline.Values, bannedRefusedRate.PerSec);
         ShiftSample(corruptedPacketSparkline.Values, corruptedPacketRate.PerSec);
 
+        // Latency histograms.
+        RateStats stalenessT0Stats = deltaStalenessT0Tracker.Update(snap.Simulation.DeltaStalenessTier0Ms, elapsed);
+        RateStats stalenessT1Stats = deltaStalenessT1Tracker.Update(snap.Simulation.DeltaStalenessTier1Ms, elapsed);
+        RateStats stalenessT2Stats = deltaStalenessT2Tracker.Update(snap.Simulation.DeltaStalenessTier2Ms, elapsed);
+        RateStats tickDurationStats = tickDurationTracker.Update(snap.Simulation.TickDurationUs, elapsed);
+        RateStats drainCycleStats = drainCycleTracker.Update(snap.Transport.OutgoingDrainCycleUs, elapsed);
+        RateStats tickOverrunsRate = tickOverrunsTracker.Update(snap.Simulation.TotalTickOverruns, elapsed);
+
+        deltaStalenessT0.Apply(stalenessT0Stats, v => v.ToString("N0"));
+        deltaStalenessT1.Apply(stalenessT1Stats, v => v.ToString("N0"));
+        deltaStalenessT2.Apply(stalenessT2Stats, v => v.ToString("N0"));
+        tickDuration.Apply(tickDurationStats, v => v.ToString("N0"));
+        drainCycle.Apply(drainCycleStats, v => v.ToString("N0"));
+        tickOverruns.Apply(tickOverrunsRate, v => v.ToString("N0"));
+
+        // Latency sparklines plot window P99 (the tail we care about), not the rate.
+        ShiftSample(deltaStalenessT0Sparkline.Values, stalenessT0Stats.Window.P99);
+        ShiftSample(deltaStalenessT1Sparkline.Values, stalenessT1Stats.Window.P99);
+        ShiftSample(deltaStalenessT2Sparkline.Values, stalenessT2Stats.Window.P99);
+        ShiftSample(tickDurationSparkline.Values, tickDurationStats.Window.P99);
+        ShiftSample(drainCycleSparkline.Values, drainCycleStats.Window.P99);
+        ShiftSample(tickOverrunsSparkline.Values, tickOverrunsRate.PerSec);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -359,6 +402,19 @@ public sealed class ConsoleDashboard(
 
         var hardening = new Group("Hardening", hardeningTable);
 
+        var latencyTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Δ Staleness T0 (ms)", deltaStalenessT0, deltaStalenessT0Sparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Δ Staleness T1 (ms)", deltaStalenessT1, deltaStalenessT1Sparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Δ Staleness T2 (ms)", deltaStalenessT2, deltaStalenessT2Sparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Tick Duration (µs)", tickDuration, tickDurationSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Drain Cycle (µs)", drainCycle, drainCycleSparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Tick Overruns", tickOverruns, tickOverrunsSparkline.Style(STYLE_ERROR)),
+            ]);
+
+        var latency = new Group("Latency", latencyTable);
+
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
             ).HorizontalAlignment(Align.Stretch);
@@ -366,6 +422,7 @@ public sealed class ConsoleDashboard(
         ScrollViewer metricsArea = new VStack(
                 transport,
                 hardening,
+                latency,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()
             ).Spacing(1)

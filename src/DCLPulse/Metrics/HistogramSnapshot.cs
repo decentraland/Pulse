@@ -9,9 +9,9 @@ namespace Pulse.Metrics;
 /// </summary>
 public readonly record struct HistogramSnapshot
 {
-    public long[] UpperBounds { get; init; }
+    public long[]? UpperBounds { get; init; }
 
-    public long[] Counts { get; init; }
+    public long[]? Counts { get; init; }
 
     public long Count { get; init; }
 

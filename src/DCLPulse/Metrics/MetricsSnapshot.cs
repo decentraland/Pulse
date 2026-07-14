@@ -4,6 +4,7 @@ public readonly record struct MetricsSnapshot
 {
     public TransportSnapshot Transport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
+    public SimulationSnapshot Simulation { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
@@ -20,6 +21,7 @@ public readonly record struct MetricsSnapshot
         public long TotalSendFailures { get; init; }
         public int IncomingQueueDepth { get; init; }
         public int OutgoingQueueDepth { get; init; }
+        public HistogramSnapshot OutgoingDrainCycleUs { get; init; }
     }
 
     public readonly record struct HardeningSnapshot
@@ -34,5 +36,14 @@ public readonly record struct MetricsSnapshot
         public long TotalHandshakeReplayRejected { get; init; }
         public long TotalBannedRefused { get; init; }
         public long TotalCorruptedPacket { get; init; }
+    }
+
+    public readonly record struct SimulationSnapshot
+    {
+        public HistogramSnapshot DeltaStalenessTier0Ms { get; init; }
+        public HistogramSnapshot DeltaStalenessTier1Ms { get; init; }
+        public HistogramSnapshot DeltaStalenessTier2Ms { get; init; }
+        public HistogramSnapshot TickDurationUs { get; init; }
+        public long TotalTickOverruns { get; init; }
     }
 }

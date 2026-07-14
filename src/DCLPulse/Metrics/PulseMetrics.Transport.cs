@@ -32,5 +32,8 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> SEND_FAILURES =
             METER.CreateCounter<long>("pulse.transport.send_failures");
+
+        public static readonly Histogram<long> OUTGOING_DRAIN_CYCLE_US =
+            METER.CreateHistogram<long>("pulse.transport.outgoing_drain_cycle_us");
     }
 }

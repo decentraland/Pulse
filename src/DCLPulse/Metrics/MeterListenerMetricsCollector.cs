@@ -41,6 +41,14 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long bannedRefused;
     private long corruptedPacket;
 
+    // Latency histograms — bucketed by the measurement callbacks on recording threads.
+    private readonly BucketHistogram deltaStalenessTier0 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram deltaStalenessTier1 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram deltaStalenessTier2 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram tickDurationUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
+    private readonly BucketHistogram outgoingDrainCycleUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
+    private long tickOverruns;
+
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
         ClientMessageCounters incomingMessageCounters,
@@ -88,6 +96,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalSendFailures = Interlocked.Read(ref sendFailures),
                 IncomingQueueDepth = messagePipe.IncomingQueueDepth,
                 OutgoingQueueDepth = messagePipe.OutgoingQueueDepth,
+                OutgoingDrainCycleUs = outgoingDrainCycleUs.Snapshot(),
             },
             Hardening = new MetricsSnapshot.HardeningSnapshot
             {
@@ -101,6 +110,14 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalHandshakeReplayRejected = Interlocked.Read(ref handshakeReplayRejected),
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
+            },
+            Simulation = new MetricsSnapshot.SimulationSnapshot
+            {
+                DeltaStalenessTier0Ms = deltaStalenessTier0.Snapshot(),
+                DeltaStalenessTier1Ms = deltaStalenessTier1.Snapshot(),
+                DeltaStalenessTier2Ms = deltaStalenessTier2.Snapshot(),
+                TickDurationUs = tickDurationUs.Snapshot(),
+                TotalTickOverruns = Interlocked.Read(ref tickOverruns),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -163,6 +180,24 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
+                break;
+            case "pulse.sim.delta_staleness_tier0_ms":
+                deltaStalenessTier0.Record(value);
+                break;
+            case "pulse.sim.delta_staleness_tier1_ms":
+                deltaStalenessTier1.Record(value);
+                break;
+            case "pulse.sim.delta_staleness_tier2_ms":
+                deltaStalenessTier2.Record(value);
+                break;
+            case "pulse.sim.tick_duration_us":
+                tickDurationUs.Record(value);
+                break;
+            case "pulse.sim.tick_overruns":
+                Interlocked.Add(ref tickOverruns, value);
+                break;
+            case "pulse.transport.outgoing_drain_cycle_us":
+                outgoingDrainCycleUs.Record(value);
                 break;
         }
     }

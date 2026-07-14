@@ -3,6 +3,7 @@ using NSubstitute;
 using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Transport.Geo;
+using System.Diagnostics.Metrics;
 using System.Text;
 
 namespace DCLPulseTests.Metrics;
@@ -58,7 +59,9 @@ public class PeerRttMetricsTests
         Assert.That(output, Does.Contain("dcl_pulse_peer_rtt_ms_bucket{region=\"eu\",le=\"30\"} 3"));
         Assert.That(output, Does.Contain("dcl_pulse_peer_rtt_ms_bucket{region=\"eu\",le=\"+Inf\"} 3"));
         Assert.That(output, Does.Contain("dcl_pulse_peer_rtt_ms_count{region=\"eu\"} 3"));
-        // Null-array tolerance: a fully-default snapshot (PeerRttMs == null) must still emit all 7 zeroed series.
+        // Default-element tolerance: the array is present (7 elements) but its na element is a
+        // default HistogramSnapshot (null arrays); the formatter must still emit na's zeroed
+        // series. The fully-null-array case is covered by Prometheus_tolerates_null_rtt_array.
         Assert.That(output, Does.Contain("dcl_pulse_peer_rtt_ms_bucket{region=\"na\",le=\"+Inf\"} 0"));
     }
 
@@ -78,5 +81,37 @@ public class PeerRttMetricsTests
 
         string output = Encoding.UTF8.GetString(stream.ToArray());
         Assert.That(output, Does.Contain("dcl_pulse_peer_rtt_ms_bucket{region=\"unknown\",le=\"+Inf\"} 0"));
+    }
+
+    // Locks the instrument at index i to the label at index i, so a future Continents.LABELS
+    // reorder can't silently misroute recordings relative to the collector's hand-written case list.
+    [Test]
+    public void Peer_rtt_instrument_at_each_index_carries_the_matching_region_label()
+    {
+        var recorded = new Dictionary<string, long>();
+
+        using var listener = new MeterListener();
+
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PulseMetrics.METER.Name && instrument.Name.StartsWith("pulse.transport.peer_rtt_"))
+                l.EnableMeasurementEvents(instrument);
+        };
+
+        listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => recorded[instrument.Name] = value);
+        listener.Start();
+
+        for (var i = 0; i < Continents.COUNT; i++)
+        {
+            long distinct = 100 + i;
+            recorded.Clear();
+
+            PulseMetrics.Transport.PEER_RTT_MS[i].Record(distinct);
+
+            string expectedName = $"pulse.transport.peer_rtt_{Continents.LABELS[i]}_ms";
+            Assert.That(recorded, Does.ContainKey(expectedName), $"index {i} did not land on {expectedName}");
+            Assert.That(recorded[expectedName], Is.EqualTo(distinct));
+            Assert.That(recorded.Count, Is.EqualTo(1), $"index {i} recorded on more than one instrument");
+        }
     }
 }

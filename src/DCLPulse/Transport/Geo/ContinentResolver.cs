@@ -7,11 +7,14 @@ namespace Pulse.Transport.Geo;
 ///     IP → continent lookup backed by the CC0 geo-whois-asn-country database
 ///     (https://github.com/sapics/ip-location-db), loaded once at startup from the
 ///     "-num" CSV variants (rows: ip_range_start,ip_range_end,country_code with numeric
-///     inclusive ranges). All addresses are normalized to UInt128 — IPv4 into the
-///     v4-mapped ::ffff:0:0/96 space — so a single sorted array serves both families
-///     with one binary search. No dependencies, no network access: the CSVs are baked
-///     into the Docker image at build time; when they're absent every lookup returns
-///     <see cref="Continent.Unknown" /> (local dev, unit tests).
+///     inclusive ranges). Rows whose numeric range fields fail to parse are skipped and
+///     counted rather than throwing — the CSVs are re-fetched unpinned at each image build
+///     with no checksum, so a corrupt field must degrade the load, not crash startup. All
+///     addresses are normalized to UInt128 — IPv4 into the v4-mapped ::ffff:0:0/96 space —
+///     so a single sorted array serves both families with one binary search. No
+///     dependencies, no network access: the CSVs are baked into the Docker image at build
+///     time; when they're absent every lookup returns <see cref="Continent.Unknown" />
+///     (local dev, unit tests).
 /// </summary>
 public sealed class ContinentResolver
 {
@@ -33,12 +36,16 @@ public sealed class ContinentResolver
 
     private readonly IpRange[] ranges;
 
-    private ContinentResolver(IpRange[] ranges)
+    private ContinentResolver(IpRange[] ranges, int skippedRows)
     {
         this.ranges = ranges;
+        SkippedRows = skippedRows;
     }
 
-    public static ContinentResolver Empty { get; } = new ([]);
+    public static ContinentResolver Empty { get; } = new ([], 0);
+
+    /// <summary>Count of CSV rows dropped during load because a numeric range field failed to parse.</summary>
+    internal int SkippedRows { get; }
 
     /// <summary>
     ///     Resolve a peer IP string as rendered by ENet's <c>Peer.IP</c> — dotted IPv4,
@@ -56,14 +63,14 @@ public sealed class ContinentResolver
     public static ContinentResolver Load(TextReader ipv4Num, TextReader? ipv6Num)
     {
         var rows = new List<IpRange>(300_000);
-        ParseInto(rows, ipv4Num, v4Mapped: true);
+        int skipped = ParseInto(rows, ipv4Num, v4Mapped: true);
 
         if (ipv6Num != null)
-            ParseInto(rows, ipv6Num, v4Mapped: false);
+            skipped += ParseInto(rows, ipv6Num, v4Mapped: false);
 
         IpRange[] ranges = rows.ToArray();
         Array.Sort(ranges, static (a, b) => a.Start.CompareTo(b.Start));
-        return new ContinentResolver(ranges);
+        return new ContinentResolver(ranges, skipped);
     }
 
     /// <summary>
@@ -89,15 +96,24 @@ public sealed class ContinentResolver
             logger.LogInformation("IPv6 geo database not found at {Path} — native-IPv6 peers will be region=\"unknown\".", v6Path);
 
         ContinentResolver resolver = Load(v4, v6);
-        logger.LogInformation("Geo database loaded: {Count} ranges from {Directory}.", resolver.ranges.Length, directory);
+
+        if (resolver.SkippedRows > 0)
+            logger.LogInformation(
+                "Geo database loaded: {Count} ranges from {Directory}, {Skipped} malformed rows skipped.",
+                resolver.ranges.Length, directory, resolver.SkippedRows);
+        else
+            logger.LogInformation("Geo database loaded: {Count} ranges from {Directory}.", resolver.ranges.Length, directory);
+
         return resolver;
     }
 
     internal static Continent ContinentFromCountry(string countryCode) =>
         CONTINENT_BY_COUNTRY.GetValueOrDefault(countryCode, Continent.Unknown);
 
-    private static void ParseInto(List<IpRange> rows, TextReader reader, bool v4Mapped)
+    private static int ParseInto(List<IpRange> rows, TextReader reader, bool v4Mapped)
     {
+        var skipped = 0;
+
         while (reader.ReadLine() is { } line)
         {
             if (line.Length == 0)
@@ -110,8 +126,15 @@ public sealed class ContinentResolver
             if (firstComma < 0 || secondComma < 0)
                 continue;
 
-            UInt128 start = UInt128.Parse(line.AsSpan(0, firstComma));
-            UInt128 end = UInt128.Parse(line.AsSpan(firstComma + 1, secondComma - firstComma - 1));
+            // A corrupt numeric field skips the row rather than crashing the load — the CSVs
+            // are re-fetched unpinned at each image build, so a malformed row must degrade.
+            if (!UInt128.TryParse(line.AsSpan(0, firstComma), out UInt128 start) ||
+                !UInt128.TryParse(line.AsSpan(firstComma + 1, secondComma - firstComma - 1), out UInt128 end))
+            {
+                skipped++;
+                continue;
+            }
+
             Continent continent = ContinentFromCountry(line[(secondComma + 1)..].Trim());
 
             if (v4Mapped)
@@ -122,6 +145,8 @@ public sealed class ContinentResolver
 
             rows.Add(new IpRange(start, end, continent));
         }
+
+        return skipped;
     }
 
     private Continent Lookup(UInt128 ip)

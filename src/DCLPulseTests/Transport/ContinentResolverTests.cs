@@ -108,4 +108,23 @@ public class ContinentResolverTests
         var v4 = new StringReader($"{V4("5.5.5.0")},{V4("5.5.5.255")},ZZ\n");
         Assert.That(ContinentResolver.Load(v4, null).Resolve("5.5.5.5"), Is.EqualTo(Continent.Unknown));
     }
+
+    [Test]
+    public void Malformed_numeric_rows_are_skipped_and_counted_without_throwing()
+    {
+        // Two corrupt rows (bad start, then bad end) interleaved with two good ones — mimics a
+        // truncated/garbled CSV re-fetched unpinned at image build. Load must not throw.
+        var v4 = new StringReader(
+            $"{V4("8.8.8.0")},{V4("8.8.8.255")},US\n" +
+            "not_a_number,12345,DE\n" +
+            $"{V4("41.0.0.0")},garbage,ZA\n" +
+            $"{V4("1.0.0.0")},{V4("1.0.0.255")},AU\n");
+
+        ContinentResolver resolver = ContinentResolver.Load(v4, null);
+
+        // Valid rows still resolve; the two malformed rows are skipped and counted.
+        Assert.That(resolver.Resolve("8.8.8.8"), Is.EqualTo(Continent.NorthAmerica));
+        Assert.That(resolver.Resolve("1.0.0.5"), Is.EqualTo(Continent.Oceania));
+        Assert.That(resolver.SkippedRows, Is.EqualTo(2));
+    }
 }

@@ -49,8 +49,11 @@ public class HistogramTrackerTests
     [Test]
     public void Merge_sums_counts_and_preserves_bounds()
     {
-        var a = new HistogramSnapshot { UpperBounds = [10L, 20L], Counts = [1L, 0L, 2L], Count = 3, Sum = 45 };
-        var b = new HistogramSnapshot { UpperBounds = [10L, 20L], Counts = [0L, 4L, 0L], Count = 4, Sum = 60 };
+        // Real callers share one bounds array instance (every BucketHistogram snapshot carries the
+        // same RTT_BUCKETS_MS reference), which Merge asserts — so the parts share `bounds` here too.
+        long[] bounds = [10L, 20L];
+        var a = new HistogramSnapshot { UpperBounds = bounds, Counts = [1L, 0L, 2L], Count = 3, Sum = 45 };
+        var b = new HistogramSnapshot { UpperBounds = bounds, Counts = [0L, 4L, 0L], Count = 4, Sum = 60 };
 
         HistogramSnapshot merged = HistogramSnapshots.Merge([a, default, b]);
 

@@ -6,6 +6,7 @@ using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport.Hardening;
+using System.Diagnostics;
 using Host = ENet.Host;
 
 namespace Pulse.Transport;
@@ -157,8 +158,13 @@ public sealed partial class ENetHostedService(
     /// </summary>
     private void FlushOutgoing()
     {
+        long drainStart = Stopwatch.GetTimestamp();
+        var drained = 0;
+
         while (messagePipe.TryReadOutgoingMessage(out MessagePipe.OutgoingMessage msg))
         {
+            drained++;
+
             if (!connectedPeers.TryGetValue(msg.To, out Peer peer))
                 continue;
 
@@ -177,6 +183,22 @@ public sealed partial class ENetHostedService(
 
             SendToPeer(peer, channel, msg.Message);
         }
+
+        RecordDrainCycle(drainStart, drained);
+    }
+
+    /// <summary>
+    ///     M3 measurement: outbound drain-cycle duration (µs). Bounds the queue wait of any
+    ///     outgoing message without per-message timestamps. Empty cycles are not recorded —
+    ///     they would flood the histogram with zeros at the ENet loop frequency.
+    /// </summary>
+    internal static void RecordDrainCycle(long startTimestamp, int drained)
+    {
+        if (drained == 0)
+            return;
+
+        PulseMetrics.Transport.OUTGOING_DRAIN_CYCLE_US.Record(
+            (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMicroseconds);
     }
 
     private void SendToPeer(Peer peer, ENetChannel channel, IMessage message)

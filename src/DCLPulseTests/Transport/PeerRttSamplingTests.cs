@@ -29,7 +29,7 @@ public class PeerRttSamplingTests
         (MeterListener listener, List<long> values) = Capture("pulse.transport.peer_rtt_sa_ms");
         using MeterListener _ = listener;
 
-        ENetHostedService.RecordPeerRtt(Continent.SouthAmerica, 123);
+        ENetHostedService.RecordPeerRtt(Continent.SOUTH_AMERICA, 123);
 
         Assert.That(values, Is.EqualTo(new[] { 123L }));
     }

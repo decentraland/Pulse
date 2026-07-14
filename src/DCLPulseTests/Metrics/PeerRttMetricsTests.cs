@@ -20,13 +20,13 @@ public class PeerRttMetricsTests
 
         MetricsSnapshot before = collector.TakeSnapshot();
 
-        PulseMetrics.Transport.PEER_RTT_MS[(int)Continent.Europe].Record(42);
+        PulseMetrics.Transport.PEER_RTT_MS[(int)Continent.EUROPE].Record(42);
 
         MetricsSnapshot after = collector.TakeSnapshot();
 
         Assert.That(after.Transport.PeerRttMs, Is.Not.Null);
-        Assert.That(after.Transport.PeerRttMs![(int)Continent.Europe].Count - before.Transport.PeerRttMs![(int)Continent.Europe].Count, Is.EqualTo(1));
-        Assert.That(after.Transport.PeerRttMs[(int)Continent.Asia].Count, Is.EqualTo(before.Transport.PeerRttMs[(int)Continent.Asia].Count));
+        Assert.That(after.Transport.PeerRttMs![(int)Continent.EUROPE].Count - before.Transport.PeerRttMs![(int)Continent.EUROPE].Count, Is.EqualTo(1));
+        Assert.That(after.Transport.PeerRttMs[(int)Continent.ASIA].Count, Is.EqualTo(before.Transport.PeerRttMs[(int)Continent.ASIA].Count));
     }
 
     [Test]

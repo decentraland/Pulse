@@ -4,10 +4,13 @@ RUN apt-get update && apt-get install -y curl unzip procps \
     && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
-# Geo database (CC0, https://github.com/sapics/ip-location-db) — single fetch at image
-# build; the app never downloads at runtime. Refreshes with every image build.
+# Geo database — single fetch at image build; the app never downloads at runtime. Refreshes
+# with every image build. IP-range CSVs: geo-whois-asn-country (CC0,
+# https://github.com/sapics/ip-location-db). Country → continent mapping: GeoNames
+# countryInfo.txt (CC-BY 4.0, https://www.geonames.org).
 ADD https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv4-num.csv \
     https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv6-num.csv \
+    https://download.geonames.org/export/dump/countryInfo.txt \
     /app/geodb/
 # The image already has fresh geo CSVs from the ADD above; the entrypoint's `dotnet run`
 # would otherwise trigger the csproj predownload at container start, so disable it.

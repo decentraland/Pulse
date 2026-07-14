@@ -281,12 +281,12 @@ histogram_quantile(0.5, sum by (le) (rate(dcl_pulse_peer_rtt_ms_bucket{region="a
 | `unknown` dominating with a real player population | Geo database missing from the image, or peers behind private/CGNAT egress the DB can't place |
 | Everything near 500 ms right after a connect burst | The ENet seed showing through before ACK samples arrive — transient, ignore |
 
-**Data source**: [geo-whois-asn-country](https://github.com/sapics/ip-location-db) (CC0, public domain), the `-num` CSV variants. `ContinentResolver` loads them once at startup from `Transport:GeoDbDirectory` (default `geodb`, resolved against the app base directory; absolute paths are used as-is). Missing files are tolerated — every peer then reports under `region="unknown"`.
+**Data source**: two inputs, both fetched fresh at build time. IP-range → country comes from [geo-whois-asn-country](https://github.com/sapics/ip-location-db) (CC0, public domain), the `-num` CSV variants. Country → continent comes from [GeoNames `countryInfo.txt`](https://download.geonames.org/export/dump/countryInfo.txt) (CC-BY 4.0 — *"Contains data from GeoNames (geonames.org), licensed under CC BY 4.0"*), keyed on the ISO 3166-1 alpha-2 code with the continent read from the file's continent column (Antarctica folds to `unknown`). `ContinentResolver` loads all three once at startup from `Transport:GeoDbDirectory` (default `geodb`, resolved against the app base directory; absolute paths are used as-is). A missing mapping file or IPv4 CSV is tolerated — every peer then reports under `region="unknown"`.
 
-Two ways the CSVs get to that directory:
+Two ways the files get to that directory:
 
-- **Docker**: each of the three Dockerfiles fetches fresh IPv4 and IPv6 CSVs into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. These freshly-fetched copies are authoritative for images.
-- **Local (non-Docker) builds**: the `DCLPulse.csproj` `FetchGeoDb` target predownloads the two CSVs into the gitignored `packages/geodb/` cache (once) and copies them next to the build output, so local runs resolve regions without a Docker image. Delete `packages/geodb` to force a refresh. Offline builds warn and continue — the app then degrades to `region="unknown"`. The download is skipped in Docker builds and containers (`FetchGeoDb=false`) and on CI (`CI=true`), so it never runs where the `ADD`-provided or in-memory test copies already apply.
+- **Docker**: each of the three Dockerfiles fetches the fresh IPv4 CSV, IPv6 CSV, and `countryInfo.txt` into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. These freshly-fetched copies are authoritative for images.
+- **Local (non-Docker) builds**: the `DCLPulse.csproj` `FetchGeoDb` target predownloads the three files into the gitignored `packages/geodb/` cache (once) and copies them next to the build output, so local runs resolve regions without a Docker image. Delete `packages/geodb` to force a refresh. Offline builds warn and continue — the app then degrades to `region="unknown"`. The download is skipped in Docker builds and containers (`FetchGeoDb=false`) and on CI (`CI=true`), so it never runs where the `ADD`-provided or in-memory test copies already apply.
 
 ---
 

@@ -68,8 +68,13 @@
                       DestinationFolder="$(GeoDbCacheDir)"
                       Condition="!Exists('$(GeoDbCacheDir)geo-whois-asn-country-ipv6-num.csv')"
                       ContinueOnError="WarnAndContinue" />
+        <DownloadFile SourceUrl="https://download.geonames.org/export/dump/countryInfo.txt"
+                      DestinationFolder="$(GeoDbCacheDir)"
+                      Condition="!Exists('$(GeoDbCacheDir)countryInfo.txt')"
+                      ContinueOnError="WarnAndContinue" />
         <ItemGroup>
             <GeoDbFiles Include="$(GeoDbCacheDir)*.csv" />
+            <GeoDbFiles Include="$(GeoDbCacheDir)countryInfo.txt" />
         </ItemGroup>
         <Copy SourceFiles="@(GeoDbFiles)" DestinationFolder="$(OutDir)geodb"
               SkipUnchangedFiles="true" Condition="'@(GeoDbFiles)' != ''" />

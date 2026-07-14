@@ -29,12 +29,11 @@ public sealed partial class ENetHostedService(
 
     private readonly ENetTransportOptions options = options.Value;
 
-    // Keyed by the server-allocated PeerIndex. Maintained exclusively on the ENet thread —
-    // no locking needed.
-    private readonly Dictionary<PeerIndex, Peer> connectedPeers = new ();
-
-    // Peer continent resolved from IP at connect — ENet thread only, mirrors connectedPeers' lifecycle.
-    private readonly Dictionary<PeerIndex, Continent> continentByPeer = new ();
+    // Keyed by the server-allocated PeerIndex; each entry pairs the ENet peer handle with the
+    // continent resolved from its IP at connect, so both share one lifecycle. Maintained
+    // exclusively on the ENet thread — no locking needed.
+    private readonly record struct ConnectedPeer(Peer Peer, Continent Continent);
+    private readonly Dictionary<PeerIndex, ConnectedPeer> connectedPeers = new ();
 
     // ENet peer slot id (netEvent.Peer.ID) → logical PeerIndex. ENet recycles slot ids the
     // moment a peer is freed; the allocator holds logical indexes through a grace period, so
@@ -106,8 +105,16 @@ public sealed partial class ENetHostedService(
         ShutdownGracefully();
     }
 
-    private void ShutdownGracefully() =>
-        ShutdownGracefully(connectedPeers.Values, logger);
+    private void ShutdownGracefully()
+    {
+        // Shutdown-only allocation: flatten the peer handles out of the connected-peer map.
+        var peers = new List<Peer>(connectedPeers.Count);
+
+        foreach (ConnectedPeer cp in connectedPeers.Values)
+            peers.Add(cp.Peer);
+
+        ShutdownGracefully(peers, logger);
+    }
 
     /// <summary>
     ///     Notify every peer in the collection with <see cref="DisconnectReason.GRACEFUL" /> and
@@ -146,7 +153,6 @@ public sealed partial class ENetHostedService(
             return false;
 
         connectedPeers.Remove(peerIndex);
-        continentByPeer.Remove(peerIndex);
 
         // Park the slot. The allocator won't reissue it until CleanupDisconnectedPeer
         // releases it — that's the one place the simulation wipes every per-peer board,
@@ -181,12 +187,12 @@ public sealed partial class ENetHostedService(
         {
             drained++;
 
-            if (!connectedPeers.TryGetValue(msg.To, out Peer peer))
+            if (!connectedPeers.TryGetValue(msg.To, out ConnectedPeer cp))
                 continue;
 
             if (msg.IsDisconnect)
             {
-                peer.Disconnect((uint)msg.Disconnect!.Value);
+                cp.Peer.Disconnect((uint)msg.Disconnect!.Value);
                 continue;
             }
 
@@ -197,7 +203,7 @@ public sealed partial class ENetHostedService(
                                       _ => ENetChannel.UNRELIABLE_UNSEQUENCED,
                                   };
 
-            SendToPeer(peer, channel, msg.Message);
+            SendToPeer(cp.Peer, channel, msg.Message);
         }
 
         RecordDrainCycle(drainStart, drained);
@@ -226,8 +232,8 @@ public sealed partial class ENetHostedService(
     /// </summary>
     private void SamplePeerRtt()
     {
-        foreach ((PeerIndex peerIndex, Peer peer) in connectedPeers)
-            RecordPeerRtt(continentByPeer.GetValueOrDefault(peerIndex, Continent.Unknown), peer.RoundTripTime);
+        foreach (ConnectedPeer cp in connectedPeers.Values)
+            RecordPeerRtt(cp.Continent, cp.Peer.RoundTripTime);
     }
 
     /// <summary>
@@ -280,8 +286,7 @@ public sealed partial class ENetHostedService(
 
                 netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);
                 slotToPeerIndex[slotId] = peerIndex;
-                connectedPeers[peerIndex] = netEvent.Peer;
-                continentByPeer[peerIndex] = continentResolver.Resolve(netEvent.Peer.IP);
+                connectedPeers[peerIndex] = new ConnectedPeer(netEvent.Peer, continentResolver.Resolve(netEvent.Peer.IP));
 
                 messagePipe.OnPeerConnected(peerIndex);
 

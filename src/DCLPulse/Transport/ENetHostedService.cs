@@ -5,6 +5,7 @@ using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
 using System.Diagnostics;
 using Host = ENet.Host;
@@ -18,16 +19,22 @@ public sealed partial class ENetHostedService(
     IPeerIndexAllocator peerIndexAllocator,
     IdentityBoard identityBoard,
     PreAuthAdmission preAuthAdmission,
-    CorruptedPacketLimiter corruptedPacketLimiter
+    CorruptedPacketLimiter corruptedPacketLimiter,
+    ContinentResolver continentResolver
 ) : BackgroundService,
     // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
     ITransport
 {
+    private const int RTT_SAMPLE_INTERVAL_MS = 5000;
+
     private readonly ENetTransportOptions options = options.Value;
 
     // Keyed by the server-allocated PeerIndex. Maintained exclusively on the ENet thread —
     // no locking needed.
     private readonly Dictionary<PeerIndex, Peer> connectedPeers = new ();
+
+    // Peer continent resolved from IP at connect — ENet thread only, mirrors connectedPeers' lifecycle.
+    private readonly Dictionary<PeerIndex, Continent> continentByPeer = new ();
 
     // ENet peer slot id (netEvent.Peer.ID) → logical PeerIndex. ENet recycles slot ids the
     // moment a peer is freed; the allocator holds logical indexes through a grace period, so
@@ -74,6 +81,8 @@ public sealed partial class ENetHostedService(
             "ENet host listening on 0.0.0.0:{Port} (concurrentCap={Cap}, peerIndexPool={Pool}).",
             options.Port, concurrentCap, options.MaxPeers);
 
+        long lastRttSampleTimestamp = Stopwatch.GetTimestamp();
+
         while (!stoppingToken.IsCancellationRequested)
         {
             // Service does socket I/O + returns one event. Short timeout so we never block outgoing flushes.
@@ -86,6 +95,12 @@ public sealed partial class ENetHostedService(
                 HandleEvent(ref netEvent);
 
             FlushOutgoing();
+
+            if (Stopwatch.GetElapsedTime(lastRttSampleTimestamp).TotalMilliseconds >= RTT_SAMPLE_INTERVAL_MS)
+            {
+                SamplePeerRtt();
+                lastRttSampleTimestamp = Stopwatch.GetTimestamp();
+            }
         }
 
         ShutdownGracefully();
@@ -131,6 +146,7 @@ public sealed partial class ENetHostedService(
             return false;
 
         connectedPeers.Remove(peerIndex);
+        continentByPeer.Remove(peerIndex);
 
         // Park the slot. The allocator won't reissue it until CleanupDisconnectedPeer
         // releases it — that's the one place the simulation wipes every per-peer board,
@@ -201,6 +217,29 @@ public sealed partial class ENetHostedService(
             (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMicroseconds);
     }
 
+    /// <summary>
+    ///     M4 sampling sweep: record every connected peer's smoothed RTT into its continent
+    ///     histogram. Runs on the ENet thread every <see cref="RTT_SAMPLE_INTERVAL_MS" />.
+    ///     ENet seeds RoundTripTime at 500 ms until the first reliable-channel ACK sample
+    ///     arrives, so a peer's first sweep entry may carry that seed — accepted noise at
+    ///     a 5 s cadence rather than a reason to track per-peer connect ages.
+    /// </summary>
+    private void SamplePeerRtt()
+    {
+        foreach ((PeerIndex peerIndex, Peer peer) in connectedPeers)
+            RecordPeerRtt(continentByPeer.GetValueOrDefault(peerIndex, Continent.Unknown), peer.RoundTripTime);
+    }
+
+    /// <summary>
+    ///     Records one RTT sample on the continent's instrument. Internal static so the
+    ///     routing (including the out-of-range clamp) is testable without a live ENet host.
+    /// </summary>
+    internal static void RecordPeerRtt(Continent continent, uint rttMs)
+    {
+        int index = Math.Min((int)continent, PulseMetrics.Transport.PEER_RTT_MS.Length - 1);
+        PulseMetrics.Transport.PEER_RTT_MS[index].Record(rttMs);
+    }
+
     private void SendToPeer(Peer peer, ENetChannel channel, IMessage message)
     {
         int size = message.CalculateSize();
@@ -242,6 +281,7 @@ public sealed partial class ENetHostedService(
                 netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);
                 slotToPeerIndex[slotId] = peerIndex;
                 connectedPeers[peerIndex] = netEvent.Peer;
+                continentByPeer[peerIndex] = continentResolver.Resolve(netEvent.Peer.IP);
 
                 messagePipe.OnPeerConnected(peerIndex);
 

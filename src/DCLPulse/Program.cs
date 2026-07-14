@@ -10,6 +10,7 @@ using Pulse.Metrics.Console;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
+using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
 using XenoAtom.Terminal.UI.Controls;
 using ZLogger;
@@ -62,6 +63,17 @@ builder.Services.Configure<PeerOptions>(
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<PeerOptions>>().Value);
 
 builder.Services.AddSingleton<ITimeProvider, StopwatchTimeProvider>();
+
+builder.Services.AddSingleton(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+
+    string directory = Path.IsPathRooted(transportOptions.GeoDbDirectory)
+        ? transportOptions.GeoDbDirectory
+        : Path.Combine(AppContext.BaseDirectory, transportOptions.GeoDbDirectory);
+
+    return ContinentResolver.LoadFromDirectory(directory, sp.GetRequiredService<ILogger<ContinentResolver>>());
+});
 
 builder.Services.AddSingleton<ENetHostedService>();
 builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService<ENetHostedService>());

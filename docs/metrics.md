@@ -281,7 +281,12 @@ histogram_quantile(0.5, sum by (le) (rate(dcl_pulse_peer_rtt_ms_bucket{region="a
 | `unknown` dominating with a real player population | Geo database missing from the image, or peers behind private/CGNAT egress the DB can't place |
 | Everything near 500 ms right after a connect burst | The ENet seed showing through before ACK samples arrive — transient, ignore |
 
-**Data source**: [geo-whois-asn-country](https://github.com/sapics/ip-location-db) (CC0, public domain), the `-num` CSV variants. Each of the three Dockerfiles fetches the IPv4 and IPv6 CSVs into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. `ContinentResolver` loads them once at startup from `Transport:GeoDbDirectory` (default `geodb`, resolved against the app base directory; absolute paths are used as-is). Missing files are tolerated — every peer then reports under `region="unknown"`.
+**Data source**: [geo-whois-asn-country](https://github.com/sapics/ip-location-db) (CC0, public domain), the `-num` CSV variants. `ContinentResolver` loads them once at startup from `Transport:GeoDbDirectory` (default `geodb`, resolved against the app base directory; absolute paths are used as-is). Missing files are tolerated — every peer then reports under `region="unknown"`.
+
+Two ways the CSVs get to that directory:
+
+- **Docker**: each of the three Dockerfiles fetches fresh IPv4 and IPv6 CSVs into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. These freshly-fetched copies are authoritative for images.
+- **Local (non-Docker) builds**: the `DCLPulse.csproj` `FetchGeoDb` target predownloads the two CSVs into the gitignored `packages/geodb/` cache (once) and copies them next to the build output, so local runs resolve regions without a Docker image. Delete `packages/geodb` to force a refresh. Offline builds warn and continue — the app then degrades to `region="unknown"`. The download is skipped in Docker builds and containers (`FetchGeoDb=false`) and on CI (`CI=true`), so it never runs where the `ADD`-provided or in-memory test copies already apply.
 
 ---
 

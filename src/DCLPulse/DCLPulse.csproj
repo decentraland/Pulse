@@ -49,4 +49,29 @@
             <TargetPath>libenet.dylib</TargetPath>
         </None>
     </ItemGroup>
+
+    <!-- Geo database predownload for local runs. Docker images fetch their own fresh
+         copies via ADD (which take precedence at runtime); Docker builds and CI set
+         FetchGeoDb=false / CI=true so this never runs there. Delete packages/geodb
+         to force a re-download. -->
+    <PropertyGroup>
+        <GeoDbCacheDir>$(MSBuildThisFileDirectory)..\..\packages\geodb\</GeoDbCacheDir>
+    </PropertyGroup>
+
+    <Target Name="FetchGeoDb" BeforeTargets="Build"
+            Condition="'$(FetchGeoDb)' != 'false' and '$(CI)' == ''">
+        <DownloadFile SourceUrl="https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv4-num.csv"
+                      DestinationFolder="$(GeoDbCacheDir)"
+                      Condition="!Exists('$(GeoDbCacheDir)geo-whois-asn-country-ipv4-num.csv')"
+                      ContinueOnError="WarnAndContinue" />
+        <DownloadFile SourceUrl="https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv6-num.csv"
+                      DestinationFolder="$(GeoDbCacheDir)"
+                      Condition="!Exists('$(GeoDbCacheDir)geo-whois-asn-country-ipv6-num.csv')"
+                      ContinueOnError="WarnAndContinue" />
+        <ItemGroup>
+            <GeoDbFiles Include="$(GeoDbCacheDir)*.csv" />
+        </ItemGroup>
+        <Copy SourceFiles="@(GeoDbFiles)" DestinationFolder="$(OutDir)geodb"
+              SkipUnchangedFiles="true" Condition="'@(GeoDbFiles)' != ''" />
+    </Target>
 </Project>

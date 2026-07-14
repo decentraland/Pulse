@@ -9,5 +9,8 @@ COPY . .
 ADD https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv4-num.csv \
     https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv6-num.csv \
     /app/geodb/
+# The image already has fresh geo CSVs from the ADD above; the entrypoint's `dotnet run`
+# would otherwise trigger the csproj predownload at container start, so disable it.
+ENV FetchGeoDb=false
 EXPOSE 7777/udp
 ENTRYPOINT ["dotnet", "run", "--project", "src/DCLPulse/DCLPulse.csproj", "--configuration", "Debug", "--property:GenerateProto=false"]

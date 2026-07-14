@@ -1,5 +1,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
+# The image fetches its own fresh geo CSVs via ADD in the final stage; disable the
+# csproj's local predownload so the build/publish steps never hit the network for them.
+ENV FetchGeoDb=false
 WORKDIR /build
 COPY ["src/DCLPulse/DCLPulse.csproj", "src/DCLPulse/"]
 COPY ["src/DCLPulse/global.json", "src/DCLPulse/"]

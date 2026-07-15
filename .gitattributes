@@ -2,3 +2,7 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+
+# Shell scripts are executed inside Linux Docker images — they must check out
+# with LF even on Windows (CRLF makes bash fail with "invalid option name").
+*.sh text eol=lf

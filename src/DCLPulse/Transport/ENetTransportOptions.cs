@@ -28,6 +28,14 @@ public sealed class ENetTransportOptions
 
     public uint PeerTimeoutMs { get; set; } = 30000;
 
+    /// <summary>
+    ///     Directory containing the geo-whois-asn-country "-num" CSVs used to resolve peer
+    ///     IP → continent for RTT metrics. Relative paths resolve against the app base
+    ///     directory. Missing files are tolerated: peers report under region="unknown".
+    ///     The Docker images fetch the CSVs into this directory at build time.
+    /// </summary>
+    public string GeoDbDirectory { get; set; } = "geodb";
+
     public int EffectiveMaxConcurrentConnections =>
         MaxConcurrentConnections > 0 ? MaxConcurrentConnections : MaxPeers;
 }

@@ -261,6 +261,104 @@ per-type `RateTracker` dictionary and iterate in `TryConsumeSnapshot`.
 
 ---
 
+## Pattern D: Histogram metric
+
+For latency/duration values where the **distribution** matters, not just a count or a rate.
+Buckets are accumulated lock-free on the hot path; the dashboard shows value percentiles
+(window + lifetime) and Prometheus exposes native `_bucket`/`_sum`/`_count` series.
+
+**Examples:** delta staleness per AoI tier, tick duration, outgoing drain-cycle duration.
+
+**Reference implementation:** `delta_staleness` — trace `pulse.sim.delta_staleness_tier0_ms`
+end-to-end across the files below.
+
+### 1. Declare the instrument — `src/DCLPulse/Metrics/PulseMetrics.*.cs`
+
+```csharp
+// PulseMetrics.Simulation.cs
+public static readonly long[] MY_BUCKETS_MS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
+
+public static readonly Histogram<long> MY_LATENCY_MS =
+    METER.CreateHistogram<long>("pulse.sim.my_latency_ms");
+```
+
+Pick bucket bounds dense around the SLO region you care about. `Histogram<long>`, values in
+whole ms or µs (the collector keys on the instrument name, so units live only in the name).
+
+### 2. Record at the source
+
+```csharp
+PulseMetrics.Simulation.MY_LATENCY_MS.Record(elapsedMs);
+```
+
+Record on the measuring thread. Wrap-safe unsigned subtraction for monotonic-clock deltas
+(see `RecordDeltaStaleness` in `PeerSimulation.cs`) — don't cast to signed before subtracting.
+
+### 3. Accumulate in the collector — `src/DCLPulse/Metrics/MeterListenerMetricsCollector.cs`
+
+- Add a `BucketHistogram` field seeded with the bucket bounds:
+  ```csharp
+  private readonly BucketHistogram myLatency = new (PulseMetrics.Simulation.MY_BUCKETS_MS);
+  ```
+- Route the instrument in `OnLongMeasurement`:
+  ```csharp
+  case "pulse.sim.my_latency_ms":
+      myLatency.Record(value);
+      break;
+  ```
+  `BucketHistogram.Record` is lock-free (`Interlocked` per bucket) — no extra locking needed.
+
+### 4. Expose on the snapshot — `src/DCLPulse/Metrics/MetricsSnapshot.cs`
+
+```csharp
+public HistogramSnapshot MyLatencyMs { get; init; }
+```
+`HistogramSnapshot` (not `RateStats`) — an immutable per-bucket copy with a
+`Percentile(p)` helper. Percentiles are computed downstream.
+
+### 5. Populate the snapshot — `MeterListenerMetricsCollector.TakeSnapshot`
+
+```csharp
+MyLatencyMs = myLatency.Snapshot(),
+```
+
+### 6. Emit Prometheus — `PrometheusFormatter.cs`
+
+Native histogram exposition — header once, then one series per label set:
+```csharp
+WriteHistogramHeader(writer, "dcl_pulse_my_latency_ms", "My latency in ms");
+WriteHistogramSeries(writer, "dcl_pulse_my_latency_ms", snap.Simulation.MyLatencyMs, labels: null);
+```
+Emits `_bucket{le="…"}`, `_sum`, `_count`. Consumers run `histogram_quantile()`. Pass a
+`tier="0"`-style label string for per-variant series (see the `delta_staleness` calls).
+
+### 7. Display on the console dashboard — `ConsoleDashboard.cs`
+
+Use `HistogramTracker` (not `RateTracker`) — it adapts the cumulative `HistogramSnapshot`
+into `RateStats` where PerSec = recordings/s, Window = value percentiles over the delta
+since the previous snapshot, Lifetime = value percentiles over the cumulative buckets:
+```csharp
+private readonly HistogramTracker myLatencyTracker = new ();
+private readonly RateStatsView   myLatency = new ();
+private readonly Sparkline       myLatencySparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+```
+In `TryConsumeSnapshot` — note the sparkline plots the **window P99** (the tail), not the rate:
+```csharp
+RateStats myLatencyStats = myLatencyTracker.Update(snap.Simulation.MyLatencyMs, elapsed);
+myLatency.Apply(myLatencyStats, v => v.ToString("N0"));
+ShiftSample(myLatencySparkline.Values, myLatencyStats.Window.P99);
+```
+Add a `RateStatsRow` to the `Latency` group in `BuildVisualTree`. The percentile columns then
+read as value distribution (ms/µs), not rate percentiles.
+
+### 8. Document in `docs/metrics.md`
+
+Add under `## Latency metrics`. Note the value-distribution semantics of the percentile columns,
+the expected range, the Prometheus `histogram_quantile()` guidance, and any exclusions (e.g.
+resync-path deltas are excluded from `delta_staleness`).
+
+---
+
 ## Supporting types reference
 
 | Type | Location | Purpose |

@@ -12,6 +12,7 @@ services:
       DOTNET_ENVIRONMENT: Development
       Logging__LogLevel__Default: Debug
       Peers__ResyncWithDelta: false
+      Transport__GeoDbDirectory: /app/geodb
     cap_add:
       - SYS_PTRACE
     security_opt:

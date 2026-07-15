@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using Pulse.Messaging;
+using Pulse.Transport.Geo;
 
 namespace Pulse.Metrics;
 
@@ -40,6 +41,27 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long handshakeReplayRejected;
     private long bannedRefused;
     private long corruptedPacket;
+
+    // Latency histograms — bucketed by the measurement callbacks on recording threads.
+    private readonly BucketHistogram deltaStalenessTier0 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram deltaStalenessTier1 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram deltaStalenessTier2 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram tickDurationUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
+    private readonly BucketHistogram outgoingDrainCycleUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
+    private long tickOverruns;
+
+    // Per-continent peer RTT histograms — indexed by (int)Continent.
+    private readonly BucketHistogram[] peerRttMs = CreatePeerRttHistograms();
+
+    private static BucketHistogram[] CreatePeerRttHistograms()
+    {
+        var histograms = new BucketHistogram[Continents.COUNT];
+
+        for (var i = 0; i < histograms.Length; i++)
+            histograms[i] = new BucketHistogram(PulseMetrics.Transport.RTT_BUCKETS_MS);
+
+        return histograms;
+    }
 
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
@@ -88,6 +110,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalSendFailures = Interlocked.Read(ref sendFailures),
                 IncomingQueueDepth = messagePipe.IncomingQueueDepth,
                 OutgoingQueueDepth = messagePipe.OutgoingQueueDepth,
+                OutgoingDrainCycleUs = outgoingDrainCycleUs.Snapshot(),
+                PeerRttMs = SnapshotPeerRtt(),
             },
             Hardening = new MetricsSnapshot.HardeningSnapshot
             {
@@ -102,9 +126,27 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
             },
+            Simulation = new MetricsSnapshot.SimulationSnapshot
+            {
+                DeltaStalenessTier0Ms = deltaStalenessTier0.Snapshot(),
+                DeltaStalenessTier1Ms = deltaStalenessTier1.Snapshot(),
+                DeltaStalenessTier2Ms = deltaStalenessTier2.Snapshot(),
+                TickDurationUs = tickDurationUs.Snapshot(),
+                TotalTickOverruns = Interlocked.Read(ref tickOverruns),
+            },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
         };
+    }
+
+    private HistogramSnapshot[] SnapshotPeerRtt()
+    {
+        var snapshots = new HistogramSnapshot[peerRttMs.Length];
+
+        for (var i = 0; i < peerRttMs.Length; i++)
+            snapshots[i] = peerRttMs[i].Snapshot();
+
+        return snapshots;
     }
 
     private void OnLongMeasurement(
@@ -163,6 +205,45 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
+                break;
+            case "pulse.sim.delta_staleness_tier0_ms":
+                deltaStalenessTier0.Record(value);
+                break;
+            case "pulse.sim.delta_staleness_tier1_ms":
+                deltaStalenessTier1.Record(value);
+                break;
+            case "pulse.sim.delta_staleness_tier2_ms":
+                deltaStalenessTier2.Record(value);
+                break;
+            case "pulse.sim.tick_duration_us":
+                tickDurationUs.Record(value);
+                break;
+            case "pulse.sim.tick_overruns":
+                Interlocked.Add(ref tickOverruns, value);
+                break;
+            case "pulse.transport.outgoing_drain_cycle_us":
+                outgoingDrainCycleUs.Record(value);
+                break;
+            case "pulse.transport.peer_rtt_af_ms":
+                peerRttMs[0].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_as_ms":
+                peerRttMs[1].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_eu_ms":
+                peerRttMs[2].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_na_ms":
+                peerRttMs[3].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_oc_ms":
+                peerRttMs[4].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_sa_ms":
+                peerRttMs[5].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_unknown_ms":
+                peerRttMs[6].Record(value);
                 break;
         }
     }

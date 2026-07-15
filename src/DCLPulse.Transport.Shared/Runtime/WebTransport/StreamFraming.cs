@@ -1,6 +1,5 @@
 using System;
 using System.Buffers.Binary;
-using System.Collections.Generic;
 using System.IO;
 
 namespace Pulse.Transport.WebTransport
@@ -46,7 +45,13 @@ namespace Pulse.Transport.WebTransport
         private const int HEADER_SIZE = StreamFraming.HEADER_SIZE;
 
         private readonly int maxMessageLength;
-        private readonly List<byte> buffer = new();
+
+        // Contiguous buffer with a read/write cursor pair: unread bytes are buffer[start..end]. Reads
+        // advance `start` (no per-frame shift); consumed front space is reclaimed lazily in Append, and
+        // the buffer grows only when a single append plus an unread partial frame exceeds capacity.
+        private byte[] buffer;
+        private int start;
+        private int end;
 
         public StreamFrameReader(int maxMessageLength)
         {
@@ -54,13 +59,15 @@ namespace Pulse.Transport.WebTransport
                 throw new ArgumentOutOfRangeException(nameof(maxMessageLength));
 
             this.maxMessageLength = maxMessageLength;
+            buffer = new byte[HEADER_SIZE + maxMessageLength];
         }
 
         /// <summary>Append a raw inbound stream chunk.</summary>
         public void Append(ReadOnlySpan<byte> chunk)
         {
-            foreach (byte b in chunk)
-                buffer.Add(b);
+            EnsureWritable(chunk.Length);
+            chunk.CopyTo(buffer.AsSpan(end));
+            end += chunk.Length;
         }
 
         /// <summary>
@@ -71,33 +78,58 @@ namespace Pulse.Transport.WebTransport
         public bool TryRead(out byte[] message)
         {
             message = Array.Empty<byte>();
-            if (buffer.Count < HEADER_SIZE)
+            if (end - start < HEADER_SIZE)
                 return false;
 
-            Span<byte> header = stackalloc byte[HEADER_SIZE];
-            for (var i = 0; i < HEADER_SIZE; i++)
-                header[i] = buffer[i];
-            uint length = BinaryPrimitives.ReadUInt32BigEndian(header);
+            uint length = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(start));
 
             if (length > (uint)maxMessageLength)
             {
                 // The stream is unrecoverable past a frame that overruns the cap — its next boundary is
-                // lost — so drop what's buffered before signalling. Otherwise the offending header sits at
-                // the head and every later chunk re-appends and re-throws, growing the buffer without
-                // bound; the caller debits its corruption budget on the throw and disconnects the peer.
-                buffer.Clear();
+                // lost — so drop what's buffered before signalling. Otherwise the offending header would
+                // sit at the head and every later chunk re-read and re-throw; the caller debits its
+                // corruption budget on the throw and disconnects the peer.
+                start = end = 0;
                 throw new InvalidDataException($"stream frame length {length} exceeds cap {maxMessageLength}");
             }
 
             int total = HEADER_SIZE + (int)length;
-            if (buffer.Count < total)
+            if (end - start < total)
                 return false;
 
-            message = new byte[length];
-            for (var i = 0; i < (int)length; i++)
-                message[i] = buffer[HEADER_SIZE + i];
-            buffer.RemoveRange(0, total);
+            message = buffer.AsSpan(start + HEADER_SIZE, (int)length).ToArray();
+            start += total;
+
+            // Fully drained — rewind to the front so the next append starts at offset 0.
+            if (start == end)
+                start = end = 0;
+
             return true;
+        }
+
+        // Guarantee room for `count` more bytes: first reclaim consumed front space, then grow (double)
+        // only if that still isn't enough.
+        private void EnsureWritable(int count)
+        {
+            if (end + count <= buffer.Length)
+                return;
+
+            if (start > 0)
+            {
+                int live = end - start;
+                if (live > 0)
+                    Buffer.BlockCopy(buffer, start, buffer, 0, live);
+                start = 0;
+                end = live;
+            }
+
+            if (end + count <= buffer.Length)
+                return;
+
+            int size = buffer.Length * 2;
+            while (size < end + count)
+                size *= 2;
+            Array.Resize(ref buffer, size);
         }
     }
 }

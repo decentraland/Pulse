@@ -158,7 +158,7 @@ Existing transport metrics ([`PulseMetrics.Transport.cs`](src/DCLPulse/Metrics/P
   # Both transports bind 0.0.0.0 by default (see "Uniform bind" below); Metrics__Type=Prometheus keeps startup logs on stdout instead of the TUI.
   DOTNET_ENVIRONMENT=Development WebTransport__Enabled=true Metrics__Type=Prometheus dotnet run --project src/DCLPulse
   # client — reads that hash file to pin the dev cert, then connects.
-  dotnet run --project src/DCLPulseTestClient -- --transport=webtransport --port=7443
+  dotnet run --project src/DCLPulseTestClient -- --transport=webtransport --port=7743
   ```
   Verified server-side: `WebTransport peer connected …`, `Peer handshake accepted with wallet 0x…`, the teleport, and the profile announcement — the DCL handshake and reliable-stream traffic complete over WebTransport. Prometheus then emits `transport="webtransport"`; an ENet `DCLPulseTestClient` can run in parallel to confirm both coexist.
 - **Uniform bind**: ENet and WebTransport share one binding shape — `Transport:BindHost`/`Transport:Port` and `WebTransport:BindHost`/`WebTransport:Port` — both defaulting to the IPv4 wildcard `0.0.0.0`, so a `127.0.0.1` client reaches either transport identically on Windows and Linux. Set `BindHost` to `::` for the IPv6 wildcard: ENet enables dual-stack so `::` also accepts IPv4 on any OS, while WebTransport's `::` is dual-stack on Linux but IPv6-only on Windows (there a `127.0.0.1` client would need `--ip=::1`).

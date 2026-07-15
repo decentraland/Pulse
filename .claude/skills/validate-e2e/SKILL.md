@@ -52,13 +52,13 @@ DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" \
 DOTNET_ENVIRONMENT=Development WebTransport__Enabled=true Metrics__Type=Prometheus Logging__LogLevel__Default=Debug \
   dotnet run --project src/DCLPulse -p:GenerateProto=false
 ```
-Wait for `WebTransport host listening on 0.0.0.0:7443.` and `ENet host listening on 0.0.0.0:7777.`
+Wait for `WebTransport host listening on 0.0.0.0:7743.` and `ENet host listening on 0.0.0.0:7777.`
 
 Terminal 2 — two WebTransport bots:
 ```
 DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" \
   dotnet run --project src/DCLPulseTestClient -p:GenerateProto=false -- \
-  --transport=webtransport --ip=127.0.0.1 --port=7443 --bot-count=2 --spawn-radius=2 --account=wtval
+  --transport=webtransport --ip=127.0.0.1 --port=7743 --bot-count=2 --spawn-radius=2 --account=wtval
 ```
 For **ENet**: drop `--transport` and the cert concerns, use `--port=7777` (the default). Everything else — bots, logs, metrics — is identical.
 
@@ -81,7 +81,7 @@ trap 'kill $SERVER $CLIENT 2>/dev/null' EXIT
 for i in $(seq 1 30); do grep -qa "WebTransport host listening" "$LOG/server.log" && break; wait_s 1; done
 
 ( cd "$CDIR" && exec env DOTNET_ENVIRONMENT=Development dotnet DCLPulseTestClient.dll \
-    --transport=webtransport --ip=127.0.0.1 --port=7443 --bot-count=2 --spawn-radius=2 --account=wtval \
+    --transport=webtransport --ip=127.0.0.1 --port=7743 --bot-count=2 --spawn-radius=2 --account=wtval \
     < /dev/null > "$LOG/client.log" 2>&1 ) & CLIENT=$!
 for i in $(seq 1 50); do grep -qa "Starting simulation" "$LOG/client.log" && break; wait_s 1; done
 wait_s 8                                                    # let traffic flow while both are connected
@@ -105,7 +105,7 @@ All of:
 
 ## Cleanup
 
-A `timeout`-killed wrapper can orphan the `dotnet` child, and the server holds ports 7777/7443. Kill leftovers:
+A `timeout`-killed wrapper can orphan the `dotnet` child, and the server holds ports 7777/7743. Kill leftovers:
 - Windows: `Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" | Where-Object { $_.CommandLine -match 'DCLPulse(TestClient)?\.dll' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
 - Linux/macOS: `pkill -f 'DCLPulse(TestClient)?\.dll'`
 

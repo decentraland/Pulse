@@ -6,7 +6,7 @@ services:
     container_name: dcl-pulse-debug
     ports:
       - "7777:7777/udp"
-      - "7443:7443/udp"
+      - "7743:7743/udp"
     volumes:
       - ./src:/app/src
     environment:

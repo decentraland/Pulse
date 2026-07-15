@@ -21,11 +21,11 @@ public sealed class WebTransportOptions
     public string BindHost { get; set; } = "0.0.0.0";
 
     /// <summary>QUIC/UDP port.</summary>
-    public ushort Port { get; set; } = 7443;
+    public ushort Port { get; set; } = 7743;
 
     /// <summary>
     ///     Bind address handed to the native host, composed from <see cref="BindHost" /> and
-    ///     <see cref="Port" /> — an IPv6 host is bracketed (e.g. <c>[::]:7443</c>). Brackets already on
+    ///     <see cref="Port" /> — an IPv6 host is bracketed (e.g. <c>[::]:7743</c>). Brackets already on
     ///     <see cref="BindHost" /> are normalized first, so both <c>::</c> and <c>[::]</c> resolve correctly.
     /// </summary>
     public string BindAddr

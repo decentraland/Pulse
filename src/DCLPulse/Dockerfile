@@ -28,5 +28,5 @@ ENV COMMIT_HASH=$COMMIT_HASH
 WORKDIR /app
 COPY --from=publish /app/publish .
 EXPOSE 7777/udp
-EXPOSE 7443/udp
+EXPOSE 7743/udp
 ENTRYPOINT ["dotnet", "DCLPulse.dll"]

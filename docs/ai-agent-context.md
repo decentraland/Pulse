@@ -26,13 +26,14 @@
 Local ECDSA auth chain validation — no network call per connection.
 
 ```
-CONNECTING → PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
+PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
 ```
 
 - Client sends `{ authChain, timestamp, connectSig }` on channel 0 immediately after ENet connect
 - Server validates locally: chain structure → ephemeral key expiry → connectSig → timestamp within 60s → server_id match
 - `PENDING_AUTH` deadline: 30 seconds. Non-handshake packets silently dropped.
 - Auth failure: `HANDSHAKE_REJECT { reason }` then `enet_peer_disconnect_later`
+- Server-initiated disconnects (handshake reject, `PeerDefense` kick) sit in `PENDING_DISCONNECT` — transport disconnect requested, ENet event pending, inbound packets skipped — before `DISCONNECTING`
 - `player_id = chain[0].payload` (Ethereum wallet address)
 
 ### Hardening layers
@@ -63,7 +64,7 @@ Defense-in-depth, all local, all fail-closed. Each has a dedicated class under `
 
 Players outside 100m (`SpatialAreaOfInterestOptions.MaxRadius`) receive no updates.
 
-**Realm partitioning.** `PeerSnapshot.Realm` gates visibility inside the area-of-interest collectors: observers only see subjects whose `Realm` string matches exactly. A single Pulse instance transparently hosts multiple realms that never see each other.
+**Realm partitioning.** `PeerSnapshot.Realm` gates visibility inside the area-of-interest collectors: observers only see subjects whose `Realm` string matches exactly. A single Pulse instance transparently hosts multiple realms that never see each other. The subject's realm rides along on `PlayerJoined` (on entry) and `Teleported` (a teleport may cross realms), so the client always knows which realm a peer belongs to.
 
 **Snapshot history:** Server keeps a small rolling ring of snapshots per subject (`SnapshotBoard`). `RESYNC_REQUEST` default response is `STATE_FULL`. When `Peers.ResyncWithDelta` is enabled, the server first attempts a targeted delta from the client's `knownSeq` baseline and falls back to `STATE_FULL` when that seq has been evicted from the ring.
 
@@ -77,7 +78,7 @@ Players outside 100m (`SpatialAreaOfInterestOptions.MaxRadius`) receive no updat
 
 **Stale-view sweep.** Every `SWEEP_INTERVAL` (≈100 ticks, ~5 s) `PeerSimulation.SweepStaleViews` prunes observer views for no-longer-visible subjects and emits `PlayerLeft`. Bounds memory and closes the same-wallet-reconnect "two views" window.
 
-**Self-mirror.** When `Peers.SelfMirrorEnabled=true`, each peer receives its own state as if from another peer under `SELF_MIRROR_WALLET_ID` at tier `SelfMirrorTier`. Client-side animation testing aid.
+**Self-mirror.** When `Peers.SelfMirrorEnabled=true`, each peer receives its own state as if from another peer under `SELF_MIRROR_WALLET_ID` at tier `SelfMirrorTier`. Client-side animation testing aid. The self-mirror is injected outside the AoI, so it re-applies the same realm invariant itself: a peer with no realm yet (legacy connect, before its first teleport) is not mirrored until a realm is set.
 
 ---
 
@@ -102,24 +103,24 @@ Proto-level names: see the `ClientMessage` / `ServerMessage` `oneof message` in 
 | Message | Channel | Description |
 | --- | --- | --- |
 | `Handshake` | 0 (reliable) | Auth accept/reject response. On reject, followed by `enet_peer_disconnect_later`. |
-| `PlayerJoined` | 0 (reliable, broadcast) | A peer entered the observer's interest set. |
+| `PlayerJoined` | 0 (reliable, broadcast) | A peer entered the observer's interest set. Carries `UserId, ProfileVersion, State` and the subject's `Realm` (the AoI partition it belongs to). |
 | `PlayerLeft` | 0 (reliable, broadcast) | A peer left the observer's interest set (distance, realm change, disconnect, or stale-view sweep). |
 | `PlayerStateFull` | 0 (reliable) | Full snapshot of a subject. Sent on zone entry or in response to `Resync`. |
-| `PlayerStateDelta` | 1 (unreliable sequenced) | Delta from `last_sent_snapshot`. Field mask suppresses unchanged fields. State flags always present. |
+| `PlayerStateDelta` | 1 (unreliable sequenced) | Delta from `last_sent_snapshot`. Optional-field presence suppresses unchanged fields. State flags always present. |
 | `PlayerProfileVersionsAnnounced` | 0 (reliable, broadcast) | Fan-out of `ProfileAnnouncement` to observers. |
 | `EmoteStarted` | 0 (reliable, broadcast) | `SubjectId, Sequence, ServerTick, EmoteId, PlayerState`. Full `PlayerState` sent reliably because no further position updates arrive during the emote. |
 | `EmoteStopped` | 0 (reliable, broadcast) | `SubjectId, Sequence, ServerTick, Reason, PlayerState`. Reason = completed (one-shot duration expired) or cancelled (client `EmoteStop`). `PlayerState` lets the client snap to the correct position on resume. |
-| `Teleported` | 0 (reliable, broadcast) | Authoritative position + `ServerTick`. Client clears interpolation buffer and snaps. |
+| `Teleported` | 0 (reliable, broadcast) | Authoritative position + `ServerTick` + the subject's `Realm` (a teleport may move the peer to a different realm). Client clears interpolation buffer and snaps. |
 
 ---
 
 ## Serialization
 
-Custom `protoc` plugin (`protoc-gen-bitwise`) generates bitwise-packed C# serializers from `.proto` files.
+Custom `protoc` plugin (`protoc-gen-bitwise`) generates quantized-accessor partials (`*.Bitwise.cs`) from `.proto` files.
 
-- Float fields annotated with `bits`, `min`, `max` → quantized encoding: `encoded = round((clamp(v, min, max) - min) / (max - min) * (2^bits - 1))`
-- `optional` proto fields → plugin-generated field mask on the wire (compact, schema stays clean)
-- `BitWriter` / `BitReader` implement quantization directly
+- Quantized fields are plain `uint32` on the wire (ordinary protobuf varints), annotated with `bits`, `min`, `max`; generated float `{Field}Quantized` accessors encode via `encoded = round((clamp(v, min, max) - min) / (max - min) * (2^bits - 1))` (power-law variant for velocity-style fields)
+- `optional` proto fields → native protobuf per-field presence (unchanged fields stay off the wire; no plugin-generated mask)
+- Static `Quantize` helpers (`src/Protocol/Generated/Quantize.cs`) implement the encoding
 
 ---
 
@@ -158,7 +159,7 @@ Pulse-A  Pulse-B  Pulse-C ...
 - Runtime: .NET 10
 - Language: C#
 - Transport: ENet (native, via managed wrapper)
-- Serialization: Custom bitwise protoc plugin + BitWriter/BitReader
+- Serialization: Standard protobuf + `protoc-gen-bitwise` quantized accessors (`Quantize` helpers)
 - Crypto: Local ECDSA validation (no network call)
 - Infrastructure: AWS NLB (L4, UDP)
 - SDK: Installed at `~/.dotnet` (user-local)

@@ -212,4 +212,11 @@ builder.Services.Configure<ParcelEncoderOptions>(
 builder.Services.AddSingleton<ParcelEncoder>();
 
 IHost host = builder.Build();
+
+if (!webTransportEnabled)
+    host.Services.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Pulse.Transport.WebTransport")
+        .LogWarning(
+            "WebTransport is disabled (WebTransport:Enabled=false); only ENet is serving. Set WebTransport:Enabled=true to accept browser clients.");
+
 host.Run();

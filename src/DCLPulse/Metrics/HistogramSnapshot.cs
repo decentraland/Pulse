@@ -71,10 +71,12 @@ public static class HistogramSnapshots
 
             // All real callers share one bounds array (the 7 per-continent RTT histograms are
             // built from PulseMetrics.Transport.RTT_BUCKETS_MS). Mismatched bounds would sum
-            // counts across incompatible bucket edges and silently skew merged percentiles.
-            System.Diagnostics.Debug.Assert(
-                ReferenceEquals(bounds, part.UpperBounds),
-                "HistogramSnapshots.Merge requires all parts to share one bounds array.");
+            // counts across incompatible bucket edges and silently skew merged percentiles, so
+            // guard unconditionally — a Debug.Assert would compile out of Release builds.
+            if (!ReferenceEquals(bounds, part.UpperBounds))
+                throw new ArgumentException(
+                    "HistogramSnapshots.Merge requires all parts to share one bounds array.",
+                    nameof(parts));
 
             counts ??= new long[part.Counts.Length];
 

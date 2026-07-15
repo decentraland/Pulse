@@ -69,4 +69,16 @@ public class HistogramTrackerTests
         Assert.That(HistogramSnapshots.Merge(null).Count, Is.EqualTo(0));
         Assert.That(HistogramSnapshots.Merge([default, default]).Counts, Is.Null);
     }
+
+    // Bounds equal by value but distinct by reference — the layout mismatch a future caller could
+    // introduce by mixing histograms. Merge must reject it loudly (now an always-on guard, not a
+    // Debug.Assert compiled out of Release) rather than summing incompatible bucket edges.
+    [Test]
+    public void Merge_throws_when_parts_use_distinct_bounds_arrays()
+    {
+        var a = new HistogramSnapshot { UpperBounds = [10L, 20L], Counts = [1L, 0L, 2L], Count = 3, Sum = 45 };
+        var b = new HistogramSnapshot { UpperBounds = [10L, 20L], Counts = [0L, 4L, 0L], Count = 4, Sum = 60 };
+
+        Assert.That(() => HistogramSnapshots.Merge([a, b]), Throws.ArgumentException);
+    }
 }

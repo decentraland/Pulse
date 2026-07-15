@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 using Pulse.Transport.Geo;
 using System.Net;
 
@@ -172,5 +174,33 @@ public class ContinentResolverTests
         Assert.That(resolver.Resolve("8.8.8.8"), Is.EqualTo(Continent.NORTH_AMERICA));
         Assert.That(resolver.Resolve("1.0.0.5"), Is.EqualTo(Continent.OCEANIA));
         Assert.That(resolver.skippedRows, Is.EqualTo(2));
+    }
+
+    // File.Exists passes but the open fails: the IPv4 CSV is present yet held under an exclusive
+    // lock (FileShare.None), so the resolver's StreamReader hits an IOException mid-load. The
+    // degrade-don't-crash contract requires LoadFromDirectory to swallow it and return Empty
+    // rather than crashing the DI factory at host startup.
+    [Test]
+    public void LoadFromDirectory_returns_empty_resolver_when_a_file_cannot_be_opened()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "continent-resolver-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "countryInfo.txt"), COUNTRY_INFO_SAMPLE);
+            string v4Path = Path.Combine(dir, "geo-whois-asn-country-ipv4-num.csv");
+            File.WriteAllText(v4Path, $"{V4("8.8.8.0")},{V4("8.8.8.255")},US\n");
+
+            using var _ = new FileStream(v4Path, FileMode.Open, FileAccess.Read, FileShare.None);
+
+            ContinentResolver resolver = ContinentResolver.LoadFromDirectory(dir, Substitute.For<ILogger>());
+
+            Assert.That(resolver.Resolve("8.8.8.8"), Is.EqualTo(Continent.UNKNOWN));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 }

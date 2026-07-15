@@ -93,25 +93,36 @@ public sealed class ContinentResolver
             return Empty;
         }
 
-        using var countryInfo = new StreamReader(countryPath);
-        using var v4 = new StreamReader(v4Path);
-        using StreamReader? v6 = File.Exists(v6Path) ? new StreamReader(v6Path) : null;
+        // File.Exists passed above, but the open+read can still fail (permission denied,
+        // TOCTOU delete between the check and the open, transient IO error). Degrade like the
+        // missing-file branches rather than crashing the DI factory at host startup.
+        try
+        {
+            using var countryInfo = new StreamReader(countryPath);
+            using var v4 = new StreamReader(v4Path);
+            using StreamReader? v6 = File.Exists(v6Path) ? new StreamReader(v6Path) : null;
 
-        if (v6 == null)
-            logger.LogInformation("IPv6 geo database not found at {Path} — native-IPv6 peers will be region=\"unknown\".", v6Path);
+            if (v6 == null)
+                logger.LogInformation("IPv6 geo database not found at {Path} — native-IPv6 peers will be region=\"unknown\".", v6Path);
 
-        ContinentResolver resolver = Load(countryInfo, v4, v6);
+            ContinentResolver resolver = Load(countryInfo, v4, v6);
 
-        if (resolver.skippedRows > 0)
-            logger.LogInformation(
-                "Geo database loaded: {Ranges} ranges, {Countries} countries from {Directory}, {Skipped} malformed rows skipped.",
-                resolver.ranges.Length, resolver.countryCount, directory, resolver.skippedRows);
-        else
-            logger.LogInformation(
-                "Geo database loaded: {Ranges} ranges, {Countries} countries from {Directory}.",
-                resolver.ranges.Length, resolver.countryCount, directory);
+            if (resolver.skippedRows > 0)
+                logger.LogInformation(
+                    "Geo database loaded: {Ranges} ranges, {Countries} countries from {Directory}, {Skipped} malformed rows skipped.",
+                    resolver.ranges.Length, resolver.countryCount, directory, resolver.skippedRows);
+            else
+                logger.LogInformation(
+                    "Geo database loaded: {Ranges} ranges, {Countries} countries from {Directory}.",
+                    resolver.ranges.Length, resolver.countryCount, directory);
 
-        return resolver;
+            return resolver;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Failed to read geo database from {Directory} — peer RTT will be reported under region=\"unknown\".", directory);
+            return Empty;
+        }
     }
 
     /// <summary>

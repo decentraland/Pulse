@@ -83,16 +83,17 @@ Line formats (one paragraph each — atomic replace, immune to the undocumented 
 of replacing heading sections, and never touches human-authored canvas content):
 
 ```
-**DEV running:** `main` @ `725ed44` · `pulse-server:725ed44…` · since 2026-07-17 14:13 UTC
-**DEV last deploy:** ✅ success · `main` @ `725ed44` · 2026-07-17 14:13 UTC · [pipeline](https://…)
+**DEV running:** `main` @ [725ed44](https://github.com/decentraland/Pulse/commit/725ed44…) · `pulse-server:725ed44…` · since 2026-07-17 14:13 UTC
+**DEV last deploy:** ✅ success · `main` @ [725ed44](https://github.com/decentraland/Pulse/commit/725ed44…) · 2026-07-17 14:13 UTC · [pipeline](https://…)
 ```
 
 - Markers are the stable prefixes `DEV running:`, `DEV last deploy:`, `PRD running:`,
   `PRD last deploy:`.
 - State emoji: 🔄 `in_progress`, ✅ `success`, ❌ `failure`/`error`.
-- `ref` is shortened (`refs/heads/`, `refs/tags/` stripped); `sha` to 8 chars; docker
-  image shown without the `quay.io/decentraland/` prefix and with its tag truncated to
-  12 chars.
+- `ref` is shortened (`refs/heads/`, `refs/tags/` stripped); `sha` is shown as 8 chars
+  linking to the commit on GitHub (`<repo-url>/commit/<full-sha>`, with `repo-url` passed
+  in from `github.server_url`/`github.repository`); docker image shown without the
+  `quay.io/decentraland/` prefix and with its tag truncated to 12 chars.
 - Timestamp comes from `deployment_status.created_at` (UTC), not the runner clock.
 - `url` is the status's `target_url` (ops pipeline); omitted when empty.
 

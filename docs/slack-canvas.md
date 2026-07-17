@@ -13,6 +13,11 @@ Lines are found by those marker prefixes and replaced atomically; everything els
 canvas is left untouched. If the channel has no canvas, one is created with a
 `# 🚀 Deployments` heading. Don't rename the markers by hand — the workflow would then
 append fresh lines instead of updating the old ones (deleting the stale lines fixes that).
+Don't write the marker phrases (`DEV running:`, `DEV last deploy:`, …) anywhere else on
+the canvas either — the lookup replaces the first section containing the text, so a human
+note that happens to contain a marker could be overwritten.
+On the very first deploys ever, a dev and a prd run can race to create the canvas; the
+loser fails loudly and the next deploy self-heals (a one-time cosmetic hiccup).
 
 ## One-time Slack app setup
 

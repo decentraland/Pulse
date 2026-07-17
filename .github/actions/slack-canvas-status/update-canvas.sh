@@ -90,7 +90,7 @@ slack_post() {
 require_ok() {
   local response="$1" context="$2"
   if [[ "$(jq -r '.ok' <<<"$response")" != "true" ]]; then
-    echo "::error::Slack ${context} failed: $(jq -r '.error // "unknown"' <<<"$response")"
+    echo "::error::Slack ${context} failed: $(jq -r '.error // "unknown"' <<<"$response")" >&2
     exit 1
   fi
 }

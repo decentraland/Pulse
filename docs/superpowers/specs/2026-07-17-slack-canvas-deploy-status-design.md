@@ -63,8 +63,8 @@ reflects the actual rollout outcome, not merely that CI requested a deploy.
 ### Composite action: `.github/actions/slack-canvas-status/action.yml`
 
 Inputs: `environment`, `state`, `ref`, `sha`, `docker-image`, `timestamp`, `url`,
-`slack-token`, `channel-id`. Implementation: bash + `curl` + `jq` against the Slack Web
-API.
+`repo-url`, `slack-token`, `channel-id`. Implementation: bash + `curl` + `jq` against the
+Slack Web API.
 
 Flow:
 
@@ -114,8 +114,10 @@ invite bot to channel, add secrets) and the manual-dispatch test procedure.
 - Slack API failures (`ok: false`, HTTP errors) fail the step with the Slack error name
   in the log. The workflow is independent of the deploy flows and can never block or fail
   a deploy.
-- The action never deletes sections; a malformed canvas at worst gains duplicate lines,
-  which the next successful lookup+replace converges back to one.
+- The action never deletes sections; a malformed canvas at worst gains duplicate lines.
+  Lookup+replace only ever rewrites the *first* section matching a marker, so any stale
+  twins are left in place and must be deleted by hand — they are not reconciled
+  automatically.
 
 ## Testing
 

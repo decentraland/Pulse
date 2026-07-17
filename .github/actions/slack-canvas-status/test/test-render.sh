@@ -31,6 +31,9 @@ assert_eq "failure line without pipeline link" \
 STATE=in_progress
 assert_eq "in_progress emoji" "🔄" "$(state_emoji)"
 
+STATE=error
+assert_eq "error emoji" "❌" "$(state_emoji)"
+
 ENVIRONMENT=prd REF=refs/tags/v0.9.2
 assert_eq "tag ref shortened" "v0.9.2" "$(short_ref)"
 assert_eq "prd running marker" "PRD running:" "$(running_marker)"

@@ -5,7 +5,9 @@ Scenario is selected with the MOCK_SCENARIO env var:
   has_canvas  - channel has a canvas, every section lookup matches.
   no_canvas   - channel has no canvas yet.
   no_sections - channel has a canvas, no section lookup matches.
-Every request is appended to MOCK_LOG as one JSON line: {"path": ..., "body": ...}.
+  ok_false    - conversations.info responds ok:false (missing_scope).
+Every request is appended to MOCK_LOG as one JSON line: {"path": ..., "body": ...},
+except GET /ping (a readiness probe) which is answered with {"ok": true} and not logged.
 """
 import json
 import os
@@ -31,10 +33,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path == "/ping":
+            self._respond({"ok": True})
+            return
         self._record(path, self.path)
         if path == "/conversations.info":
             if SCENARIO == "no_canvas":
                 self._respond({"ok": True, "channel": {"id": "C123", "properties": {}}})
+            elif SCENARIO == "ok_false":
+                self._respond({"ok": False, "error": "missing_scope"})
             else:
                 self._respond({"ok": True, "channel": {"id": "C123", "properties": {"canvas": {"file_id": "F999"}}}})
         else:

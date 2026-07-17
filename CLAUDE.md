@@ -320,6 +320,10 @@ Three Dockerfiles:
 
 Deploy pipeline: `main` push builds `Dockerfile` → dev. Manual **Deploy Dev (Debug)** action builds `Dockerfile.dev-debug` → dev. Release tag builds `Dockerfile` → prod.
 
+Every deployment also updates the Pulse Slack channel canvas (per-environment "running" /
+"last deploy" lines) via `.github/workflows/slack-canvas.yml`; Slack app setup and
+troubleshooting live in [docs/slack-canvas.md](docs/slack-canvas.md).
+
 For full debugging workflows (local + remote Fargate, Rider setup, logpoints, ports), see [docs/debugging.md](docs/debugging.md). Bastion/tunnel specifics are in the `decentraland/playbooks` repo (internal access only).
 
 ---

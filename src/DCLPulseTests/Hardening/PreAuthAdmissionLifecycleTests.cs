@@ -55,7 +55,7 @@ public class PreAuthAdmissionLifecycleTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(8),
+            new ClientMessageCounters(9),
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             admission);

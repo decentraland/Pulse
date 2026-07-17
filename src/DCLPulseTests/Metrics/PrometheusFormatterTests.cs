@@ -27,7 +27,7 @@ public class PrometheusFormatterTests
                 TotalDatagramsDroppedStale = 7,
                 TotalDatagramsDroppedOversize = 9,
             },
-            IncomingMessages = new ClientMessageCounters(8),
+            IncomingMessages = new ClientMessageCounters(9),
             OutgoingMessages = new ServerMessageCounters(10),
         });
 
@@ -50,7 +50,7 @@ public class PrometheusFormatterTests
                 TotalDatagramsDroppedStale = 7,
                 TotalDatagramsDroppedOversize = 9,
             },
-            IncomingMessages = new ClientMessageCounters(8),
+            IncomingMessages = new ClientMessageCounters(9),
             OutgoingMessages = new ServerMessageCounters(10),
         });
 

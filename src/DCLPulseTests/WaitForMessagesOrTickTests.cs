@@ -48,7 +48,7 @@ public class WorkerSignalTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(8),
+            new ClientMessageCounters(9),
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
@@ -200,7 +200,7 @@ public class WorkerSignalTests
             handlers,
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(8),
+            new ClientMessageCounters(9),
             new EmoteCompleter(localSnapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions

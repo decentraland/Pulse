@@ -1,5 +1,7 @@
 using DCL.Auth;
+using DCL.WebTransport;
 using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Pulse;
 using Pulse.InterestManagement;
@@ -65,7 +67,31 @@ builder.Services.AddSingleton<ITimeProvider, StopwatchTimeProvider>();
 
 builder.Services.AddSingleton<ENetHostedService>();
 builder.Services.AddHostedService<ENetHostedService>(sp => sp.GetRequiredService<ENetHostedService>());
-builder.Services.AddSingleton<ITransport>(sp => sp.GetRequiredService<ENetHostedService>());
+builder.Services.AddSingleton<ITransport, MessagePipeTransport>();
+
+// WebTransport (browser transport) — opt-in, off by default. When disabled the server behaves exactly
+// as ENet-only. When enabled it shares the PeerIndex pool, hardening, MessagePipe, and workers with
+// ENet; the certificate comes from config or a generated self-signed dev cert.
+builder.Services.Configure<WebTransportOptions>(
+    builder.Configuration.GetSection(WebTransportOptions.SECTION_NAME));
+
+bool webTransportEnabled = builder.Configuration.GetSection(WebTransportOptions.SECTION_NAME)
+                                  .GetValue<bool>(nameof(WebTransportOptions.Enabled));
+
+if (webTransportEnabled)
+{
+    builder.Services.AddSingleton<IWebTransportHost>(sp =>
+    {
+        WebTransportOptions webTransportOptions = sp.GetRequiredService<IOptions<WebTransportOptions>>().Value;
+        bool allowSelfSigned = sp.GetRequiredService<IHostEnvironment>().IsDevelopment();
+        ILogger logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("Pulse.Transport.WebTransport");
+        (string certPem, string keyPem) = WebTransportCertificate.Resolve(webTransportOptions, allowSelfSigned, logger);
+        return new WebTransportHostAdapter(WebTransportHost.Create(webTransportOptions.BindAddr, certPem, keyPem));
+    });
+
+    builder.Services.AddHostedService<WebTransportHostedService>();
+}
+
 builder.Services.AddHostedService<PeersManager>();
 builder.Services.AddSingleton<MessagePipe>();
 builder.Services.AddSingleton(new ClientMessageCounters(8));
@@ -186,4 +212,11 @@ builder.Services.Configure<ParcelEncoderOptions>(
 builder.Services.AddSingleton<ParcelEncoder>();
 
 IHost host = builder.Build();
+
+if (!webTransportEnabled)
+    host.Services.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Pulse.Transport.WebTransport")
+        .LogWarning(
+            "WebTransport is disabled (WebTransport:Enabled=false); only ENet is serving. Set WebTransport:Enabled=true to accept browser clients.");
+
 host.Run();

@@ -9,6 +9,7 @@ COPY ["src/Directory.Build.props", "src/"]
 COPY ["src/Directory.Build.targets", "src/"]
 COPY ["src/NuGet.config", "src/"]
 COPY ["tools/fetch-rust-eth.sh", "tools/"]
+COPY ["tools/fetch-rust-webtransport.sh", "tools/"]
 RUN dotnet restore "src/DCLPulse/DCLPulse.csproj"
 COPY src/ src/
 WORKDIR "/build/src/DCLPulse"
@@ -34,5 +35,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip proc
 WORKDIR /app
 COPY --from=build /app/publish .
 EXPOSE 7777/udp
+EXPOSE 7743/udp
 EXPOSE 2222/tcp
 ENTRYPOINT ["/bin/sh", "-c", "set -e && /usr/sbin/sshd && exec dotnet DCLPulse.dll"]

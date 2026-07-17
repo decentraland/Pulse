@@ -16,6 +16,9 @@ public class ClientOptions
     public int BotOffset { get; init; }
     public int TotalBotCount { get; init; }
 
+    /// <summary>Transport to use: <c>enet</c> (default) or <c>webtransport</c>.</summary>
+    public string Transport { get; init; } = "enet";
+
     public static ClientOptions FromArgs(string[] args)
     {
         string Arg(string name, string fallback) =>
@@ -36,6 +39,7 @@ public class ClientOptions
             DispersionRadius = float.Parse(Arg("dispersion-radius", "20")),
             BotOffset = int.Parse(Arg("bot-offset", "0")),
             TotalBotCount = int.Parse(Arg("total-bot-count", "0")),
+            Transport = Arg("transport", "enet"),
         };
     }
 }

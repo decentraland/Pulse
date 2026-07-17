@@ -4,6 +4,13 @@ public sealed class ENetTransportOptions
 {
     public const string SECTION_NAME = "Transport";
 
+    /// <summary>
+    ///     Host to bind the ENet/UDP socket to. Defaults to the IPv4 wildcard <c>0.0.0.0</c> for
+    ///     behavior uniform with WebTransport across Windows and Linux. Set to <c>::</c> for the
+    ///     IPv6 wildcard; ENet enables dual-stack, so <c>::</c> then also accepts IPv4.
+    /// </summary>
+    public string BindHost { get; set; } = "0.0.0.0";
+
     public ushort Port { get; set; } = 7777;
 
     /// <summary>

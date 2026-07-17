@@ -27,6 +27,7 @@ public class SceneListenerHandshakeHandlerTests
     private SpatialGrid spatialGrid;
     private ITransport transport;
     private IdentityBoard identityBoard;
+    private ParcelEncoder parcelEncoder;
     private Dictionary<PeerIndex, PeerState> peers;
     private SceneListenerHandshakeHandler handler;
     private PeerIndex peer;
@@ -37,7 +38,7 @@ public class SceneListenerHandshakeHandlerTests
         snapshotBoard = new SnapshotBoard(100, 16);
         spatialGrid = new SpatialGrid(100, 100);
         IOptions<ParcelEncoderOptions> parcelOptions = Options.Create(new ParcelEncoderOptions());
-        var parcelEncoder = new ParcelEncoder(parcelOptions);
+        parcelEncoder = new ParcelEncoder(parcelOptions);
         transport = Substitute.For<ITransport>();
         identityBoard = new IdentityBoard(100);
 
@@ -81,13 +82,13 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_ValidRequest_AuthenticatesWithListenerDescriptor()
     {
-        handler.Handle(peers, peer, BuildListenerHandshake("main", 10, 11));
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 11, 10)));
 
         PeerState state = peers[peer];
         Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
         Assert.That(state.SceneListener, Is.Not.Null);
         Assert.That(state.SceneListener!.Realm, Is.EqualTo("main"));
-        Assert.That(state.SceneListener.Parcels, Is.EquivalentTo(new[] { 10, 11 }));
+        Assert.That(state.SceneListener.Parcels, Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10), parcelEncoder.Encode(11, 10) }));
         Assert.That(state.SceneListener.CellKeys, Is.Not.Empty);
         Assert.That(state.WalletId, Is.EqualTo(WALLET).IgnoreCase);
     }
@@ -95,7 +96,7 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_ValidRequest_NeverRegistersAsSubject()
     {
-        handler.Handle(peers, peer, BuildListenerHandshake("main", 10));
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 10, 10)));
 
         Assert.That(snapshotBoard.TryRead(peer, out _), Is.False,
             "A listener must never own a SnapshotBoard slot — it would become visible to players.");
@@ -105,7 +106,7 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_ValidRequest_RegistersIdentity()
     {
-        handler.Handle(peers, peer, BuildListenerHandshake("main", 10));
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 10, 10)));
 
         Assert.That(identityBoard.TryGetPeerIndexByWallet(WALLET, out PeerIndex found), Is.True);
         Assert.That(found, Is.EqualTo(peer));
@@ -117,7 +118,7 @@ public class SceneListenerHandshakeHandlerTests
         var other = new PeerIndex(2);
         identityBoard.Set(other, WALLET);
 
-        handler.Handle(peers, peer, BuildListenerHandshake("main", 10));
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 10, 10)));
 
         transport.Received(1).Disconnect(other, DisconnectReason.DUPLICATE_SESSION);
     }
@@ -125,8 +126,8 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_OverCapParcels_RejectsBeforeAuthenticated()
     {
-        // Fixture MaxParcels = 8.
-        handler.Handle(peers, peer, BuildListenerHandshake("main", Enumerable.Range(0, 9).ToArray()));
+        // Fixture MaxParcels = 8; a single 3×3 rect nominally covers 9 parcels.
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 12, 12)));
 
         Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
         transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
@@ -155,7 +156,7 @@ public class SceneListenerHandshakeHandlerTests
         snapshotBoard.SetActive(peer);
         snapshotBoard.Publish(peer, TestSnapshots.Make(seq: 7));
 
-        handler.Handle(peers, peer, BuildListenerHandshake("main", 10, 11));
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 11, 11)));
 
         Assert.That(peers[peer], Is.SameAs(player), "The peer's state object must be the exact same instance — no conversion.");
         Assert.That(player.SceneListener, Is.Null, "No listener descriptor may be stamped onto an authenticated player.");
@@ -173,7 +174,7 @@ public class SceneListenerHandshakeHandlerTests
             AuthChain = ByteString.CopyFromUtf8("not json"),
             Realm = "main",
         };
-        request.ParcelIndices.Add(10);
+        request.ParcelRects.Add(new ParcelRect { MinX = 10, MinZ = 10, MaxX = 10, MaxZ = 10 });
 
         handler.Handle(peers, peer, new ClientMessage { SceneListenerHandshake = request });
 
@@ -181,7 +182,7 @@ public class SceneListenerHandshakeHandlerTests
             "A parse failure responds with an error but leaves the peer awaiting a retry within the attempt budget.");
     }
 
-    private ClientMessage BuildListenerHandshake(string realm, params int[] parcels)
+    private ClientMessage BuildListenerHandshake(string realm, params (int MinX, int MinZ, int MaxX, int MaxZ)[] rects)
     {
         var ephemeralPayload =
             $"Decentraland Login\nEphemeral address: {EPHEMERAL}\nExpiration: 2099-01-01T00:00:00Z";
@@ -206,7 +207,8 @@ public class SceneListenerHandshakeHandlerTests
             Realm = realm,
         };
 
-        request.ParcelIndices.AddRange(parcels);
+        foreach ((int minX, int minZ, int maxX, int maxZ) in rects)
+            request.ParcelRects.Add(new ParcelRect { MinX = minX, MinZ = minZ, MaxX = maxX, MaxZ = maxZ });
 
         return new ClientMessage { SceneListenerHandshake = request };
     }

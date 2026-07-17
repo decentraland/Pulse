@@ -113,9 +113,10 @@ public sealed class FieldValidator(
 
     /// <summary>
     ///     Validates a scene-listener handshake: realm rules identical to
-    ///     <see cref="ValidateTeleport" />, every parcel index in range, and the deduped
-    ///     parcel count within <see cref="SceneListenerOptions.MaxParcels" /> — rejected,
-    ///     never clamped. On success <paramref name="parcels" /> holds the deduped set.
+    ///     <see cref="ValidateTeleport" />, every announced rect well-formed and fully in
+    ///     encodable bounds, and the Σ nominal rect area within
+    ///     <see cref="SceneListenerOptions.MaxParcels" /> — rejected, never clamped. On success
+    ///     <paramref name="parcels" /> holds the deduped union of expanded parcel indices.
     /// </summary>
     public bool ValidateSceneListenerHandshake(PeerIndex from, PeerState state, SceneListenerHandshakeRequest request,
         [NotNullWhen(true)] out HashSet<int>? parcels)
@@ -128,21 +129,39 @@ public sealed class FieldValidator(
         if (maxRealmLength > 0 && request.Realm.Length > maxRealmLength)
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
-        if (request.ParcelIndices.Count == 0)
+        if (request.ParcelRects.Count == 0)
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+        // Nominal-area budget: Σ (w×h) ≤ MaxParcels, enforced before any expansion so a
+        // hostile payload can't buy CPU/memory with huge or heavily overlapping rects. The
+        // deduped union is necessarily ≤ the sum, so no post-expansion cap is needed.
+        // Trade-off: overlapping rects are budgeted by sum, not union — clients should
+        // announce disjoint rects.
+        long nominalArea = 0;
+
+        foreach (ParcelRect rect in request.ParcelRects)
+        {
+            if (rect.MinX > rect.MaxX || rect.MinZ > rect.MaxZ)
+                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+            if (!parcelEncoder.IsValidCoordinate(rect.MinX, rect.MinZ)
+                || !parcelEncoder.IsValidCoordinate(rect.MaxX, rect.MaxZ))
+                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+
+            nominalArea += (long)(rect.MaxX - rect.MinX + 1) * (rect.MaxZ - rect.MinZ + 1);
+
+            if (nominalArea > maxSceneListenerParcels)
+                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        }
 
         var deduped = new HashSet<int>();
 
-        foreach (int index in request.ParcelIndices)
+        foreach (ParcelRect rect in request.ParcelRects)
         {
-            if (!IsValidParcel(index))
-                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-
-            deduped.Add(index);
+            for (int z = rect.MinZ; z <= rect.MaxZ; z++)
+                for (int x = rect.MinX; x <= rect.MaxX; x++)
+                    deduped.Add(parcelEncoder.Encode(x, z));
         }
-
-        if (deduped.Count > maxSceneListenerParcels)
-            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
         parcels = deduped;
         return true;

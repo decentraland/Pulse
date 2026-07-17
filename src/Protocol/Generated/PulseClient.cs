@@ -47,21 +47,23 @@ namespace Decentraland.Pulse {
             "ZVN0b3AimQEKD1RlbGVwb3J0UmVxdWVzdBIUCgxwYXJjZWxfaW5kZXgYASAB",
             "KAUSHwoKcG9zaXRpb25feBgCIAEoDUILirUYBxUAAIBBGAgSHwoKcG9zaXRp",
             "b25feRgDIAEoDUILirUYBxUAAEhDGA0SHwoKcG9zaXRpb25fehgEIAEoDUIL",
-            "irUYBxUAAIBBGAgSDQoFcmVhbG0YBSABKAkiWgodU2NlbmVMaXN0ZW5lckhh",
-            "bmRzaGFrZVJlcXVlc3QSEgoKYXV0aF9jaGFpbhgBIAEoDBINCgVyZWFsbRgC",
-            "IAEoCRIWCg5wYXJjZWxfaW5kaWNlcxgDIAMoBSKNBAoNQ2xpZW50TWVzc2Fn",
-            "ZRI5CgloYW5kc2hha2UYASABKAsyJC5kZWNlbnRyYWxhbmQucHVsc2UuSGFu",
-            "ZHNoYWtlUmVxdWVzdEgAEjUKBWlucHV0GAIgASgLMiQuZGVjZW50cmFsYW5k",
-            "LnB1bHNlLlBsYXllclN0YXRlSW5wdXRIABIzCgZyZXN5bmMYAyABKAsyIS5k",
-            "ZWNlbnRyYWxhbmQucHVsc2UuUmVzeW5jUmVxdWVzdEgAEk4KFHByb2ZpbGVf",
-            "YW5ub3VuY2VtZW50GAQgASgLMi4uZGVjZW50cmFsYW5kLnB1bHNlLlByb2Zp",
-            "bGVWZXJzaW9uQW5ub3VuY2VtZW50SAASNQoLZW1vdGVfc3RhcnQYBSABKAsy",
-            "Hi5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVTdGFydEgAEjMKCmVtb3RlX3N0",
-            "b3AYBiABKAsyHS5kZWNlbnRyYWxhbmQucHVsc2UuRW1vdGVTdG9wSAASNwoI",
-            "dGVsZXBvcnQYByABKAsyIy5kZWNlbnRyYWxhbmQucHVsc2UuVGVsZXBvcnRS",
-            "ZXF1ZXN0SAASVQoYc2NlbmVfbGlzdGVuZXJfaGFuZHNoYWtlGAggASgLMjEu",
-            "ZGVjZW50cmFsYW5kLnB1bHNlLlNjZW5lTGlzdGVuZXJIYW5kc2hha2VSZXF1",
-            "ZXN0SABCCQoHbWVzc2FnZWIGcHJvdG8z"));
+            "irUYBxUAAIBBGAgSDQoFcmVhbG0YBSABKAkiSAoKUGFyY2VsUmVjdBINCgVt",
+            "aW5feBgBIAEoERINCgVtaW5fehgCIAEoERINCgVtYXhfeBgDIAEoERINCgVt",
+            "YXhfehgEIAEoESJ4Ch1TY2VuZUxpc3RlbmVySGFuZHNoYWtlUmVxdWVzdBIS",
+            "CgphdXRoX2NoYWluGAEgASgMEg0KBXJlYWxtGAIgASgJEjQKDHBhcmNlbF9y",
+            "ZWN0cxgDIAMoCzIeLmRlY2VudHJhbGFuZC5wdWxzZS5QYXJjZWxSZWN0Io0E",
+            "Cg1DbGllbnRNZXNzYWdlEjkKCWhhbmRzaGFrZRgBIAEoCzIkLmRlY2VudHJh",
+            "bGFuZC5wdWxzZS5IYW5kc2hha2VSZXF1ZXN0SAASNQoFaW5wdXQYAiABKAsy",
+            "JC5kZWNlbnRyYWxhbmQucHVsc2UuUGxheWVyU3RhdGVJbnB1dEgAEjMKBnJl",
+            "c3luYxgDIAEoCzIhLmRlY2VudHJhbGFuZC5wdWxzZS5SZXN5bmNSZXF1ZXN0",
+            "SAASTgoUcHJvZmlsZV9hbm5vdW5jZW1lbnQYBCABKAsyLi5kZWNlbnRyYWxh",
+            "bmQucHVsc2UuUHJvZmlsZVZlcnNpb25Bbm5vdW5jZW1lbnRIABI1CgtlbW90",
+            "ZV9zdGFydBgFIAEoCzIeLmRlY2VudHJhbGFuZC5wdWxzZS5FbW90ZVN0YXJ0",
+            "SAASMwoKZW1vdGVfc3RvcBgGIAEoCzIdLmRlY2VudHJhbGFuZC5wdWxzZS5F",
+            "bW90ZVN0b3BIABI3Cgh0ZWxlcG9ydBgHIAEoCzIjLmRlY2VudHJhbGFuZC5w",
+            "dWxzZS5UZWxlcG9ydFJlcXVlc3RIABJVChhzY2VuZV9saXN0ZW5lcl9oYW5k",
+            "c2hha2UYCCABKAsyMS5kZWNlbnRyYWxhbmQucHVsc2UuU2NlbmVMaXN0ZW5l",
+            "ckhhbmRzaGFrZVJlcXVlc3RIAEIJCgdtZXNzYWdlYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Pulse.PulseSharedReflection.Descriptor, global::Decentraland.Common.OptionsReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -73,7 +75,8 @@ namespace Decentraland.Pulse {
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStart), global::Decentraland.Pulse.EmoteStart.Parser, new[]{ "EmoteId", "DurationMs", "PlayerState", "Mask" }, new[]{ "DurationMs", "Mask" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.EmoteStop), global::Decentraland.Pulse.EmoteStop.Parser, null, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.TeleportRequest), global::Decentraland.Pulse.TeleportRequest.Parser, new[]{ "ParcelIndex", "PositionX", "PositionY", "PositionZ", "Realm" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.SceneListenerHandshakeRequest), global::Decentraland.Pulse.SceneListenerHandshakeRequest.Parser, new[]{ "AuthChain", "Realm", "ParcelIndices" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ParcelRect), global::Decentraland.Pulse.ParcelRect.Parser, new[]{ "MinX", "MinZ", "MaxX", "MaxZ" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.SceneListenerHandshakeRequest), global::Decentraland.Pulse.SceneListenerHandshakeRequest.Parser, new[]{ "AuthChain", "Realm", "ParcelRects" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.ClientMessage), global::Decentraland.Pulse.ClientMessage.Parser, new[]{ "Handshake", "Input", "Resync", "ProfileAnnouncement", "EmoteStart", "EmoteStop", "Teleport", "SceneListenerHandshake" }, new[]{ "Message" }, null, null, null)
           }));
     }
@@ -2350,6 +2353,318 @@ namespace Decentraland.Pulse {
   }
 
   /// <summary>
+  /// Inclusive rectangle in parcel coordinates. A single parcel is min == max.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class ParcelRect : pb::IMessage<ParcelRect>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<ParcelRect> _parser = new pb::MessageParser<ParcelRect>(() => new ParcelRect());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<ParcelRect> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Decentraland.Pulse.PulseClientReflection.Descriptor.MessageTypes[8]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ParcelRect() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ParcelRect(ParcelRect other) : this() {
+      minX_ = other.minX_;
+      minZ_ = other.minZ_;
+      maxX_ = other.maxX_;
+      maxZ_ = other.maxZ_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ParcelRect Clone() {
+      return new ParcelRect(this);
+    }
+
+    /// <summary>Field number for the "min_x" field.</summary>
+    public const int MinXFieldNumber = 1;
+    private int minX_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int MinX {
+      get { return minX_; }
+      set {
+        minX_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "min_z" field.</summary>
+    public const int MinZFieldNumber = 2;
+    private int minZ_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int MinZ {
+      get { return minZ_; }
+      set {
+        minZ_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "max_x" field.</summary>
+    public const int MaxXFieldNumber = 3;
+    private int maxX_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int MaxX {
+      get { return maxX_; }
+      set {
+        maxX_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "max_z" field.</summary>
+    public const int MaxZFieldNumber = 4;
+    private int maxZ_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int MaxZ {
+      get { return maxZ_; }
+      set {
+        maxZ_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as ParcelRect);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(ParcelRect other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (MinX != other.MinX) return false;
+      if (MinZ != other.MinZ) return false;
+      if (MaxX != other.MaxX) return false;
+      if (MaxZ != other.MaxZ) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (MinX != 0) hash ^= MinX.GetHashCode();
+      if (MinZ != 0) hash ^= MinZ.GetHashCode();
+      if (MaxX != 0) hash ^= MaxX.GetHashCode();
+      if (MaxZ != 0) hash ^= MaxZ.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (MinX != 0) {
+        output.WriteRawTag(8);
+        output.WriteSInt32(MinX);
+      }
+      if (MinZ != 0) {
+        output.WriteRawTag(16);
+        output.WriteSInt32(MinZ);
+      }
+      if (MaxX != 0) {
+        output.WriteRawTag(24);
+        output.WriteSInt32(MaxX);
+      }
+      if (MaxZ != 0) {
+        output.WriteRawTag(32);
+        output.WriteSInt32(MaxZ);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (MinX != 0) {
+        output.WriteRawTag(8);
+        output.WriteSInt32(MinX);
+      }
+      if (MinZ != 0) {
+        output.WriteRawTag(16);
+        output.WriteSInt32(MinZ);
+      }
+      if (MaxX != 0) {
+        output.WriteRawTag(24);
+        output.WriteSInt32(MaxX);
+      }
+      if (MaxZ != 0) {
+        output.WriteRawTag(32);
+        output.WriteSInt32(MaxZ);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (MinX != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(MinX);
+      }
+      if (MinZ != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(MinZ);
+      }
+      if (MaxX != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(MaxX);
+      }
+      if (MaxZ != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(MaxZ);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(ParcelRect other) {
+      if (other == null) {
+        return;
+      }
+      if (other.MinX != 0) {
+        MinX = other.MinX;
+      }
+      if (other.MinZ != 0) {
+        MinZ = other.MinZ;
+      }
+      if (other.MaxX != 0) {
+        MaxX = other.MaxX;
+      }
+      if (other.MaxZ != 0) {
+        MaxZ = other.MaxZ;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            MinX = input.ReadSInt32();
+            break;
+          }
+          case 16: {
+            MinZ = input.ReadSInt32();
+            break;
+          }
+          case 24: {
+            MaxX = input.ReadSInt32();
+            break;
+          }
+          case 32: {
+            MaxZ = input.ReadSInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            MinX = input.ReadSInt32();
+            break;
+          }
+          case 16: {
+            MinZ = input.ReadSInt32();
+            break;
+          }
+          case 24: {
+            MaxX = input.ReadSInt32();
+            break;
+          }
+          case 32: {
+            MaxZ = input.ReadSInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   /// Scene-listener connect: same signed-fetch auth chain as HandshakeRequest, plus an
   /// immutable parcel-set area of interest. No initial state — a listener is never a subject.
   /// </summary>
@@ -2368,7 +2683,7 @@ namespace Decentraland.Pulse {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::Decentraland.Pulse.PulseClientReflection.Descriptor.MessageTypes[8]; }
+      get { return global::Decentraland.Pulse.PulseClientReflection.Descriptor.MessageTypes[9]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2390,7 +2705,7 @@ namespace Decentraland.Pulse {
     public SceneListenerHandshakeRequest(SceneListenerHandshakeRequest other) : this() {
       authChain_ = other.authChain_;
       realm_ = other.realm_;
-      parcelIndices_ = other.parcelIndices_.Clone();
+      parcelRects_ = other.parcelRects_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2430,18 +2745,20 @@ namespace Decentraland.Pulse {
       }
     }
 
-    /// <summary>Field number for the "parcel_indices" field.</summary>
-    public const int ParcelIndicesFieldNumber = 3;
-    private static readonly pb::FieldCodec<int> _repeated_parcelIndices_codec
-        = pb::FieldCodec.ForInt32(26);
-    private readonly pbc::RepeatedField<int> parcelIndices_ = new pbc::RepeatedField<int>();
+    /// <summary>Field number for the "parcel_rects" field.</summary>
+    public const int ParcelRectsFieldNumber = 3;
+    private static readonly pb::FieldCodec<global::Decentraland.Pulse.ParcelRect> _repeated_parcelRects_codec
+        = pb::FieldCodec.ForMessage(26, global::Decentraland.Pulse.ParcelRect.Parser);
+    private readonly pbc::RepeatedField<global::Decentraland.Pulse.ParcelRect> parcelRects_ = new pbc::RepeatedField<global::Decentraland.Pulse.ParcelRect>();
     /// <summary>
-    /// ParcelEncoder-packed parcel indices; fixed for the connection lifetime.
+    /// Announced AoI as inclusive parcel-coordinate rects; fixed for the connection
+    /// lifetime. The sum of rect areas is capped server-side (SceneListener:MaxParcels) —
+    /// overlaps count per rect, so announce disjoint rects.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public pbc::RepeatedField<int> ParcelIndices {
-      get { return parcelIndices_; }
+    public pbc::RepeatedField<global::Decentraland.Pulse.ParcelRect> ParcelRects {
+      get { return parcelRects_; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2461,7 +2778,7 @@ namespace Decentraland.Pulse {
       }
       if (AuthChain != other.AuthChain) return false;
       if (Realm != other.Realm) return false;
-      if(!parcelIndices_.Equals(other.parcelIndices_)) return false;
+      if(!parcelRects_.Equals(other.parcelRects_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2471,7 +2788,7 @@ namespace Decentraland.Pulse {
       int hash = 1;
       if (AuthChain.Length != 0) hash ^= AuthChain.GetHashCode();
       if (Realm.Length != 0) hash ^= Realm.GetHashCode();
-      hash ^= parcelIndices_.GetHashCode();
+      hash ^= parcelRects_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -2498,7 +2815,7 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(18);
         output.WriteString(Realm);
       }
-      parcelIndices_.WriteTo(output, _repeated_parcelIndices_codec);
+      parcelRects_.WriteTo(output, _repeated_parcelRects_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -2517,7 +2834,7 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(18);
         output.WriteString(Realm);
       }
-      parcelIndices_.WriteTo(ref output, _repeated_parcelIndices_codec);
+      parcelRects_.WriteTo(ref output, _repeated_parcelRects_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -2534,7 +2851,7 @@ namespace Decentraland.Pulse {
       if (Realm.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Realm);
       }
-      size += parcelIndices_.CalculateSize(_repeated_parcelIndices_codec);
+      size += parcelRects_.CalculateSize(_repeated_parcelRects_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -2553,7 +2870,7 @@ namespace Decentraland.Pulse {
       if (other.Realm.Length != 0) {
         Realm = other.Realm;
       }
-      parcelIndices_.Add(other.parcelIndices_);
+      parcelRects_.Add(other.parcelRects_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -2581,9 +2898,8 @@ namespace Decentraland.Pulse {
             Realm = input.ReadString();
             break;
           }
-          case 26:
-          case 24: {
-            parcelIndices_.AddEntriesFrom(input, _repeated_parcelIndices_codec);
+          case 26: {
+            parcelRects_.AddEntriesFrom(input, _repeated_parcelRects_codec);
             break;
           }
         }
@@ -2613,9 +2929,8 @@ namespace Decentraland.Pulse {
             Realm = input.ReadString();
             break;
           }
-          case 26:
-          case 24: {
-            parcelIndices_.AddEntriesFrom(ref input, _repeated_parcelIndices_codec);
+          case 26: {
+            parcelRects_.AddEntriesFrom(ref input, _repeated_parcelRects_codec);
             break;
           }
         }
@@ -2640,7 +2955,7 @@ namespace Decentraland.Pulse {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::Decentraland.Pulse.PulseClientReflection.Descriptor.MessageTypes[9]; }
+      get { return global::Decentraland.Pulse.PulseClientReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

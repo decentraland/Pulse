@@ -177,14 +177,16 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
 
 async Task<int> RunSceneListenerAsync()
 {
-    List<int> parcelIndices = ParseListenerParcels(options.SceneListenerParcels);
+    List<ParcelRect> parcelRects = ParseListenerRects(options.SceneListenerParcels);
 
-    if (parcelIndices.Count == 0)
+    if (parcelRects.Count == 0)
     {
         Console.Error.WriteLine(
-            "No valid parcels in --scene-listener-parcels; expected comma-separated x:z coordinates (e.g. -7:0,-6:0).");
+            "No valid parcels in --scene-listener-parcels; expected comma-separated x:z or x1:z1..x2:z2 specs (e.g. -7:0,-6:0..-5:1).");
         return 1;
     }
+
+    string announcedRects = string.Join(", ", parcelRects.Select(FormatRect));
 
     string listenerAccount = options.AccountPrefix;
 
@@ -199,12 +201,12 @@ async Task<int> RunSceneListenerAsync()
     var service = new PulseMultiplayerService(listenerTransport, pipe);
 
     Console.WriteLine($"[{listenerAccount}] Connecting as scene listener to {options.ServerIp}:{options.ServerPort} " +
-                      $"for parcels [{options.SceneListenerParcels}] in realm '{options.Realm}'..");
+                      $"for rects {announcedRects} in realm '{options.Realm}'..");
 
     await service.ConnectAsSceneListenerAsync(options.ServerIp, options.ServerPort, login.AuthChainJson,
-        options.Realm, parcelIndices, lifeCycleCts.Token);
+        options.Realm, parcelRects, lifeCycleCts.Token);
 
-    Console.WriteLine($"[{listenerAccount}] Scene listener ready. Observing {parcelIndices.Count} parcel(s). Press Ctrl+C to quit.");
+    Console.WriteLine($"[{listenerAccount}] Scene listener ready. Observing {parcelRects.Count} rect(s): {announcedRects}. Press Ctrl+C to quit.");
 
     await ProcessListenerEventsAsync(listenerAccount, service);
 
@@ -215,30 +217,56 @@ async Task<int> RunSceneListenerAsync()
     return 0;
 }
 
-List<int> ParseListenerParcels(string spec)
+/// <summary>
+///     Parses "x:z" (single parcel) and "x1:z1..x2:z2" (inclusive rect) specs, comma-separated.
+///     Malformed entries are skipped with a warning; an empty result aborts.
+/// </summary>
+static List<ParcelRect> ParseListenerRects(string spec)
 {
-    var indices = new List<int>();
+    var rects = new List<ParcelRect>();
 
-    foreach (string token in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    foreach (string entry in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
-        string[] parts = token.Split(':');
+        string[] corners = entry.Split("..", StringSplitOptions.TrimEntries);
 
-        if (parts.Length != 2
-            || !int.TryParse(parts[0], out int parcelX)
-            || !int.TryParse(parts[1], out int parcelZ))
+        if (corners.Length is not (1 or 2) || !TryParseParcel(corners[0], out int minX, out int minZ))
         {
-            Console.Error.WriteLine($"Ignoring malformed parcel token '{token}'; expected 'x:z'.");
+            Console.WriteLine($"Skipping malformed parcel spec '{entry}' (expected x:z or x1:z1..x2:z2)");
             continue;
         }
 
-        int index = parcelEncoder.Encode(parcelX, parcelZ);
+        int maxX = minX, maxZ = minZ;
 
-        if (!indices.Contains(index))
-            indices.Add(index);
+        if (corners.Length == 2 && !TryParseParcel(corners[1], out maxX, out maxZ))
+        {
+            Console.WriteLine($"Skipping malformed parcel spec '{entry}' (expected x:z or x1:z1..x2:z2)");
+            continue;
+        }
+
+        rects.Add(new ParcelRect
+        {
+            MinX = Math.Min(minX, maxX),
+            MinZ = Math.Min(minZ, maxZ),
+            MaxX = Math.Max(minX, maxX),
+            MaxZ = Math.Max(minZ, maxZ),
+        });
     }
 
-    return indices;
+    return rects;
 }
+
+static bool TryParseParcel(string s, out int x, out int z)
+{
+    x = 0;
+    z = 0;
+    string[] parts = s.Split(':', StringSplitOptions.TrimEntries);
+    return parts.Length == 2 && int.TryParse(parts[0], out x) && int.TryParse(parts[1], out z);
+}
+
+static string FormatRect(ParcelRect r) =>
+    r.MinX == r.MaxX && r.MinZ == r.MaxZ
+        ? $"[{r.MinX}:{r.MinZ}]"
+        : $"[{r.MinX}:{r.MinZ}..{r.MaxX}:{r.MaxZ}]";
 
 // Receive-only: subscribe to the positional stream and log each message with subject id + parcel.
 // Never sends anything back to the server after the handshake.

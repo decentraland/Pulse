@@ -56,7 +56,7 @@ public partial class PulseMultiplayerService(
     }
 
     public async Task ConnectAsSceneListenerAsync(string address, int port, string authChain,
-        string realm, IReadOnlyList<int> parcelIndices, CancellationToken ct)
+        string realm, IReadOnlyList<ParcelRect> parcelRects, CancellationToken ct)
     {
         connectionLifeCycleCts.SafeCancelAndDispose();
         connectionLifeCycleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -71,7 +71,7 @@ public partial class PulseMultiplayerService(
             Realm = realm,
         };
 
-        request.ParcelIndices.AddRange(parcelIndices);
+        request.ParcelRects.AddRange(parcelRects);
 
         pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
         {

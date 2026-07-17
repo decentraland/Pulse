@@ -24,7 +24,7 @@ public class FieldValidatorTests
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
     }
 
-    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 4) =>
+    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 8) =>
         new (Options.Create(new FieldValidatorOptions
         {
             MaxRealmLength = maxRealmLength,
@@ -252,21 +252,99 @@ public class FieldValidatorTests
 
     // ── SceneListener handshake ──────────────────────────────────────
 
-    private static SceneListenerHandshakeRequest ListenerRequest(string realm, params int[] parcels)
+    private static SceneListenerHandshakeRequest ListenerRequest(string realm, params (int MinX, int MinZ, int MaxX, int MaxZ)[] rects)
     {
         var request = new SceneListenerHandshakeRequest { Realm = realm };
-        request.ParcelIndices.AddRange(parcels);
+
+        foreach ((int minX, int minZ, int maxX, int maxZ) in rects)
+            request.ParcelRects.Add(new ParcelRect { MinX = minX, MinZ = minZ, MaxX = maxX, MaxZ = maxZ });
+
         return request;
     }
 
     [Test]
-    public void SceneListener_ValidRequest_ReturnsDedupedParcels()
+    public void SceneListener_ValidSingleCellRect_ExpandsToOneParcel()
     {
         FieldValidator v = Create();
-        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", 10, 11, 10), out HashSet<int>? parcels);
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 10, 10)), out HashSet<int>? parcels);
 
         Assert.That(ok, Is.True);
-        Assert.That(parcels, Is.EquivalentTo(new[] { 10, 11 }));
+        Assert.That(parcels, Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10) }));
+    }
+
+    [Test]
+    public void SceneListener_ValidRects_ExpandToUnionOfParcels()
+    {
+        FieldValidator v = Create();
+        // A 2×2 rect (4 parcels) plus a disjoint 1×1 rect (1 parcel); Σ area = 5 ≤ fixture cap 8.
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (10, 10, 11, 11), (20, 20, 20, 20)), out HashSet<int>? parcels);
+
+        Assert.That(ok, Is.True);
+        Assert.That(parcels, Is.EquivalentTo(new[]
+        {
+            parcelEncoder.Encode(10, 10), parcelEncoder.Encode(11, 10),
+            parcelEncoder.Encode(10, 11), parcelEncoder.Encode(11, 11),
+            parcelEncoder.Encode(20, 20),
+        }));
+    }
+
+    [Test]
+    public void SceneListener_OriginCrossingRect_ExpandsSignAgnostically()
+    {
+        FieldValidator v = Create();
+        // A rect spanning the parcel-coordinate origin: (-1,-1)..(0,0) → area 4 ≤ fixture cap 8.
+        // Pins that expansion is sign-agnostic against future encoder refactors.
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (-1, -1, 0, 0)), out HashSet<int>? parcels);
+
+        Assert.That(ok, Is.True);
+        Assert.That(parcels, Is.EquivalentTo(new[]
+        {
+            parcelEncoder.Encode(-1, -1), parcelEncoder.Encode(0, -1),
+            parcelEncoder.Encode(-1, 0), parcelEncoder.Encode(0, 0),
+        }));
+    }
+
+    [Test]
+    public void SceneListener_InvertedRect_Rejects()
+    {
+        FieldValidator v = Create();
+        // MinX > MaxX — a degenerate rect the loop-based expansion would silently skip.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (11, 10, 10, 10)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_OutOfBoundsCorner_Rejects()
+    {
+        FieldValidator v = Create();
+        // Aliasing guard: a 1×1 rect (nominal area 1 ≤ cap) whose coordinate is far out of bounds.
+        // Encode alone would map it to a valid-looking index in another row instead of failing;
+        // IsValidCoordinate is what rejects it here, not the area budget.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (9999, 10, 9999, 10)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_NominalAreaOverCap_Rejects()
+    {
+        FieldValidator v = Create();
+        // Single 3×3 rect = 9 nominal parcels > fixture cap 8. Budget is enforced before expansion.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 12, 12)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_OverlappingRectsWithinCap_DedupUnion()
+    {
+        FieldValidator v = Create();
+        // Two identical 2×2 rects: Σ nominal area = 8 ≤ cap 8, so accepted; the union dedups to 4 parcels.
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (10, 10, 11, 11), (10, 10, 11, 11)), out HashSet<int>? parcels);
+
+        Assert.That(ok, Is.True);
+        Assert.That(parcels!.Count, Is.EqualTo(4));
     }
 
     [Test]
@@ -275,13 +353,13 @@ public class FieldValidatorTests
         FieldValidator v = Create();
         PeerState state = NewState();
 
-        Assert.That(v.ValidateSceneListenerHandshake(PEER, state, ListenerRequest("", 10), out _), Is.False);
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, state, ListenerRequest("", (10, 10, 10, 10)), out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
         Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
     }
 
     [Test]
-    public void SceneListener_EmptyParcelList_Rejects()
+    public void SceneListener_EmptyRectList_Rejects()
     {
         FieldValidator v = Create();
 
@@ -290,38 +368,11 @@ public class FieldValidatorTests
     }
 
     [Test]
-    public void SceneListener_InvalidParcelIndex_Rejects()
-    {
-        FieldValidator v = Create();
-
-        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", -1), out _), Is.False);
-        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-    }
-
-    [Test]
-    public void SceneListener_OverCapAfterDedup_Rejects()
-    {
-        FieldValidator v = Create();
-        // Fixture MaxParcels = 4; five distinct parcels must reject, duplicates must not count.
-        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", 1, 2, 3, 4, 5), out _), Is.False);
-        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-    }
-
-    [Test]
-    public void SceneListener_DuplicatesWithinCap_Accepted()
-    {
-        FieldValidator v = Create();
-
-        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", 1, 1, 2, 2, 3, 3), out HashSet<int>? parcels), Is.True);
-        Assert.That(parcels!.Count, Is.EqualTo(3));
-    }
-
-    [Test]
     public void SceneListener_RealmTooLong_Rejects()
     {
         FieldValidator v = Create();
         // Default fixture MaxRealmLength = 128; a 300-char realm exceeds it.
-        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest(new string('a', 300), 1), out _), Is.False);
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest(new string('a', 300), (10, 10, 10, 10)), out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 }

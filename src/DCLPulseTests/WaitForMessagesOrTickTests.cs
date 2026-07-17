@@ -35,7 +35,7 @@ public class WorkerSignalTests
         var snapshotBoard = new SnapshotBoard(100, 10);
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
@@ -48,7 +48,7 @@ public class WorkerSignalTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(9),
+            new ClientMessageCounters(),
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
@@ -187,7 +187,7 @@ public class WorkerSignalTests
         var localSnapshotBoard = new SnapshotBoard(100, 10);
 
         var managerWithHandler = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             localSnapshotBoard,
@@ -200,7 +200,7 @@ public class WorkerSignalTests
             handlers,
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(9),
+            new ClientMessageCounters(),
             new EmoteCompleter(localSnapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions

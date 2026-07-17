@@ -97,8 +97,8 @@ if (webTransportEnabled)
 
 builder.Services.AddHostedService<PeersManager>();
 builder.Services.AddSingleton<MessagePipe>();
-builder.Services.AddSingleton(new ClientMessageCounters(9));
-builder.Services.AddSingleton(new ServerMessageCounters(10));
+builder.Services.AddSingleton(new ClientMessageCounters());
+builder.Services.AddSingleton(new ServerMessageCounters());
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();
 builder.Services.AddSingleton<ResyncRequestHandler>();

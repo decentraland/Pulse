@@ -64,7 +64,7 @@ public class HandshakeHandlerTests
             transport);
 
         handler = new HandshakeHandler(
-            messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             authChainValidator: new AuthChainValidator(verifier),
             peerStateFactory: new PeerStateFactory(),
             snapshotBoard: snapshotBoard,

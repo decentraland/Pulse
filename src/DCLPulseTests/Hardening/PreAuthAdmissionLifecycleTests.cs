@@ -42,7 +42,7 @@ public class PreAuthAdmissionLifecycleTests
         }));
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
@@ -55,7 +55,7 @@ public class PreAuthAdmissionLifecycleTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(9),
+            new ClientMessageCounters(),
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             admission);

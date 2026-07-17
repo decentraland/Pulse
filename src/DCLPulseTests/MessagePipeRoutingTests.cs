@@ -25,7 +25,7 @@ public class MessagePipeRoutingTests
     {
         pipe = new MessagePipe(
             Substitute.For<ILogger<MessagePipe>>(),
-            new ServerMessageCounters(10));
+            new ServerMessageCounters());
     }
 
     [Test]

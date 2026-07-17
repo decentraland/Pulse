@@ -55,7 +55,7 @@ public class SceneListenerHandshakeHandlerTests
             transport);
 
         handler = new SceneListenerHandshakeHandler(
-            messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             authChainValidator: new AuthChainValidator(verifier),
             peerStateFactory: new PeerStateFactory(),
             identityBoard: identityBoard,

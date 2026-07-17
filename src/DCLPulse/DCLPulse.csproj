@@ -27,6 +27,7 @@
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
         <PackageReference Include="XenoAtom.Terminal.UI" Version="2.0.2" />
         <PackageReference Include="ZLogger" Version="2.5.10" />
+        <PackageReference Include="Decentraland.RustWebTransport" Version="$(RustWebTransportVersion)" />
     </ItemGroup>
 
     <ItemGroup>

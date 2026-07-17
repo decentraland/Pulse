@@ -17,6 +17,9 @@ public class ClientOptions
     public int TotalBotCount { get; init; }
     public string SceneListenerParcels { get; init; } = "";
 
+    /// <summary>Transport to use: <c>enet</c> (default) or <c>webtransport</c>.</summary>
+    public string Transport { get; init; } = "enet";
+
     public static ClientOptions FromArgs(string[] args)
     {
         string Arg(string name, string fallback) =>
@@ -38,6 +41,7 @@ public class ClientOptions
             BotOffset = int.Parse(Arg("bot-offset", "0")),
             TotalBotCount = int.Parse(Arg("total-bot-count", "0")),
             SceneListenerParcels = Arg("scene-listener-parcels", ""),
+            Transport = Arg("transport", "enet"),
         };
     }
 }

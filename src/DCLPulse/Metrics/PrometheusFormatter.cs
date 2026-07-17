@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
+using Pulse.Transport;
 
 namespace Pulse.Metrics;
 
@@ -9,6 +10,8 @@ namespace Pulse.Metrics;
 /// </summary>
 internal static class PrometheusFormatter
 {
+    private static readonly TransportId[] TRANSPORTS = Enum.GetValues<TransportId>();
+
     private static readonly ClientMessage.MessageOneofCase[] INCOMING_MESSAGE_TYPES =
     [
         ClientMessage.MessageOneofCase.Handshake,
@@ -36,17 +39,21 @@ internal static class PrometheusFormatter
 
     public static void Write(StreamWriter writer, MetricsSnapshot snap)
     {
-        WriteCounter(writer, "dcl_pulse_peers_connected_total", "Total peer connections since startup", snap.Transport.TotalPeersConnected);
-        WriteCounter(writer, "dcl_pulse_peers_disconnected_total", "Total peer disconnections since startup", snap.Transport.TotalPeersDisconnected);
-        WriteGauge(writer, "dcl_pulse_active_peers", "Currently connected peers", snap.Transport.ActivePeers);
-        WriteCounter(writer, "dcl_pulse_bytes_received_total", "Total bytes received", snap.Transport.TotalBytesReceived);
-        WriteCounter(writer, "dcl_pulse_bytes_sent_total", "Total bytes sent", snap.Transport.TotalBytesSent);
-        WriteCounter(writer, "dcl_pulse_packets_received_total", "Total packets received", snap.Transport.TotalPacketsReceived);
-        WriteCounter(writer, "dcl_pulse_packets_sent_total", "Total packets sent", snap.Transport.TotalPacketsSent);
-        WriteCounter(writer, "dcl_pulse_unauth_messages_skipped_total", "Messages skipped from unauthenticated peers", snap.Transport.TotalUnauthMessagesSkipped);
-        WriteCounter(writer, "dcl_pulse_send_failures_total", "Packets rejected by ENet send", snap.Transport.TotalSendFailures);
+        MetricsSnapshot.PerTransportCounters[] byTransport = snap.Transport.ByTransport;
+        WriteTransportCounter(writer, "dcl_pulse_peers_connected_total", "Total peer connections since startup", byTransport, static c => c.TotalPeersConnected);
+        WriteTransportCounter(writer, "dcl_pulse_peers_disconnected_total", "Total peer disconnections since startup", byTransport, static c => c.TotalPeersDisconnected);
+        WriteTransportGauge(writer, "dcl_pulse_active_peers", "Currently connected peers", byTransport, static c => c.ActivePeers);
+        WriteTransportCounter(writer, "dcl_pulse_bytes_received_total", "Total bytes received", byTransport, static c => c.TotalBytesReceived);
+        WriteTransportCounter(writer, "dcl_pulse_bytes_sent_total", "Total bytes sent", byTransport, static c => c.TotalBytesSent);
+        WriteTransportCounter(writer, "dcl_pulse_packets_received_total", "Total packets received", byTransport, static c => c.TotalPacketsReceived);
+        WriteTransportCounter(writer, "dcl_pulse_packets_sent_total", "Total packets sent", byTransport, static c => c.TotalPacketsSent);
+        WriteTransportCounter(writer, "dcl_pulse_unauth_messages_skipped_total", "Messages skipped from unauthenticated peers", byTransport, static c => c.TotalUnauthMessagesSkipped);
+        WriteTransportCounter(writer, "dcl_pulse_send_failures_total", "Packets rejected by the transport send", byTransport, static c => c.TotalSendFailures);
         WriteGauge(writer, "dcl_pulse_incoming_queue_depth", "Pending messages in incoming channel", snap.Transport.IncomingQueueDepth);
-        WriteGauge(writer, "dcl_pulse_outgoing_queue_depth", "Pending messages in outgoing channel", snap.Transport.OutgoingQueueDepth);
+        WriteGauge(writer, "dcl_pulse_outgoing_queue_depth", "Pending messages across the outgoing channels", snap.Transport.OutgoingQueueDepth);
+
+        WriteCounter(writer, "dcl_pulse_wt_datagrams_dropped_stale_total", "WebTransport datagrams dropped as stale/duplicate on the sequenced channel", snap.WebTransport.TotalDatagramsDroppedStale);
+        WriteCounter(writer, "dcl_pulse_wt_datagrams_dropped_oversize_total", "WebTransport unreliable messages dropped for exceeding the datagram size cap", snap.WebTransport.TotalDatagramsDroppedOversize);
 
         WriteCounter(writer, "dcl_pulse_pre_auth_ip_limit_refused_total", "Connections refused by the per-IP pre-auth cap", snap.Hardening.TotalPreAuthIpLimitRefused);
         WriteCounter(writer, "dcl_pulse_pre_auth_refused_total", "Connections refused by the global pre-auth budget", snap.Hardening.TotalPreAuthRefused);
@@ -145,6 +152,42 @@ internal static class PrometheusFormatter
         writer.Write(name);
         writer.Write(' ');
         writer.WriteLine(value);
+    }
+
+    private static void WriteTransportCounter(
+        StreamWriter writer, string name, string help,
+        MetricsSnapshot.PerTransportCounters[] byTransport,
+        Func<MetricsSnapshot.PerTransportCounters, long> selector) =>
+        WriteTransportSeries(writer, name, help, "counter", byTransport, selector);
+
+    private static void WriteTransportGauge(
+        StreamWriter writer, string name, string help,
+        MetricsSnapshot.PerTransportCounters[] byTransport,
+        Func<MetricsSnapshot.PerTransportCounters, long> selector) =>
+        WriteTransportSeries(writer, name, help, "gauge", byTransport, selector);
+
+    private static void WriteTransportSeries(
+        StreamWriter writer, string name, string help, string type,
+        MetricsSnapshot.PerTransportCounters[] byTransport,
+        Func<MetricsSnapshot.PerTransportCounters, long> selector)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(type);
+
+        foreach (TransportId transport in TRANSPORTS)
+        {
+            writer.Write(name);
+            writer.Write("{transport=\"");
+            writer.Write(transport.ToString().ToLowerInvariant());
+            writer.Write("\"} ");
+            writer.WriteLine(selector(byTransport[(int)transport]));
+        }
     }
 
     private static void WriteEnumCounters<TEnum>(

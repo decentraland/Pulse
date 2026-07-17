@@ -1,0 +1,68 @@
+namespace Pulse.Transport;
+
+/// <summary>
+///     Configuration for the WebTransport transport. Bound from the <c>WebTransport</c> config
+///     section. The peer pool is <b>not</b> sized here — WebTransport draws from the shared
+///     <see cref="Peers.PeerIndexAllocator" /> pool (sized by <see cref="ENetTransportOptions.MaxPeers" />)
+///     so both transports share one capacity budget.
+/// </summary>
+public sealed class WebTransportOptions
+{
+    public const string SECTION_NAME = "WebTransport";
+
+    /// <summary>Whether to start the WebTransport transport. Disabled by default; ENet is unaffected.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    ///     Host to bind the QUIC/UDP socket to. Defaults to the IPv4 wildcard <c>0.0.0.0</c> so it
+    ///     behaves the same on Windows and Linux, matching <see cref="ENetTransportOptions.BindHost" />.
+    ///     Set to <c>::</c> for the IPv6 wildcard (dual-stack on Linux, IPv6-only on Windows).
+    /// </summary>
+    public string BindHost { get; set; } = "0.0.0.0";
+
+    /// <summary>QUIC/UDP port.</summary>
+    public ushort Port { get; set; } = 7743;
+
+    /// <summary>
+    ///     Bind address handed to the native host, composed from <see cref="BindHost" /> and
+    ///     <see cref="Port" /> — an IPv6 host is bracketed (e.g. <c>[::]:7743</c>). Brackets already on
+    ///     <see cref="BindHost" /> are normalized first, so both <c>::</c> and <c>[::]</c> resolve correctly.
+    /// </summary>
+    public string BindAddr
+    {
+        get
+        {
+            string host = BindHost.Trim('[', ']');
+            return host.Contains(':') ? $"[{host}]:{Port}" : $"{host}:{Port}";
+        }
+    }
+
+    /// <summary>PEM-encoded server certificate chain. Takes precedence over <see cref="CertPath" />.</summary>
+    public string? CertPem { get; set; }
+
+    /// <summary>PEM-encoded private key. Takes precedence over <see cref="KeyPath" />.</summary>
+    public string? KeyPem { get; set; }
+
+    /// <summary>Path to a PEM certificate file, read at startup when <see cref="CertPem" /> is unset.</summary>
+    public string? CertPath { get; set; }
+
+    /// <summary>Path to a PEM private-key file, read at startup when <see cref="KeyPem" /> is unset.</summary>
+    public string? KeyPath { get; set; }
+
+    /// <summary>Poll timeout handed to the native host per service call, in milliseconds.</summary>
+    public uint ServiceTimeoutMs { get; set; } = 1;
+
+    /// <summary>
+    ///     Largest framed datagram sent on an unreliable channel. A message that would exceed this is
+    ///     deliberately dropped and counted — never rerouted to the reliable stream, which would change
+    ///     the channel's semantics (unreliable → head-of-line-blocking reliable) and hide a server-side
+    ///     regression. Sized under the QUIC path MTU browsers enforce (~1200 B).
+    /// </summary>
+    public int MaxDatagramBytes { get; set; } = 1200;
+
+    /// <summary>
+    ///     Largest inbound message payload accepted from a stream frame, and the outbound serialization
+    ///     buffer size. Frames declaring more are treated as corruption.
+    /// </summary>
+    public int MaxMessageBytes { get; set; } = 4096;
+}

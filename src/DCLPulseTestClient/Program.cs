@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Pulse.Transport;
+using Pulse.Transport.WebTransport;
 using PulseTestClient;
 using PulseTestClient.Auth;
 using PulseTestClient.Inputs;
@@ -48,8 +49,20 @@ Console.CancelKeyPress += (_, e) =>
 
 WatchForStopFile(lifeCycleCts);
 
-var sharedTransport = new ENetTransport(new ENetTransportOptions { PeerLimit = options.BotCount });
-sharedTransport.Initialize();
+bool useWebTransport = options.Transport.Equals("webtransport", StringComparison.OrdinalIgnoreCase);
+byte[]? webTransportCertHash = useWebTransport ? ReadDevCertHash() : null;
+
+// ENet uses one shared host for all bots; WebTransport is one QUIC session per bot, so there is no
+// shared host in that mode.
+ENetTransport? sharedTransport = null;
+
+if (!useWebTransport)
+{
+    sharedTransport = new ENetTransport(new ENetTransportOptions { PeerLimit = options.BotCount });
+    sharedTransport.Initialize();
+}
+
+Console.WriteLine($"Transport: {(useWebTransport ? "WebTransport" : "ENet")}");
 
 // Scene-listener mode: connect receive-only for a fixed parcel set, never simulate or send.
 if (!string.IsNullOrWhiteSpace(options.SceneListenerParcels))
@@ -98,7 +111,7 @@ foreach (BotSession s in sessions)
 }
 
 await Task.Delay(200);
-sharedTransport.Dispose();
+sharedTransport?.Dispose();
 return 0;
 
 // --- Bot session factory ---
@@ -112,7 +125,9 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     Profile profile = await profileGateway.GetAsync(login.WalletAddress, lifeCycleCts.Token);
 
     var pipe = new MessagePipe();
-    var botTransport = new BotTransport(sharedTransport, pipe);
+    ITransport botTransport = useWebTransport
+        ? new WebTransportBotTransport(pipe, webTransportCertHash)
+        : new BotTransport(sharedTransport ?? throw new InvalidOperationException("ENet transport was not initialized."), pipe);
     var service = new PulseMultiplayerService(botTransport, pipe);
 
     float angle = total > 1 ? 2f * MathF.PI * globalIndex / total : 0f;
@@ -358,6 +373,23 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
 
     Console.WriteLine($"[{accountName}] Listener summary: positional messages={positionalCount}, " +
                       $"suppressed-message LEAKS={leakCount}");
+}
+
+// --- WebTransport helpers ---
+
+byte[]? ReadDevCertHash()
+{
+    string path = WebTransportDevCert.HashFilePath;
+
+    if (!File.Exists(path))
+    {
+        Console.WriteLine($"WebTransport: dev cert hash file not found at {path}. " +
+                          "Start the server with WebTransport enabled first (it writes the hash on self-sign), " +
+                          "or connection will fail certificate validation.");
+        return null;
+    }
+
+    return Convert.FromBase64String(File.ReadAllText(path).Trim());
 }
 
 // --- Shutdown helpers ---

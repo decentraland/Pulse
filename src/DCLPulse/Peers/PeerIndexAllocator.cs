@@ -1,3 +1,5 @@
+using Pulse.Transport;
+
 namespace Pulse.Peers;
 
 /// <summary>
@@ -31,7 +33,13 @@ namespace Pulse.Peers;
 /// </summary>
 public interface IPeerIndexAllocator
 {
-    public bool TryAllocate(out PeerIndex peerIndex);
+    /// <summary>
+    ///     Pop a free slot, stamped with <paramref name="transport" /> as its owner. Stamping here —
+    ///     the single point at which a slot acquires its transport — makes the owner derivable from the
+    ///     index and misroute structurally impossible: no caller can forget to stamp. A recycled slot is
+    ///     re-stamped with the new owner and never carries the previous owner's transport.
+    /// </summary>
+    public bool TryAllocate(TransportId transport, out PeerIndex peerIndex);
 
     /// <summary>
     ///     Park the slot — it will not be handed out by <see cref="TryAllocate" /> until
@@ -80,7 +88,7 @@ public sealed class PeerIndexAllocator : IPeerIndexAllocator
             freeList.Enqueue(new PeerIndex((uint)i));
     }
 
-    public bool TryAllocate(out PeerIndex peerIndex)
+    public bool TryAllocate(TransportId transport, out PeerIndex peerIndex)
     {
         lock (syncRoot)
         {
@@ -90,7 +98,10 @@ public sealed class PeerIndexAllocator : IPeerIndexAllocator
                 return false;
             }
 
-            peerIndex = freeList.Dequeue();
+            // Stamp the owning transport as the slot is handed out. The free-list stores canonical
+            // (value-only) indices; this is the sole point a slot acquires its transport, so a
+            // reissued slot is always re-stamped with the new owner.
+            peerIndex = new PeerIndex(freeList.Dequeue().Value, transport);
             return true;
         }
     }

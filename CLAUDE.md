@@ -250,6 +250,58 @@ When in doubt, check 1–2 nearby files in the same directory.
 
 - Use NSubstitute instead of Fake/Null implementations
 - Don't mention line numbers in comments as they can change any time
+- Name fixtures `{Feature}Tests`; name methods for the behavior under test (`Method_Condition_Expectation`, or a `Should…`/`When…` phrase) with a clear arrange/act/assert structure. High coverage for new code.
+
+## Code Design Rules
+
+Inherited from `decentraland/unity-explorer`'s code standards and adapted for this server. The Unity/ECS-specific rules there (`BaseUnityLoopSystem`, `World.Query`, `AssetPromise`, MVC/presenters, `ObjectProxy`, `#if UNITY_EDITOR`, `ReportHub`) **do not apply** here — this is a .NET Generic Host, not Unity. Naming lives in **Code Convention** above; the rules below cover design discipline, memory, async, nullability, comments, and member ordering.
+
+**Hot path** here means the per-tick simulation fan-out (`PeerSimulation`) and per-packet parse/serialize (`MessagePipe`, the generated bit-packed serializers, `BitWriter`/`BitReader`). "Cold path" = startup, DI composition, config, metrics console.
+
+### Design discipline — don't add structure until it pays for itself
+
+Splits, interfaces, and indirections must buy polymorphism, reuse, or a test seam — not exist "for SRP" alone. These are the smells reviewers most often flag in AI-authored code:
+
+- **No bridge/wrapper on the same abstraction layer.** If class `B` exists only to forward to `A` — one caller, no polymorphism, no test seam — inline it. A one-use helper is not a helper.
+- **Pass the object, not per-field delegates.** Don't pass `Func<Config>` or wrap each property in its own `Func<T>`; pass the object. To capture one changing value, store it as a field on the consumer, not a closure threaded through constructors.
+- **Merge over extract.** If `X` does nothing useful without `Y` and has no second consumer, merge them.
+- **One-implementation interfaces only when justified.** Keep an interface only if it buys polymorphism *or* a mock/test seam. NSubstitute mocking counts: `ITransport`, `IPeerIndexAllocator`, `IAreaOfInterest`, `IPeerSimulation` earn their interfaces as DI + test seams. An interface with a single impl that is never mocked and will never have a second impl is dead weight — delete it; the concrete class is the contract.
+- **Trust non-null annotations.** If a declared type is `T` (not `T?`), don't null-check it — a redundant guard lies to the reader about what can happen. If a value can be null, type it `T?`; if it can't, delete the guard.
+- **No debug/mock branches on the hot path.** A runtime `bool` like `DebugRandomize…` still executes every call in Release. Guard debug-only logic behind `#if DEBUG` or a config-gated cold path, never a bare runtime flag on the per-tick/per-packet path.
+- **Retry / resync / sweep loops need a termination predicate.** A loop that re-queues unresolved work spins forever when the source stays empty. Always have a give-up condition (max attempts, a sentinel, a timeout, or a single bounded pass).
+- **Reuse existing primitives.** Before hand-rolling, reach for the existing mechanism: snapshot/state bookkeeping → `SnapshotBoard` + `PeerSnapshotPublisher`; bit packing/quantization → `BitWriter`/`BitReader`; new per-peer shared state → a nullable `PeerSnapshot` ledger column with carry-forward, **not** a new parallel board (see the SnapshotBoard-ledger rule above).
+- **Don't invert the dependency graph.** The Generic Host composition root (`Program.cs`) constructs services top-down; a component reads its injected dependencies and never reaches back to mutate the container or another worker's state. This is the same principle as **Worker-shard isolation** below — cross-worker coordination goes only through the incoming-event pipeline.
+
+### Memory & GC (hot path)
+
+- The per-tick / per-packet path must be **allocation-free**. Backlog is an observable signal, not licence to allocate.
+- **No LINQ on the hot path** (`.Select`/`.Where`/`.Any`/`ToList`/`ToArray` allocate iterators and closures) — write loops. LINQ is tolerated only in cold paths.
+- Prefer `IReadOnlyList<T>` / `IReadOnlyCollection<T>` in signatures over `List<T>`/arrays; avoid `ToList()`/`ToArray()`.
+- Use `Span<T>` / `ReadOnlySpan<T>` / `stackalloc` for slices; avoid intermediate copies.
+- Avoid boxing — don't pass a `struct` as `object` or box it into an interface on the hot path. `PeerIndex`, `PeerSnapshot`, `EmoteState`, framing structs stay value types passed by value or `in`/`ref`.
+- `StringBuilder` (or interpolation, off the hot path) for concatenation; no per-tick string building.
+- Mark hot lambdas / local functions `static` to prevent accidental captures.
+- Pooling: every rent has a matching release in the same lifecycle scope (`using`/`finally`/`Dispose`). Dropping a rented buffer is a silent leak. Honor `IDisposable` (`using` or explicit `Dispose()`).
+
+### Async & cancellation
+
+- Detached / background loops (`BackgroundService.ExecuteAsync`, channel drains, `Task.Run`) must not let exceptions escape silently: catch, treat `OperationCanceledException` as normal shutdown, and log the rest via the injected `ILogger`.
+- In hot loops prefer the cheap `ct.IsCancellationRequested` check over `ThrowIfCancellationRequested()`; reserve throwing for awaited flows that already handle exceptions.
+- Suffix awaitable methods `…Async`. Dispose every `CancellationTokenSource` you own.
+
+### Nullable reference types
+
+NRT is `enable`d in every project. Type nullable params/returns/fields as `T?`. Never use the null-forgiving `!` to silence a warning — fix the root cause; the only acceptable `!` is on an NSubstitute proxy in tests. Never add `#nullable disable`.
+
+### Comments
+
+- XML `/// <summary>` on public types and non-obvious public members.
+- A comment states only what the annotated code itself does or guarantees — **never what a caller or another layer will do with the result.** External behavior can change without this code changing, silently turning the comment into a lie.
+- Sentence case, end with a period. No commented-out code. No `/* */` block comments.
+
+### Member ordering
+
+Within a type: enums/delegates → fields → properties → events → methods → nested types. Within each group, order by visibility public → internal → protected → private. Fields: `const`/`static readonly` → `static` → `readonly` → public → private. Methods: constructor → `Dispose` → public API → private helpers, each private helper placed **after** the method that calls it.
 
 ## Worker-shard isolation rule
 

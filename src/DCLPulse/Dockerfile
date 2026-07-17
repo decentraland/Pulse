@@ -6,12 +6,13 @@ COPY ["src/DCLPulse/global.json", "src/DCLPulse/"]
 COPY ["src/DCLAuth/DCLAuth.csproj", "src/DCLAuth/"]
 COPY ["src/Protocol/Protocol.csproj", "src/Protocol/"]
 COPY ["src/Protocol/Directory.Build.props", "src/Protocol/"]
-# RustEthereum auto-fetch needs the version, the MSBuild target, the local
-# feed config, and the fetch script — all referenced during `dotnet restore`.
+# Rust-native auto-fetch (RustEthereum + RustWebTransport) needs the versions, the MSBuild
+# targets, the local feed config, and the fetch scripts — all run during `dotnet restore`.
 COPY ["src/Directory.Build.props", "src/"]
 COPY ["src/Directory.Build.targets", "src/"]
 COPY ["src/NuGet.config", "src/"]
 COPY ["tools/fetch-rust-eth.sh", "tools/"]
+COPY ["tools/fetch-rust-webtransport.sh", "tools/"]
 RUN dotnet restore "src/DCLPulse/DCLPulse.csproj"
 COPY src/ src/
 WORKDIR "/build/src/DCLPulse"
@@ -27,4 +28,5 @@ ENV COMMIT_HASH=$COMMIT_HASH
 WORKDIR /app
 COPY --from=publish /app/publish .
 EXPOSE 7777/udp
+EXPOSE 7743/udp
 ENTRYPOINT ["dotnet", "DCLPulse.dll"]

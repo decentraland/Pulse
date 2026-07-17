@@ -27,3 +27,4 @@ README.md
 CLAUDE.md
 tools/
 !tools/fetch-rust-eth.sh
+!tools/fetch-rust-webtransport.sh

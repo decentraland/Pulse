@@ -1,0 +1,55 @@
+name: Slack canvas deploy status
+description: Upserts per-environment deployment status lines on the Pulse Slack channel canvas.
+
+inputs:
+  environment:
+    description: Deployment environment (dev or prd).
+    required: true
+  state:
+    description: Deployment state (in_progress, success, failure or error).
+    required: true
+  ref:
+    description: Deployed git ref (branch or tag; long refs/... form is shortened).
+    required: true
+  sha:
+    description: Deployed commit SHA.
+    required: true
+  docker-image:
+    description: Deployed docker image.
+    required: false
+    default: ""
+  timestamp:
+    description: ISO8601 time of the status change; defaults to now when empty.
+    required: false
+    default: ""
+  url:
+    description: Link to the deployment pipeline.
+    required: false
+    default: ""
+  repo-url:
+    description: Repository web URL used for commit links.
+    required: true
+  slack-token:
+    description: Slack bot token (canvases:read, canvases:write, channels:read scopes).
+    required: true
+  channel-id:
+    description: Slack channel whose canvas is updated.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Update canvas
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        STATE: ${{ inputs.state }}
+        REF: ${{ inputs.ref }}
+        SHA: ${{ inputs.sha }}
+        DOCKER_IMAGE: ${{ inputs.docker-image }}
+        TIMESTAMP: ${{ inputs.timestamp }}
+        TARGET_URL: ${{ inputs.url }}
+        REPO_URL: ${{ inputs.repo-url }}
+        SLACK_BOT_TOKEN: ${{ inputs.slack-token }}
+        SLACK_CHANNEL_ID: ${{ inputs.channel-id }}
+      run: bash "${GITHUB_ACTION_PATH}/update-canvas.sh"

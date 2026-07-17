@@ -63,6 +63,27 @@ Throughput in bytes per second, with human-readable formatting (B/s, KB/s, MB/s)
 
 **Expected ratio**: Bytes Out is roughly `N * (N-1) * delta_size * tick_rate` for N peers in mutual visibility. With 100 peers at 20 ticks/sec and ~50-byte deltas, expect ~10 MB/s outbound.
 
+Bytes In/s and Bytes Out/s count **payload only** — the serialized protobuf message, excluding all transport framing. Prometheus: `dcl_pulse_bytes_received_total` / `dcl_pulse_bytes_sent_total`.
+
+### Wire bytes (derived in Grafana, not exported)
+
+Estimated **total** throughput on the wire — payload **plus** the transport's protocol overhead **plus** the IPv4 + UDP headers — is the number that matches a NIC or cloud egress bill. It is deliberately **not** a server metric: since the overhead is a per-packet constant, Grafana derives it from the two counters the server already exports, which also makes it work retroactively on historical data:
+
+```
+wire_bytes/s = rate(dcl_pulse_bytes_*_total) + K * rate(dcl_pulse_packets_*_total)
+```
+
+`K` is the modeled per-packet overhead from the ENet and QUIC/WebTransport specifications (IP+UDP 28 B included). The "Pulse Server" Grafana dashboard carries these constants in its Wire In/s / Wire Out/s panels:
+
+| Direction | ENet K | WebTransport K |
+|---|---|---|
+| Egress (server→client) | 38 | 57 |
+| Ingress (client→server) | 38 | 62 |
+
+Derivation — ENet: IP+UDP (28) + datagram header (2) + command header (4) + unreliable extra (4) = 38; a reliable command is 36, so the flat 38 overstates reliable packets by 2 B. WebTransport: IP+UDP (28) + QUIC 1-RTT packet (~27: flags 1 + conn-id 8 + pkt-num 2 + AEAD tag 16) + DATAGRAM frame + H3 quarter-stream-id (2) = 57 egress; ingress adds the Pulse 5-byte `{channelId, seq}` datagram header (`DatagramFraming.HEADER_SIZE`) = 62. A reliable stream message is 65 (stream frame 6 + 4-byte length prefix instead of datagram framing), so the flat constants understate WT reliable packets by 8 B (egress) / 3 B (ingress).
+
+**Accuracy**: the constants assume the unreliable mode because traffic is dominated by movement deltas/input; the reliable share (handshakes, emotes, teleports, joins) makes the error well under 1% of the wire total. IPv4 is assumed (IPv6 adds 20 B/packet); QUIC conn-id/packet-number lengths are representative; ENet coalescing makes its figure a slight upper bound; retransmits, ACKs, and QUIC keepalives are not modeled. **If any framing constant changes** (e.g. `DatagramFraming.HEADER_SIZE`), the dashboard constants must be updated by hand — they are baked into the panel queries.
+
 ### Packets In/s, Packets Out/s
 
 Packet count per second (each packet = one protobuf message). Complements bytes metrics — a high packet rate with low byte rate means many small messages (typical for position updates). A low packet rate with high byte rate means large messages (full snapshots, profiles).

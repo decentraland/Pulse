@@ -1,5 +1,11 @@
 # Slack Canvas Deployment Status Implementation Plan
 
+> **SUPERSEDED (2026-07-20):** this plan describes the v1 Slack-app design (bot token,
+> marker upsert via `canvases.*` / `conversations.*`). It was executed and then replaced
+> by the v2 webhook/Workflow Builder design — see the spec's v2 banner
+> (`docs/superpowers/specs/2026-07-17-slack-canvas-deploy-status-design.md`). Do not
+> implement from this document.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** The Pulse Slack channel canvas always shows, per environment (dev/prd), what is currently deployed and the outcome of the latest deploy attempt, updated automatically from GitHub Deployment status changes.

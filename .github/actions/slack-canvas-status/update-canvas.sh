@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
-# Upserts per-environment deployment status lines on a Slack channel canvas.
+# Renders the current deployment status of every environment from the GitHub
+# Deployments API and POSTs it to a Slack Workflow Builder webhook, whose
+# "Update a canvas" step replaces the Pulse channel canvas content.
 #
-# Required env: ENVIRONMENT, STATE, REF, SHA, REPO_URL, SLACK_BOT_TOKEN, SLACK_CHANNEL_ID.
-# Optional env: DOCKER_IMAGE, TIMESTAMP (defaults to now), TARGET_URL,
-#               SLACK_API_BASE (defaults to https://slack.com/api; tests point it at a mock).
+# Stateless: each run reconstructs both environments from the API, so any
+# qualifying deployment event (or a manual dispatch) produces a full,
+# self-consistent canvas.
+#
+# Required env: REPO (owner/name), REPO_URL, GITHUB_TOKEN, SLACK_WEBHOOK_URL.
+# Optional env: GITHUB_API_BASE (defaults to https://api.github.com; tests
+#               point it at a mock).
 set -euo pipefail
 
-SLACK_API_BASE="${SLACK_API_BASE:-https://slack.com/api}"
-
-env_label() {
-  echo "${ENVIRONMENT^^}"
-}
+GITHUB_API_BASE="${GITHUB_API_BASE:-https://api.github.com}"
+DEPLOY_TASK="dcl/container-deployment"
+# One page of deployments per environment. Sized so a realistic streak of
+# consecutive failures still keeps the actually-running deployment on the page.
+MAX_DEPLOYMENTS=30
+EMPTY_LINE="—"
 
 short_ref() {
-  local ref="$REF"
+  local ref="$1"
   ref="${ref#refs/heads/}"
   ref="${ref#refs/tags/}"
   echo "$ref"
 }
 
-commit_link() {
-  echo "[${SHA:0:8}](${REPO_URL}/commit/${SHA})"
+short_sha() {
+  echo "${1:0:8}"
 }
 
 short_image() {
-  local image="${DOCKER_IMAGE#quay.io/decentraland/}"
+  local image="${1#quay.io/decentraland/}"
   local name="${image%%:*}"
   local tag="${image#*:}"
   if [[ "$tag" == "$image" ]]; then
@@ -38,128 +45,146 @@ short_image() {
 }
 
 fmt_time() {
-  date -u -d "$TIMESTAMP" +"%Y-%m-%d %H:%M UTC"
+  date -u -d "$1" +"%Y-%m-%d %H:%M UTC"
 }
 
 state_emoji() {
-  case "$STATE" in
-    in_progress) echo "🔄" ;;
-    success)     echo "✅" ;;
-    *)           echo "❌" ;;
+  case "$1" in
+    in_progress|queued|pending) echo "🔄" ;;
+    success)                    echo "✅" ;;
+    failure|error)              echo "❌" ;;
+    *)                          echo "❔" ;;
   esac
 }
 
-running_marker() {
-  echo "$(env_label) running:"
-}
-
-last_deploy_marker() {
-  echo "$(env_label) last deploy:"
-}
-
+# Webhook variables are interpolated into the Slack canvas as plain text, so
+# the lines carry no markdown — labels and formatting live in the Workflow
+# Builder step's rich-text editor.
 render_running_line() {
-  local line="**$(running_marker)** \`$(short_ref)\` @ $(commit_link)"
-  if [[ -n "${DOCKER_IMAGE:-}" ]]; then
-    line+=" · \`$(short_image)\`"
+  local ref="$1" sha="$2" image="$3" time="$4" line
+  line="$(short_ref "$ref") @ $(short_sha "$sha")"
+  if [[ -n "$image" ]]; then
+    line+=" · $(short_image "$image")"
   fi
-  line+=" · since $(fmt_time)"
+  line+=" · since $(fmt_time "$time")"
   echo "$line"
 }
 
 render_last_deploy_line() {
-  local line="**$(last_deploy_marker)** $(state_emoji) ${STATE} · \`$(short_ref)\` @ $(commit_link) · $(fmt_time)"
-  if [[ -n "${TARGET_URL:-}" ]]; then
-    line+=" · [pipeline](${TARGET_URL})"
-  fi
-  echo "$line"
+  local state="$1" ref="$2" sha="$3" time="$4"
+  echo "$(state_emoji "$state") ${state} · $(short_ref "$ref") @ $(short_sha "$sha") · $(fmt_time "$time")"
 }
 
-slack_get() {
-  local method="$1" query="$2"
-  curl -sS --fail-with-body -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-    "${SLACK_API_BASE}/${method}?${query}"
+gh_get() {
+  curl -sS --fail-with-body \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    "${GITHUB_API_BASE}$1"
 }
 
-slack_post() {
-  local method="$1" body="$2"
-  printf '%s' "$body" | curl -sS --fail-with-body -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-    -H "Content-Type: application/json; charset=utf-8" \
-    --data-binary @- "${SLACK_API_BASE}/${method}"
-}
-
-require_ok() {
-  local response="$1" context="$2"
-  if [[ "$(jq -r '.ok' <<<"$response")" != "true" ]]; then
-    echo "::error::Slack ${context} failed: $(jq -r '.error // "unknown"' <<<"$response")" >&2
-    exit 1
-  fi
-}
-
-get_canvas_id() {
+# Prints "state<TAB>created_at" of a deployment's newest status; empty if none.
+# The statuses endpoint returns newest-first, so per_page=1 yields the latest.
+latest_status() {
   local response
-  response="$(slack_get conversations.info "channel=${SLACK_CHANNEL_ID}")"
-  require_ok "$response" "conversations.info"
-  jq -r '.channel.properties.canvas.file_id // empty' <<<"$response"
+  response="$(gh_get "/repos/${REPO}/deployments/$1/statuses?per_page=1")" || {
+    echo "::error::GitHub API status query failed: ${response}" >&2
+    exit 1
+  }
+  jq -r '.[0] | select(. != null) | "\(.state)\t\(.created_at)"' <<<"$response"
 }
 
-create_canvas() {
-  local markdown="$1" body
-  body="$(jq -n --arg channel "$SLACK_CHANNEL_ID" --arg md "$markdown" \
-    '{channel_id: $channel, document_content: {type: "markdown", markdown: $md}}')"
-  require_ok "$(slack_post conversations.canvases.create "$body")" "conversations.canvases.create"
-}
+# Fills RUNNING_LINE / LAST_LINE / RUNNING_COMMIT_URL / LAST_COMMIT_URL for one
+# environment. "Running" is the newest deployment whose latest status is
+# success (superseded deployments are marked inactive by the deploy infra);
+# "last deploy" is the newest deployment regardless of outcome.
+collect_env() {
+  local environment="$1"
+  RUNNING_LINE="$EMPTY_LINE"
+  LAST_LINE="$EMPTY_LINE"
+  RUNNING_COMMIT_URL=""
+  LAST_COMMIT_URL=""
 
-lookup_section() {
-  local canvas_id="$1" marker="$2" response
-  response="$(slack_post canvases.sections.lookup \
-    "$(jq -n --arg id "$canvas_id" --arg text "$marker" '{canvas_id: $id, criteria: {contains_text: $text}}')")"
-  require_ok "$response" "canvases.sections.lookup"
-  jq -r '.sections[0].id // empty' <<<"$response"
-}
-
-upsert_line() {
-  local canvas_id="$1" marker="$2" content="$3" section_id change body
-  section_id="$(lookup_section "$canvas_id" "$marker")"
-  if [[ -n "$section_id" ]]; then
-    change="$(jq -n --arg sid "$section_id" --arg md "$content" \
-      '{operation: "replace", section_id: $sid, document_content: {type: "markdown", markdown: $md}}')"
-  else
-    change="$(jq -n --arg md "$content" \
-      '{operation: "insert_at_end", document_content: {type: "markdown", markdown: $md}}')"
-  fi
-  body="$(jq -n --arg id "$canvas_id" --argjson change "$change" '{canvas_id: $id, changes: [$change]}')"
-  require_ok "$(slack_post canvases.edit "$body")" "canvases.edit"
-}
-
-main() {
-  : "${ENVIRONMENT:?}" "${STATE:?}" "${REF:?}" "${SHA:?}" "${REPO_URL:?}"
-  : "${SLACK_BOT_TOKEN:?}" "${SLACK_CHANNEL_ID:?}"
-  TIMESTAMP="${TIMESTAMP:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-
-  local lines=()
-  if [[ "$STATE" == "success" ]]; then
-    lines+=("$(running_marker)|$(render_running_line)")
-  fi
-  lines+=("$(last_deploy_marker)|$(render_last_deploy_line)")
-
-  local canvas_id
-  canvas_id="$(get_canvas_id)"
-
-  local entry
-  if [[ -z "$canvas_id" ]]; then
-    local markdown="# 🚀 Deployments"$'\n\n'
-    for entry in "${lines[@]}"; do
-      markdown+="${entry#*|}"$'\n\n'
-    done
-    create_canvas "$markdown"
-    echo "Created channel canvas with initial deployment status."
+  local deployments count
+  deployments="$(gh_get "/repos/${REPO}/deployments?environment=${environment}&task=${DEPLOY_TASK}&per_page=${MAX_DEPLOYMENTS}")" || {
+    echo "::error::GitHub API deployments query failed: ${deployments}" >&2
+    exit 1
+  }
+  count="$(jq 'length' <<<"$deployments")"
+  if (( count == 0 )); then
     return
   fi
 
-  for entry in "${lines[@]}"; do
-    upsert_line "$canvas_id" "${entry%%|*}" "${entry#*|}"
+  local i id ref sha image status state created
+  for (( i = 0; i < count; i++ )); do
+    id="$(jq -r ".[$i].id" <<<"$deployments")"
+    status="$(latest_status "$id")"
+    if [[ -z "$status" ]]; then
+      continue
+    fi
+    state="${status%%$'\t'*}"
+    created="${status#*$'\t'}"
+    ref="$(jq -r ".[$i].ref" <<<"$deployments")"
+    sha="$(jq -r ".[$i].sha" <<<"$deployments")"
+    image="$(jq -r ".[$i].payload.dockerImage // \"\"" <<<"$deployments")"
+
+    if [[ "$LAST_LINE" == "$EMPTY_LINE" ]]; then
+      LAST_LINE="$(render_last_deploy_line "$state" "$ref" "$sha" "$created")"
+      LAST_COMMIT_URL="${REPO_URL}/commit/${sha}"
+    fi
+    if [[ "$state" == "success" ]]; then
+      RUNNING_LINE="$(render_running_line "$ref" "$sha" "$image" "$created")"
+      RUNNING_COMMIT_URL="${REPO_URL}/commit/${sha}"
+      return
+    fi
   done
-  echo "Canvas updated: ${STATE} on ${ENVIRONMENT}."
+
+  # Deployments exist but none of the recent ones succeeded — say so instead of
+  # rendering the ambiguous "nothing deployed" placeholder.
+  RUNNING_LINE="⚠️ no recent success (last ${count} deploys)"
+}
+
+main() {
+  : "${REPO:?}" "${REPO_URL:?}" "${GITHUB_TOKEN:?}" "${SLACK_WEBHOOK_URL:?}"
+
+  collect_env dev
+  local dev_running="$RUNNING_LINE" dev_last="$LAST_LINE"
+  local dev_running_url="$RUNNING_COMMIT_URL" dev_last_url="$LAST_COMMIT_URL"
+
+  collect_env prd
+  local prd_running="$RUNNING_LINE" prd_last="$LAST_LINE"
+  local prd_running_url="$RUNNING_COMMIT_URL" prd_last_url="$LAST_COMMIT_URL"
+
+  local payload
+  payload="$(jq -n \
+    --arg dev_running "$dev_running" \
+    --arg dev_last "$dev_last" \
+    --arg dev_running_url "$dev_running_url" \
+    --arg dev_last_url "$dev_last_url" \
+    --arg prd_running "$prd_running" \
+    --arg prd_last "$prd_last" \
+    --arg prd_running_url "$prd_running_url" \
+    --arg prd_last_url "$prd_last_url" \
+    --arg updated_at "$(date -u +"%Y-%m-%d %H:%M UTC")" \
+    '{
+      dev_running: $dev_running,
+      dev_last_deploy: $dev_last,
+      dev_running_commit_url: $dev_running_url,
+      dev_last_deploy_commit_url: $dev_last_url,
+      prd_running: $prd_running,
+      prd_last_deploy: $prd_last,
+      prd_running_commit_url: $prd_running_url,
+      prd_last_deploy_commit_url: $prd_last_url,
+      updated_at: $updated_at
+    }')"
+
+  local response
+  response="$(printf '%s' "$payload" | curl -sS --fail-with-body \
+    -H "Content-Type: application/json; charset=utf-8" \
+    --data-binary @- "$SLACK_WEBHOOK_URL")" || {
+    echo "::error::Slack webhook rejected the payload: ${response}" >&2
+    exit 1
+  }
+  echo "Canvas content sent to the Slack workflow webhook (dev: ${dev_last}; prd: ${prd_last})."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

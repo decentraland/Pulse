@@ -62,3 +62,15 @@ jobs:
           name: test-results
           path: "**/results.trx"
           if-no-files-found: error
+
+  slack-canvas-tests:
+    name: Slack canvas action tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render tests
+        run: bash .github/actions/slack-canvas-status/test/test-render.sh
+
+      - name: Flow tests
+        run: bash .github/actions/slack-canvas-status/test/test-flow.sh

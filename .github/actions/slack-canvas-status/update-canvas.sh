@@ -11,6 +11,9 @@
 # Optional env: GITHUB_API_BASE (defaults to https://api.github.com; tests
 #               point it at a mock).
 set -euo pipefail
+# Command substitutions must inherit errexit, or a failure inside
+# $(render_*)/$(jq …) assignments would be silently swallowed.
+shopt -s inherit_errexit
 
 GITHUB_API_BASE="${GITHUB_API_BASE:-https://api.github.com}"
 DEPLOY_TASK="dcl/container-deployment"
@@ -71,12 +74,15 @@ render_running_line() {
 }
 
 render_last_deploy_line() {
-  local state="$1" ref="$2" sha="$3" time="$4"
-  echo "$(state_emoji "$state") ${state} · $(short_ref "$ref") @ $(short_sha "$sha") · $(fmt_time "$time")"
+  local state="$1" ref="$2" sha="$3" time="$4" ts
+  # Assigned separately so a fmt_time failure propagates (with inherit_errexit)
+  # instead of being swallowed inside echo's argument list.
+  ts="$(fmt_time "$time")"
+  echo "$(state_emoji "$state") ${state} · $(short_ref "$ref") @ $(short_sha "$sha") · ${ts}"
 }
 
 gh_get() {
-  curl -sS --fail-with-body \
+  curl -sS --fail-with-body --max-time 30 \
     -H "Authorization: Bearer ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     "${GITHUB_API_BASE}$1"
@@ -139,8 +145,12 @@ collect_env() {
   done
 
   # Deployments exist but none of the recent ones succeeded — say so instead of
-  # rendering the ambiguous "nothing deployed" placeholder.
-  RUNNING_LINE="⚠️ no recent success (last ${count} deploys)"
+  # rendering the ambiguous "nothing deployed" placeholder. Skipped when every
+  # deployment was statusless (no last-deploy line either): both placeholders
+  # stay "—" rather than contradicting each other.
+  if [[ "$LAST_LINE" != "$EMPTY_LINE" ]]; then
+    RUNNING_LINE="⚠️ no recent success (last ${count} deploys)"
+  fi
 }
 
 main() {
@@ -178,7 +188,7 @@ main() {
     }')"
 
   local response
-  response="$(printf '%s' "$payload" | curl -sS --fail-with-body \
+  response="$(printf '%s' "$payload" | curl -sS --fail-with-body --max-time 30 \
     -H "Content-Type: application/json; charset=utf-8" \
     --data-binary @- "$SLACK_WEBHOOK_URL")" || {
     echo "::error::Slack webhook rejected the payload: ${response}" >&2

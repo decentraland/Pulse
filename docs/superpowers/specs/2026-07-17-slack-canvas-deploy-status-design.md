@@ -128,10 +128,11 @@ click path, the variable list, and a suggested canvas layout.
 ## Testing
 
 - Local tests, no Slack account needed: `test-render.sh` (line rendering helpers) and
-  `test-flow.sh` (mock GitHub API + webhook covering five scenarios: normal render
+  `test-flow.sh` (mock GitHub API + webhook covering seven scenarios: normal render
   including a failed-newest/succeeded-older environment; degraded — a statusless newest
-  deployment plus an all-failures page; no deployments; GitHub API error; webhook
-  rejection). Both run in CI (`slack-canvas-tests` job in `test.yml`).
+  deployment plus an all-failures page; all deployments statusless; no deployments;
+  deployments-endpoint error; statuses-endpoint error; webhook rejection). Both run in
+  CI (`slack-canvas-tests` job in `test.yml`).
 - End-to-end: the `workflow_dispatch` trigger after merge + Slack-side setup.
 - No .NET code is touched.
 

@@ -98,7 +98,25 @@ grep -q '"/webhook"' "$MOCK_LOG" || fail "expected webhook request to be recorde
 grep -q '500' "$ERR_FILE" || fail "expected HTTP 500 in stderr, got: $(cat "$ERR_FILE")"
 grep -q 'trigger_failed' "$ERR_FILE" || fail "expected webhook body in stderr, got: $(cat "$ERR_FILE")"
 
-# Scenario 5: degraded — dev's newest deployment has no statuses yet (skipped for
+# Scenario 5: the statuses endpoint errors -> loud non-zero exit with the body,
+# webhook never called (pins latest_status's explicit error handler).
+start_server gh_status_error
+if bash ../update-canvas.sh 2>"$ERR_FILE"; then
+  fail "expected non-zero exit when the statuses endpoint fails"
+fi
+stop_server
+grep -q 'status boom' "$ERR_FILE" || fail "expected statuses error body in stderr, got: $(cat "$ERR_FILE")"
+! grep -q '"/webhook"' "$MOCK_LOG" || fail "webhook must not be called when the statuses endpoint fails"
+
+# Scenario 6: every deployment is statusless -> both placeholders stay "—"
+# (no contradictory "no recent success" next to a last-deploy of "—").
+start_server statusless
+bash ../update-canvas.sh
+stop_server
+[[ "$(payload_field dev_running)" == "—" ]] || fail "statusless dev_running mismatch: $(payload_field dev_running)"
+[[ "$(payload_field dev_last_deploy)" == "—" ]] || fail "statusless dev_last_deploy mismatch: $(payload_field dev_last_deploy)"
+
+# Scenario 7: degraded — dev's newest deployment has no statuses yet (skipped for
 # the last-deploy line), the next one failed, none succeeded; prd is empty.
 start_server degraded
 bash ../update-canvas.sh

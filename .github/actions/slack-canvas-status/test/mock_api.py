@@ -2,12 +2,14 @@
 """Mock GitHub API + Slack workflow webhook for update-canvas.sh flow tests.
 
 Scenario is selected with the MOCK_SCENARIO env var:
-  normal       - dev's newest deployment succeeded; prd's newest failed, an older one succeeded.
-  degraded     - dev's newest deployment has no statuses yet, the next one failed, none
-                 succeeded; prd has no deployments.
-  empty        - no deployments in either environment.
-  gh_error     - the deployments endpoint returns HTTP 500.
-  webhook_fail - deployment data as in normal, but the webhook responds HTTP 500.
+  normal          - dev's newest deployment succeeded; prd's newest failed, an older one succeeded.
+  degraded        - dev's newest deployment has no statuses yet, the next one failed, none
+                    succeeded; prd has no deployments.
+  statusless      - dev's only deployment has no statuses; prd has no deployments.
+  empty           - no deployments in either environment.
+  gh_error        - the deployments endpoint returns HTTP 500.
+  gh_status_error - deployment data as in normal, but the statuses endpoint returns HTTP 500.
+  webhook_fail    - deployment data as in normal, but the webhook responds HTTP 500.
 Every request is appended to MOCK_LOG as one JSON line: {"path": ..., "body": ...},
 except GET /ping (a readiness probe) which is answered 200 and not logged.
 """
@@ -64,6 +66,11 @@ DEPLOYMENTS_DEGRADED = {
     "prd": [],
 }
 
+DEPLOYMENTS_STATUSLESS = {
+    "dev": [DEPLOYMENTS_DEGRADED["dev"][0]],
+    "prd": [],
+}
+
 STATUSES = {
     2: {"state": "success", "created_at": "2026-07-18T10:00:00Z"},
     12: {"state": "failure", "created_at": "2026-07-19T08:30:00Z"},
@@ -100,11 +107,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._respond([])
             elif SCENARIO == "degraded":
                 self._respond(DEPLOYMENTS_DEGRADED.get(environment, []))
+            elif SCENARIO == "statusless":
+                self._respond(DEPLOYMENTS_STATUSLESS.get(environment, []))
             else:
                 self._respond(DEPLOYMENTS.get(environment, []))
             return
         match = re.fullmatch(r"/repos/[^/]+/[^/]+/deployments/(\d+)/statuses", parsed.path)
         if match:
+            if SCENARIO == "gh_status_error":
+                self._respond({"message": "status boom"}, status=500)
+                return
             status = STATUSES.get(int(match.group(1)))
             self._respond([status] if status else [])
             return

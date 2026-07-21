@@ -1,0 +1,40 @@
+name: Slack Canvas Deploy Status
+
+on:
+  deployment_status:
+  # Manual re-render — no inputs needed: the run reconstructs everything from
+  # the Deployments API. Also the post-setup validation path.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  update-canvas:
+    # Only real container deployments (skips the empty-payload records GitHub's
+    # environment: declaration creates) in states worth re-rendering for.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment.task == 'dcl/container-deployment' &&
+       contains(fromJSON('["in_progress", "success", "failure", "error"]'), github.event.deployment_status.state))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Every run replaces the whole canvas, so only the newest render matters:
+    # one global group, superseded runs are cancelled.
+    concurrency:
+      group: slack-canvas
+      cancel-in-progress: true
+    steps:
+      # The action version from main runs regardless of which ref was deployed.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update Slack canvas
+        uses: ./.github/actions/slack-canvas-status
+        with:
+          webhook-url: ${{ secrets.SLACK_CANVAS_WEBHOOK_URL }}
+          github-token: ${{ github.token }}
+          repo: ${{ github.repository }}
+          repo-url: ${{ github.server_url }}/${{ github.repository }}

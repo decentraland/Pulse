@@ -123,11 +123,11 @@ public abstract class HandshakeHandlerBase(
     protected abstract ByteString GetAuthChain(ClientMessage message);
 
     /// <summary>
-    ///     Whether a peer in the given state may begin this handshake. The base default admits
-    ///     any state; both concrete handlers override it to require PENDING_AUTH, so an
-    ///     already-authenticated peer can't re-key its session in place.
+    ///     Whether a peer in the given state may begin this handshake. Abstract so every handler
+    ///     makes the admission decision explicitly; both current handlers require PENDING_AUTH,
+    ///     which stops an already-authenticated peer re-keying its session in place.
     /// </summary>
-    protected virtual bool CanBeginHandshake(PeerState existingState) => true;
+    protected abstract bool CanBeginHandshake(PeerState existingState);
 
     /// <summary>
     ///     Validates handler-specific handshake fields against <paramref name="existingState" />

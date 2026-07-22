@@ -16,8 +16,8 @@ is standing where (e.g. scene runtimes reacting to player presence).
 
 ## Requirements
 
-1. On handshake the client announces an array of parcels which acts as its area
-   of interest and never changes without re-connection.
+1. On handshake the client announces a set of inclusive parcel-coordinate rects
+   which act as its area of interest and never change without re-connection.
 2. The client never sends state updates to the server.
 3. The client receives positional updates for players within its parcels only.
 
@@ -29,7 +29,7 @@ is standing where (e.g. scene runtimes reacting to player presence).
 | Protocol shape | Separate `SceneListenerHandshakeRequest` message (new `ClientMessage` variant), not new fields on `HandshakeRequest`. |
 | Message surface | Positional only: `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`. Emote and profile-version messages are suppressed for listener observers. |
 | Sessions | One session per wallet — the existing `DUPLICATE_SESSION` eviction applies unchanged, across listener and player sessions alike. |
-| Parcel cap | Config cap `SceneListener:MaxParcels` (default 256); handshake exceeding it is rejected, never clamped. |
+| Parcel cap | Config cap `SceneListener:MaxParcels` (default 4096) applied to the Σ of announced rect areas; handshake exceeding it is rejected, never clamped. |
 | Resync | `RESYNC_REQUEST` remains allowed — "never sends updates" means no state mutations. Listeners use the standard client-driven gap recovery. |
 | Tiering | Fixed `TIER_0` (full detail, base 50 ms cadence) for every subject in the parcel set. No distance tiers — a parcel set has no meaningful center. |
 
@@ -62,12 +62,24 @@ regenerated C# lands under `src/Protocol/Generated/`.
 New client→server message in `pulse_client.proto`:
 
 ```proto
+// Inclusive rectangle in parcel coordinates. A single parcel is min == max.
+message ParcelRect {
+  sint32 min_x = 1;
+  sint32 min_z = 2;
+  sint32 max_x = 3;
+  sint32 max_z = 4;
+}
+
 message SceneListenerHandshakeRequest {
-  bytes auth_chain = 1;            // same signed-fetch headers JSON as HandshakeRequest
-  string realm = 2;                // required; same rules as TeleportRequest.realm
-  repeated int32 parcel_indices = 3; // ParcelEncoder-packed indices; immutable for the connection
+  bytes auth_chain = 1;                 // same signed-fetch headers JSON as HandshakeRequest
+  string realm = 2;                     // required; same rules as TeleportRequest.realm
+  repeated ParcelRect parcel_rects = 3; // inclusive parcel-coord rects; immutable for the connection
 }
 ```
+
+`sint32` coordinates keep negative parcels to the same one-byte zig-zag varint as
+positive ones. The client sends plain rects and no longer computes packed indices;
+the server expands the rects to the internal parcel-index set on receipt (below).
 
 New `ClientMessage` envelope variant: `scene_listener_handshake = 8`.
 
@@ -93,8 +105,17 @@ Listener-specific validation (`FieldValidator.ValidateSceneListenerHandshake`):
 
 - `realm` non-empty and within `MaxRealmLength` (same rules as
   `TeleportRequest.realm`).
-- `parcel_indices` non-empty; every index passes `ParcelEncoder.IsValidIndex`.
-- After in-place dedup, count ≤ `SceneListener:MaxParcels`.
+- `parcel_rects` non-empty; each rect is well-formed (`min_x ≤ max_x`,
+  `min_z ≤ max_z`) and both corners pass `ParcelEncoder.IsValidCoordinate`
+  (a coordinate bounds check — `Encode` is pure arithmetic, so an out-of-range
+  corner would otherwise alias into another row's index).
+- The Σ of nominal rect areas (`Σ (max_x−min_x+1)·(max_z−min_z+1)`) ≤
+  `SceneListener:MaxParcels`, checked **before** expansion so a hostile payload
+  can't buy CPU/memory. Overlapping rects are budgeted by their area sum, not
+  their union — announce disjoint rects to spend the budget efficiently.
+- On success the rects are expanded into a deduped `HashSet<int>` of packed
+  parcel indices (`ParcelEncoder.Encode` per covered `(x, z)`); the deduped
+  union is necessarily ≤ the budgeted sum, so no post-expansion cap is needed.
 - Any failure → `INVALID_HANDSHAKE_FIELD` disconnect with **no**
   `HandshakeResponse`, before the peer ever reaches `AUTHENTICATED` — same
   convention as malformed `PlayerInitialState` seeds.
@@ -167,7 +188,7 @@ construction.
 
 - New options section `SceneListener` (`SceneListenerOptions`, bound like the
   other sections; env-overridable, e.g. `SceneListener__MaxParcels`):
-  - `MaxParcels` — default 256.
+  - `MaxParcels` — default 4096; the Σ-of-rect-areas budget.
 - Metrics (existing analytics layer, via the `add-metric` pattern):
   - connected scene-listener count,
   - subjects-in-view aggregate for listener observers,

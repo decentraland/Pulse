@@ -123,9 +123,9 @@ public abstract class HandshakeHandlerBase(
     protected abstract ByteString GetAuthChain(ClientMessage message);
 
     /// <summary>
-    ///     Whether a peer in the given state may begin this handshake. Default: any state
-    ///     (the player flow re-authenticates regardless). Scene listeners override to require
-    ///     PENDING_AUTH so an already-authenticated peer can't convert itself in place.
+    ///     Whether a peer in the given state may begin this handshake. The base default admits
+    ///     any state; both concrete handlers override it to require PENDING_AUTH, so an
+    ///     already-authenticated peer can't re-key its session in place.
     /// </summary>
     protected virtual bool CanBeginHandshake(PeerState existingState) => true;
 

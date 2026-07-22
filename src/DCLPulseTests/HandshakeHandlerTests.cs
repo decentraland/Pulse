@@ -28,6 +28,7 @@ public class HandshakeHandlerTests
 {
     private const uint NOW_MS = 10_000;
     private const string WALLET = "0xabc0000000000000000000000000000000000001";
+    private const string WALLET2 = "0xabc0000000000000000000000000000000000002";
     private const string EPHEMERAL = "0xdef0000000000000000000000000000000000002";
     private const string TIMESTAMP = "1700000000000";
 
@@ -271,7 +272,53 @@ public class HandshakeHandlerTests
         transport.Received(1).Disconnect(peerN, DisconnectReason.DUPLICATE_SESSION);
     }
 
-    private ClientMessage BuildHandshake(PlayerInitialState? initialState)
+    [Test]
+    public void Handle_SecondHandshakeOnAuthenticatedPeer_IsDroppedAndDoesNotRekey()
+    {
+        // First handshake promotes the peer to AUTHENTICATED under WALLET.
+        handler.Handle(peers, peer, BuildHandshake(initialState: null));
+        PeerState authenticated = peers[peer];
+        Assert.That(authenticated.ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+
+        // A second handshake on the same, already-AUTHENTICATED peer — carrying a different
+        // wallet — must be dropped by the PENDING_AUTH gate before any re-key. Otherwise the
+        // pipeline would replace the live state and set identityBoard[peer] = WALLET2, stranding
+        // a stale WALLET -> peer reverse mapping.
+        handler.Handle(peers, peer, BuildHandshake(initialState: null, wallet: WALLET2));
+
+        Assert.That(peers[peer], Is.SameAs(authenticated), "The live peer state must not be replaced.");
+        Assert.That(identityBoard.GetWalletIdByPeerIndex(peer), Is.EqualTo(WALLET).IgnoreCase,
+            "The peer must keep its original wallet — no re-key.");
+        Assert.That(identityBoard.TryGetPeerIndexByWallet(WALLET2, out _), Is.False,
+            "The second wallet must never be registered — no stale reverse mapping.");
+        transport.DidNotReceive().Disconnect(peer, Arg.Any<DisconnectReason>());
+    }
+
+    [Test]
+    public void Handle_EmoteInitialStateWithoutMask_LeavesMaskNull()
+    {
+        // emote_mask omitted must preserve absence (null), matching live EmoteStartHandler —
+        // not collapse to a present 0.
+        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, emoteId: "wave");
+
+        handler.Handle(peers, peer, BuildHandshake(initial));
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Emote!.Value.Mask, Is.Null);
+    }
+
+    [Test]
+    public void Handle_EmoteInitialStateWithMask_PreservesMask()
+    {
+        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, emoteId: "wave", emoteMask: 5);
+
+        handler.Handle(peers, peer, BuildHandshake(initial));
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Emote!.Value.Mask, Is.EqualTo(5));
+    }
+
+    private ClientMessage BuildHandshake(PlayerInitialState? initialState, string wallet = WALLET)
     {
         // The handshake handler reads x-identity-* headers from the JSON payload, parses the
         // ECDSA chain, then asks AuthChainValidator to recover signers. The substituted verifier
@@ -284,7 +331,7 @@ public class HandshakeHandlerTests
         var headers = new Dictionary<string, string>
         {
             ["x-identity-auth-chain-0"] = JsonSerializer.Serialize(
-                new AuthLink(Type: "SIGNER", Payload: WALLET, Signature: string.Empty)),
+                new AuthLink(Type: "SIGNER", Payload: wallet, Signature: string.Empty)),
             ["x-identity-auth-chain-1"] = JsonSerializer.Serialize(
                 new AuthLink(Type: "ECDSA_EPHEMERAL", Payload: ephemeralPayload, Signature: "0xdeadbeef")),
             ["x-identity-auth-chain-2"] = JsonSerializer.Serialize(
@@ -313,6 +360,7 @@ public class HandshakeHandlerTests
         string? emoteId = null,
         uint? emoteDurationMs = null,
         uint? emoteStartOffsetMs = null,
+        int? emoteMask = null,
         string realm = "main")
     {
         Vector3 pos = position ?? Vector3.Zero;
@@ -343,6 +391,9 @@ public class HandshakeHandlerTests
 
         if (emoteStartOffsetMs.HasValue)
             initial.EmoteStartOffsetMs = emoteStartOffsetMs.Value;
+
+        if (emoteMask.HasValue)
+            initial.EmoteMask = emoteMask.Value;
 
         return initial;
     }

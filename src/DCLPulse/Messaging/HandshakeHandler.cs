@@ -36,6 +36,18 @@ public class HandshakeHandler(MessagePipe messagePipe,
 
     protected override ByteString GetAuthChain(ClientMessage message) => message.Handshake.AuthChain;
 
+    /// <summary>
+    ///     Only a peer still in PENDING_AUTH may authenticate. Re-handshaking an already
+    ///     AUTHENTICATED peer is rejected: it would re-key a live session in place (duplicate-
+    ///     session eviction can't fire, since <c>duplicatedPeer == from</c>), and a
+    ///     different-wallet re-handshake would leave a stale <c>oldWallet → PeerIndex</c> reverse
+    ///     entry in <see cref="Simulation.IdentityBoard" />. A genuine reconnect always arrives on
+    ///     a fresh server-allocated PeerIndex (PENDING_AUTH), so this never blocks a legitimate
+    ///     re-auth. Silent drop, per the pre-auth convention.
+    /// </summary>
+    protected override bool CanBeginHandshake(PeerState existingState) =>
+        existingState.ConnectionState == PeerConnectionState.PENDING_AUTH;
+
     protected override bool TryAuthorize(PeerIndex from, PeerState existingState, ClientMessage message, PeerState peer)
     {
         // Initial-state validation runs before the AUTHENTICATED transition is published: a
@@ -87,7 +99,7 @@ public class HandshakeHandler(MessagePipe messagePipe,
             // Underflow guard keeps the start tick from wrapping if the offset overstates now.
             uint startTick = offset > now ? 0u : now - offset;
             uint? duration = initialState.HasEmoteDurationMs ? initialState.EmoteDurationMs : null;
-            int emoteMask = initialState.HasEmoteMask ? initialState.EmoteMask : 0;
+            int? emoteMask = initialState.HasEmoteMask ? initialState.EmoteMask : null;
 
             emote = new PeerSnapshotPublisher.EmoteInput(initialState.EmoteId, DurationMs: duration, StartTick: startTick, Mask: emoteMask);
         }

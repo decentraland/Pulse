@@ -31,8 +31,11 @@ public sealed class IdentityBoard(int maxPeers)
     {
         string? walletId = GetWalletIdByPeerIndex(id);
 
+        // Value-checked removal: after a duplicate-session eviction the wallet is already
+        // rebound to the replacement peer, and the evicted peer's delayed cleanup must not
+        // delete that live mapping.
         if (walletId != null)
-            peerIdsByWallets.TryRemove(walletId, out _);
+            peerIdsByWallets.TryRemove(new KeyValuePair<string, PeerIndex>(walletId, id));
 
         Volatile.Write(ref walletsByPeerIds[(int)id.Value], null);
     }

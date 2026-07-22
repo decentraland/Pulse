@@ -260,6 +260,42 @@ Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`
 
 ---
 
+## Scene Listener metrics
+
+Observability for scene listeners — server-side observers that subscribe to a bounded set of parcels (capped by `SceneListener:MaxParcels`).
+
+### Connected
+
+Gauge of currently connected scene listeners. `dcl_pulse_scene_listener_connected`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No scene listeners attached |
+| Stable low | Normal — a handful of scene services observing parcels |
+| Climbing unexpectedly | Scene listeners connecting without disconnecting — check for a leak or reconnect storm |
+
+### Forbidden Dropped
+
+Counter of messages dropped from scene listeners that attempted a forbidden operation. `dcl_pulse_scene_listener_forbidden_messages_dropped_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — well-behaved scene listeners only send permitted messages |
+| Sporadic | A buggy scene-listener client sending disallowed messages |
+| Sustained | Misconfigured or misbehaving scene service — inspect the offending peer |
+
+### Visible Subjects
+
+Histogram of the number of visible subjects per scene-listener observation. Exported as `dcl_pulse_scene_listener_visible_subjects_sum` and `dcl_pulse_scene_listener_visible_subjects_count`; the dashboard shows the mean.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No subjects visible to any scene listener |
+| Stable | Normal — reflects average population within observed parcels |
+| Spiking | Crowd forming in an observed scene — expect higher fan-out |
+
+---
+
 ## Incoming Messages
 
 Per-message-type rates for `ClientMessage` variants. Shows how many of each message type the server processes per second.

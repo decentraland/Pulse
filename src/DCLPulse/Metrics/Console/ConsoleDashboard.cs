@@ -75,6 +75,7 @@ public sealed class ConsoleDashboard(
         (ClientMessage.MessageOneofCase.EmoteStart, "EmoteStart", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.EmoteStop, "EmoteStop", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.Teleport, "Teleport", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.SceneListenerHandshake, "SceneListenerHandshake", STYLE_INBOUND),
     ]);
 
     private static readonly MessageTableConfig<ServerMessage.MessageOneofCase> OUTGOING_MESSAGES_CONFIG = new ("Outgoing Messages",
@@ -114,6 +115,11 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker bannedRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
 
+    // Scene-listener trackers.
+    private readonly GaugeTracker sceneListenersConnectedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker sceneListenerForbiddenDroppedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker sceneListenerVisibleSubjectsTracker = new (SPARKLINE_MAX_SAMPLES);
+
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
         INCOMING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
@@ -143,6 +149,9 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView handshakeReplayRejected = new ();
     private readonly RateStatsView bannedRefused = new ();
     private readonly RateStatsView corruptedPacket = new ();
+    private readonly RateStatsView sceneListenersConnected = new ();
+    private readonly RateStatsView sceneListenerForbiddenDropped = new ();
+    private readonly RateStatsView sceneListenerVisibleSubjects = new ();
 
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
@@ -163,6 +172,9 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline handshakeReplayRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline bannedRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenersConnectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenerForbiddenDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenerVisibleSubjectsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -288,6 +300,22 @@ public sealed class ConsoleDashboard(
         ShiftSample(bannedRefusedSparkline.Values, bannedRefusedRate.PerSec);
         ShiftSample(corruptedPacketSparkline.Values, corruptedPacketRate.PerSec);
 
+        // Scene-listener gauge + rate + histogram mean.
+        RateStats connectedStats = sceneListenersConnectedTracker.Record(snap.SceneListener.Connected);
+        RateStats forbiddenDroppedRate = sceneListenerForbiddenDroppedTracker.Update(snap.SceneListener.TotalForbiddenMessagesDropped, elapsed);
+        double visibleSubjectsMean = snap.SceneListener.VisibleSubjectsCount > 0
+            ? (double)snap.SceneListener.VisibleSubjectsSum / snap.SceneListener.VisibleSubjectsCount
+            : 0.0;
+        RateStats visibleSubjectsStats = sceneListenerVisibleSubjectsTracker.Record(visibleSubjectsMean);
+
+        sceneListenersConnected.Apply(connectedStats, v => v.ToString("N0"));
+        sceneListenerForbiddenDropped.Apply(forbiddenDroppedRate, v => v.ToString("N0"));
+        sceneListenerVisibleSubjects.Apply(visibleSubjectsStats, v => v.ToString("N1"));
+
+        ShiftSample(sceneListenersConnectedSparkline.Values, snap.SceneListener.Connected);
+        ShiftSample(sceneListenerForbiddenDroppedSparkline.Values, forbiddenDroppedRate.PerSec);
+        ShiftSample(sceneListenerVisibleSubjectsSparkline.Values, visibleSubjectsMean);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -335,6 +363,16 @@ public sealed class ConsoleDashboard(
 
         var hardening = new Group("Hardening", hardeningTable);
 
+        var sceneListenerTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Connected", sceneListenersConnected, sceneListenersConnectedSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Forbidden Dropped", sceneListenerForbiddenDropped, sceneListenerForbiddenDroppedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Visible Subjects", sceneListenerVisibleSubjects, sceneListenerVisibleSubjectsSparkline.Style(STYLE_INBOUND)),
+            ]);
+
+        var sceneListener = new Group("Scene Listener", sceneListenerTable);
+
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
             ).HorizontalAlignment(Align.Stretch);
@@ -345,6 +383,7 @@ public sealed class ConsoleDashboard(
                 pipeline,
                 webTransportGroup,
                 hardening,
+                sceneListener,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()
             ).Spacing(1)

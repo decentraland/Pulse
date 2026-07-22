@@ -41,6 +41,9 @@ builder.Services.Configure<DiscreteEventRateLimiterOptions>(
 builder.Services.Configure<FieldValidatorOptions>(
     builder.Configuration.GetSection(FieldValidatorOptions.SECTION_NAME));
 
+builder.Services.Configure<SceneListenerOptions>(
+    builder.Configuration.GetSection(SceneListenerOptions.SECTION_NAME));
+
 builder.Services.Configure<HandshakeReplayPolicyOptions>(
     builder.Configuration.GetSection(HandshakeReplayPolicyOptions.SECTION_NAME));
 
@@ -94,8 +97,8 @@ if (webTransportEnabled)
 
 builder.Services.AddHostedService<PeersManager>();
 builder.Services.AddSingleton<MessagePipe>();
-builder.Services.AddSingleton(new ClientMessageCounters(8));
-builder.Services.AddSingleton(new ServerMessageCounters(10));
+builder.Services.AddSingleton(new ClientMessageCounters());
+builder.Services.AddSingleton(new ServerMessageCounters());
 builder.Services.AddSingleton<PeerStateFactory>();
 builder.Services.AddSingleton<PlayerStateInputHandler>();
 builder.Services.AddSingleton<ResyncRequestHandler>();
@@ -106,6 +109,8 @@ builder.Services.AddSingleton<EmoteStopHandler>();
 builder.Services.AddSingleton<EmoteCompleter>();
 builder.Services.AddSingleton<TeleportHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new RustEthereumSignVerifier()));
+builder.Services.AddSingleton<SceneListenerCellMapper>();
+builder.Services.AddSingleton<SceneListenerHandshakeHandler>();
 
 builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
 {
@@ -116,6 +121,7 @@ builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCas
     { ClientMessage.MessageOneofCase.EmoteStart, sp.GetRequiredService<EmoteStartHandler>() },
     { ClientMessage.MessageOneofCase.EmoteStop, sp.GetRequiredService<EmoteStopHandler>() },
     {ClientMessage.MessageOneofCase.Teleport, sp.GetRequiredService<TeleportHandler>() },
+    { ClientMessage.MessageOneofCase.SceneListenerHandshake, sp.GetRequiredService<SceneListenerHandshakeHandler>() },
 });
 
 builder.Services.AddSingleton<ProfileBoard>(sp =>

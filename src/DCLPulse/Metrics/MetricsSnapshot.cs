@@ -5,6 +5,7 @@ public readonly record struct MetricsSnapshot
     public TransportSnapshot Transport { get; init; }
     public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
+    public SceneListenerSnapshot SceneListener { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
@@ -50,5 +51,17 @@ public readonly record struct MetricsSnapshot
         public long TotalHandshakeReplayRejected { get; init; }
         public long TotalBannedRefused { get; init; }
         public long TotalCorruptedPacket { get; init; }
+    }
+
+    public readonly record struct SceneListenerSnapshot
+    {
+        public int Connected { get; init; }
+        public long TotalForbiddenMessagesDropped { get; init; }
+
+        // Histogram summary for pulse.scene_listener.visible_subjects — running sum and
+        // sample count. Consumers divide sum by count for the mean; Prometheus emits both
+        // as the standard _sum / _count decomposition.
+        public long VisibleSubjectsSum { get; init; }
+        public long VisibleSubjectsCount { get; init; }
     }
 }

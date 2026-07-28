@@ -11,6 +11,9 @@ services:
       - ./src:/app/src
     environment:
       DOTNET_ENVIRONMENT: Development
+      # Applies to Pulse's own categories only — the NATS client stays at the Warning floor
+      # appsettings sets for NATS.Client.Core. Below that it re-dumps the server info on every
+      # reconnect, which a flapping broker turns into a stream through the console dashboard.
       Logging__LogLevel__Default: Debug
       Peers__ResyncWithDelta: false
       WebTransport__Enabled: true

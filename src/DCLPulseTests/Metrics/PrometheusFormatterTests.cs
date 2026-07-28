@@ -58,6 +58,34 @@ public class PrometheusFormatterTests
         Assert.That(output, Does.Contain("dcl_pulse_wt_datagrams_dropped_oversize_total 9"));
     }
 
+    /// <summary>
+    ///     An outbox eviction and a failed publish are remedied in opposite directions — raise the
+    ///     capacity, or fix the broker — so they have to reach the exposition as two independent series.
+    ///     A single number for both would send an operator to whichever lever they guessed.
+    /// </summary>
+    [Test]
+    public void Write_NatsLossCounters_AreSeparateSeries()
+    {
+        var byTransport = new MetricsSnapshot.PerTransportCounters[2];
+
+        string output = Format(new MetricsSnapshot
+        {
+            Transport = new MetricsSnapshot.TransportSnapshot { ByTransport = byTransport },
+            Clusters = new MetricsSnapshot.ClustersSnapshot
+            {
+                TotalNatsPublished = 11,
+                TotalNatsPublishFailed = 6,
+                TotalNatsDropped = 4,
+            },
+            IncomingMessages = new ClientMessageCounters(8),
+            OutgoingMessages = new ServerMessageCounters(10),
+        });
+
+        Assert.That(output, Does.Contain("dcl_pulse_nats_published_total 11"));
+        Assert.That(output, Does.Contain("dcl_pulse_nats_publish_failed_total 6"));
+        Assert.That(output, Does.Contain("dcl_pulse_nats_dropped_total 4"));
+    }
+
     private static string Format(MetricsSnapshot snap)
     {
         using var stream = new MemoryStream();

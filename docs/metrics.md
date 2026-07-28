@@ -299,25 +299,37 @@ Counter of published cluster assignment changes, counted *after* the dwell debou
 | Sustained high with a stable cluster count | Peers flapping between two clusters; raise `Clusters:DwellPasses` |
 | Zero while peers move between crowds | Debounce never satisfied, or the feed is wedged — cross-check pass count |
 
-### NATS Published / Dropped / Superseded / Reconnects / Connected
+### NATS Published / Publish Failed / Dropped / Superseded / Reconnects / Connected
 
-Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
+Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_publish_failed_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
 
-**Dropped and superseded are different events, and only one of them is a problem.**
+**Three ways a message does not arrive, three different levers.** Superseded is harmless, dropped is a capacity problem, publish-failed is a broker or network problem — and reaching for the wrong lever makes things worse, so they are separate counters rather than one.
 
 The outbox keeps the two feeds apart because they supersede differently. `engine.islands` is a whole-world snapshot, so it sits in a single latest-wins slot — a newer snapshot replaces an undelivered one and never occupies more than one delivery slot. `peer.{addr}.cluster_change` supersedes only *per peer*, so it is held one entry per peer: a peer's newer assignment replaces its own older one, and one peer's event can never displace another's.
 
-- **Superseded** — replaced before delivery by a newer message on the same subject. Expected whenever the broker lags a pass; harmless, because the replacement carries strictly fresher state.
-- **Dropped** — genuinely lost. Either more than `Nats:ChannelCapacity` distinct peers were pending at once, or the broker rejected the publish. Actionable: a lost `cluster_change` leaves that peer addressed by a stale cluster until its *next* reassignment, which may never come if the peer stops moving.
+- **Superseded** — replaced before delivery by a newer message on the same subject. Expected whenever the broker lags a pass; harmless, because the replacement carries strictly fresher state. No lever.
+- **Dropped** — evicted from the outbox, and nothing else: more than `Nats:ChannelCapacity` distinct peers held an undelivered assignment at once, so the longest-admitted one was pushed out (admission order, not wait time — a supersede keeps a peer's original place in line). Actionable: a lost `cluster_change` leaves that peer addressed by a stale cluster until its *next* reassignment, which may never come if the peer stops moving. The lever is the capacity.
+- **Publish Failed** — the publish call threw, on the outbox drain or on the discovery heartbeat. Every one of these is raised **client-side** — a timeout, a connect failure, an oversized payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a broker that refuses a publish cannot fail the call (see the rejected-publish note below). The lever is the broker or the path to it. Raising `Nats:ChannelCapacity` in response is actively harmful: a larger outbox only lengthens the stale backlog the recovered connection has to drain before it delivers anything current.
 
 | Signal | Meaning |
 |---|---|
-| `connected` 1, published rising, dropped zero | Healthy — superseded may be non-zero and is fine |
+| `connected` 1, published rising, dropped and publish-failed zero | Healthy — superseded may be non-zero and is fine |
 | `connected` 0 with a broker URL set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
 | `connected` 0 with no broker URL | Stats-only mode, by configuration — not a fault |
 | Superseded rising, dropped zero | Broker slower than the pass rate; freshness degrades but nothing is lost |
-| **Dropped rising** | More than `Nats:ChannelCapacity` peers pending, or broker rejections. Raise the capacity toward `Transport.MaxPeers` and check broker latency — some peer is in the wrong room |
+| **Dropped rising** | More than `Nats:ChannelCapacity` peers pending at once. Raise the capacity toward `Transport.MaxPeers` — some peer is in the wrong room. Nothing about the broker is implied |
+| **Publish Failed rising** | Publishes are throwing client-side: check broker reachability, latency and the payload size cap. Leave the capacity alone — enlarging it lengthens the stale drain on recovery |
+| Publish Failed rising while `connected` 1 | The socket is up but calls still fail — most likely timeouts under a lagging broker; the client's own `NATS.Client.Core` warnings carry the reason |
 | Reconnects climbing steadily | Flapping broker or network path; assignment delivery is lossy in that window |
+
+**Shutdown discard is counted nowhere.** Whatever is still pending when the publisher is disposed is dropped without touching either counter. That is deliberate: `dropped` means "raise the capacity" and `publish_failed` means "look at the broker", and a shutdown answers to neither — counting it would make every clean stop emit the alert condition while naming a lever that cannot help. The loss is real but bounded by one outbox and ends with the process; at most `Nats:ChannelCapacity` assignments and one topology snapshot go undelivered, and the peers themselves are disconnecting along with the server.
+
+**The broker's own wording lands in the log, not in a metric.** The NATS client's diagnostics are routed into Pulse's logging under the `NATS.Client.Core` categories, floored at `Warning` in `appsettings.json`. That floor is low enough to keep every connect failure and every `-ERR` line the broker sends, and high enough that a `Debug` default — which `docker-compose.debug.yml` sets — cannot drag the client down to its own per-operation logging inside the console dashboard.
+
+Two failures are indistinguishable from something else in the table above and can only be told apart there:
+
+- **A rejected credential.** The connection never opens, so `connected` stays 0 and reads exactly like an unreachable broker. `Authentication error: …` from the client, and `NATS server error (AuthorizationViolation): …` from the publisher, are what separate the two. Pulse sets `IgnoreAuthErrorAbort`, so the client keeps retrying rather than giving up permanently: the feed recovers on its own once the credential is fixed, and stays down until then.
+- **A rejected publish.** The client raises this from its read loop without closing the socket, so `connected` stays 1 and `published` keeps climbing while nothing reaches a subscriber — a publish is not acknowledged, so the broker refusing it does not fail the call, and `publish_failed` stays zero too. `NATS server error (PermissionsViolation): …` is the only signal.
 
 ---
 

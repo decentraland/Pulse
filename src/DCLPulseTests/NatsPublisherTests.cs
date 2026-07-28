@@ -24,6 +24,12 @@ public class NatsPublisherTests
     private const int RING_CAPACITY = 4;
 
     private const string BROKER_URL = "nats://localhost:4222";
+
+    // A port nothing can be listening on, so a publish against it fails the connect immediately. The
+    // connection is built inside the run loop and cannot be substituted, so a real refused connect is
+    // the only way to reach the publisher's failed-publish paths.
+    private const string UNREACHABLE_BROKER_URL = "nats://127.0.0.1:1";
+
     private const string REALM = "realm-a";
 
     // Mirrors NatsPublisher's own placeholder so a change to the wording has to be made deliberately.
@@ -82,7 +88,7 @@ public class NatsPublisherTests
         for (var i = 0; i < 5; i++)
             publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", "realm-a");
 
-        // Capacity 2, five distinct peers — the three longest-waiting are evicted to make room.
+        // Capacity 2, five distinct peers — the three longest-admitted are evicted to make room.
         Assert.That(publisher.DroppedCount, Is.EqualTo(3));
         Assert.That(publisher.PublishedCount, Is.Zero);
 
@@ -93,6 +99,29 @@ public class NatsPublisherTests
             "peer.0xwallet3.cluster_change",
             "peer.0xwallet4.cluster_change",
         }));
+    }
+
+    /// <summary>
+    ///     Eviction and a failed publish have opposite remediations — raise the capacity, or fix the
+    ///     broker — so an operator can only act on either if they never share a counter. This pins the
+    ///     eviction half: it reaches <c>dropped</c> and nothing else.
+    /// </summary>
+    [Test]
+    public void ChannelOverflow_CountsEvictionsAsDroppedAndNothingAsPublishFailed()
+    {
+        using var dropped = new NatsCounterProbe(PulseMetrics.Nats.DROPPED);
+        using var publishFailed = new NatsCounterProbe(PulseMetrics.Nats.PUBLISH_FAILED);
+
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 2);
+
+        for (var i = 0; i < 5; i++)
+            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", REALM);
+
+        Assert.That(publisher.DroppedCount, Is.EqualTo(3));
+        Assert.That(publisher.PublishFailedCount, Is.Zero, "no publish was even attempted");
+
+        Assert.That(dropped.Total, Is.EqualTo(3), "the exported counter must agree with the property");
+        Assert.That(publishFailed.Total, Is.Zero);
     }
 
     /// <summary>
@@ -167,7 +196,7 @@ public class NatsPublisherTests
     }
 
     [Test]
-    public void Topology_IsDeliveredBeforeTheChangesThatReferenceIt()
+    public void Topology_TakesPriorityOverPendingChanges()
     {
         NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 4);
 
@@ -670,6 +699,59 @@ public class NatsPublisherTests
     }
 
     /// <summary>
+    ///     The broker's own wording is the only record of why a publish or a connect was refused, so it
+    ///     has to reach the log verbatim rather than being reduced to a kind.
+    /// </summary>
+    [Test]
+    public async Task ServerError_LogsTheKindAndTheBrokersWording()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL, logger: logger);
+
+        await publisher.OnServerError(null, ServerErrorEvent("Maximum Connections Exceeded"));
+
+        Assert.That(LoggedLevel(logger, "Maximum Connections Exceeded"), Is.EqualTo(LogLevel.Warning));
+        Assert.That(LoggedLevel(logger, nameof(NatsServerErrorKind.MaximumConnectionsExceeded)),
+            Is.EqualTo(LogLevel.Warning));
+    }
+
+    /// <summary>
+    ///     A refused credential and a refused publish are the two kinds that mean the feed is being
+    ///     rejected rather than merely disrupted, and neither shows up in
+    ///     <c>dcl_pulse_nats_connected</c> as anything a reconnect would not also produce.
+    /// </summary>
+    [TestCase("Authorization Violation")]
+    [TestCase("Permissions Violation for Publish to \"peer.0xwallet0.cluster_change\"")]
+    public async Task ServerError_WhenTheFeedIsRefused_LogsAtError(string error)
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL, logger: logger);
+
+        await publisher.OnServerError(null, ServerErrorEvent(error));
+
+        Assert.That(LoggedLevel(logger, error), Is.EqualTo(LogLevel.Error));
+    }
+
+    /// <summary>
+    ///     An error is not a connection edge. A refused publish arrives on a connection that stays open,
+    ///     so treating it as a loss would take <c>dcl_pulse_nats_connected</c> down while the client
+    ///     still holds the socket — and unpair the gauge, since no disconnect follows.
+    /// </summary>
+    [Test]
+    public async Task ServerError_LeavesTheConnectedGaugeAlone()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+
+        using var gauge = new ConnectedGaugeProbe();
+
+        await publisher.OnConnectionOpened(null, ConnectionEvent());
+        await publisher.OnServerError(null, ServerErrorEvent("Permissions Violation for Publish to \"engine.islands\""));
+
+        Assert.That(gauge.Net, Is.EqualTo(1));
+        Assert.That(publisher.IsConnected, Is.True);
+    }
+
+    /// <summary>
     ///     A non-positive interval is not a valid timer period. The heartbeat is skipped rather than
     ///     allowed to abort the publisher, so the outbox drain still starts and shutdown stays clean.
     /// </summary>
@@ -694,6 +776,75 @@ public class NatsPublisherTests
 
         Assert.That(publisher.PublishedCount, Is.Zero, "no heartbeat means nothing was published");
         Assert.That(publisher.IsConnected, Is.False);
+    }
+
+    /// <summary>
+    ///     The other half of the split: a drain publish that throws counts as publish-failed and leaves
+    ///     <c>dropped</c> alone. Conflating the two would send an operator to
+    ///     <c>Nats:ChannelCapacity</c> during a broker outage, where a larger outbox only lengthens the
+    ///     stale backlog a recovered connection has to drain.
+    /// </summary>
+    [Test]
+    public async Task FailedDrainPublish_CountsAsPublishFailedAndNotAsDropped()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+
+        using var dropped = new NatsCounterProbe(PulseMetrics.Nats.DROPPED);
+        using var publishFailed = new NatsCounterProbe(PulseMetrics.Nats.PUBLISH_FAILED);
+
+        // Heartbeat off, so the one queued change is the only publish that can be attempted.
+        NatsPublisher publisher = CreatePublisher(
+            url: UNREACHABLE_BROKER_URL,
+            discoveryIntervalMs: 0,
+            logger: logger);
+
+        await publisher.StartAsync(CancellationToken.None);
+        WaitForLog(logger, STARTED_LOG);
+
+        publisher.PublishClusterChange("0xwallet0", "C1", REALM);
+
+        WaitFor(() => publisher.PublishFailedCount > 0, "the drain never recorded a failed publish");
+
+        await publisher.StopAsync(CancellationToken.None);
+
+        Assert.That(publisher.PublishFailedCount, Is.EqualTo(1));
+        Assert.That(publisher.DroppedCount, Is.Zero, "a failed publish is not an eviction");
+        Assert.That(publisher.PublishedCount, Is.Zero);
+
+        Assert.That(publishFailed.Total, Is.EqualTo(1), "the exported counter must agree with the property");
+        Assert.That(dropped.Total, Is.Zero);
+    }
+
+    /// <summary>
+    ///     The heartbeat publishes outside the outbox, so a failure there used to be counted nowhere at
+    ///     all — the service could stop advertising itself with every counter reading clean.
+    /// </summary>
+    [Test]
+    public async Task FailedHeartbeatPublish_CountsAsPublishFailed()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+
+        using var dropped = new NatsCounterProbe(PulseMetrics.Nats.DROPPED);
+        using var publishFailed = new NatsCounterProbe(PulseMetrics.Nats.PUBLISH_FAILED);
+
+        // Nothing is ever queued, so the heartbeat is the only thing that can be publishing.
+        NatsPublisher publisher = CreatePublisher(
+            url: UNREACHABLE_BROKER_URL,
+            discoveryIntervalMs: 1,
+            logger: logger);
+
+        await publisher.StartAsync(CancellationToken.None);
+
+        WaitFor(() => publisher.PublishFailedCount > 0, "the heartbeat never recorded a failed publish");
+
+        await publisher.StopAsync(CancellationToken.None);
+
+        Assert.That(publisher.DroppedCount, Is.Zero, "the heartbeat never touches the outbox");
+        Assert.That(publisher.PublishedCount, Is.Zero);
+
+        Assert.That(publishFailed.Total, Is.EqualTo(publisher.PublishFailedCount),
+            "the exported counter must agree with the property");
+        Assert.That(dropped.Total, Is.Zero);
     }
 
     [TestCase("nats://broker.example:4222", "broker.example:4222")]
@@ -749,7 +900,11 @@ public class NatsPublisherTests
             ChannelCapacity = channelCapacity,
         });
 
-        return new NatsPublisher(logger ?? NullLogger<NatsPublisher>.Instance, options, snapshotBoard);
+        return new NatsPublisher(
+            logger ?? NullLogger<NatsPublisher>.Instance,
+            NullLoggerFactory.Instance,
+            options,
+            snapshotBoard);
     }
 
     /// <summary>
@@ -762,6 +917,18 @@ public class NatsPublisherTests
     {
         Assert.That(() => HasLogged(logger, fragment), Is.True.After(START_TIMEOUT_MS, START_POLL_MS),
             $"the publisher never logged \"{fragment}\"");
+    }
+
+    /// <summary>
+    ///     Blocks until <paramref name="condition" /> holds, failing with
+    ///     <paramref name="because" /> if it never does. Used for what the run loop's own threads
+    ///     record, which no return value from <c>StartAsync</c> can be waited on. The condition is
+    ///     re-wrapped in a lambda so it binds to NUnit's polling overload rather than being asserted
+    ///     once as a delegate object.
+    /// </summary>
+    private static void WaitFor(Func<bool> condition, string because)
+    {
+        Assert.That(() => condition(), Is.True.After(START_TIMEOUT_MS, START_POLL_MS), because);
     }
 
     private static bool HasLogged(ILogger<NatsPublisher> logger, string fragment)
@@ -778,6 +945,29 @@ public class NatsPublisherTests
         }
 
         return false;
+    }
+
+    /// <summary>
+    ///     The level the first line containing <paramref name="fragment" /> was logged at, or null when
+    ///     nothing logged it. Asserting the level is the point of the two server-error cases: both
+    ///     wordings reach the log either way, and only the level separates a refused feed from a
+    ///     disruption the client recovers from on its own.
+    /// </summary>
+    private static LogLevel? LoggedLevel(ILogger<NatsPublisher> logger, string fragment)
+    {
+        foreach (ICall call in logger.ReceivedCalls())
+        {
+            object?[] arguments = call.GetArguments();
+
+            // Log's arguments are (level, eventId, state, exception, formatter); the state's ToString is
+            // the formatted message.
+            if (arguments.Length < 3) continue;
+
+            if (arguments[2]?.ToString() is { } message && message.Contains(fragment, StringComparison.Ordinal))
+                return arguments[0] as LogLevel?;
+        }
+
+        return null;
     }
 
     private static ClusterPass MakePass()
@@ -876,6 +1066,13 @@ public class NatsPublisherTests
         new ("test");
 
     /// <summary>
+    ///     The payload the NATS client hands its <c>ServerError</c> callback. The kind is derived from the
+    ///     error text by the event args themselves, so the text is the whole input.
+    /// </summary>
+    private static NatsServerErrorEventArgs ServerErrorEvent(string error) =>
+        new (error);
+
+    /// <summary>
     ///     Sums the deltas recorded on <c>pulse.nats.connected</c> for as long as it is alive. The
     ///     exported gauge is delta-accumulated, so only the running total shows whether the +1 and the -1
     ///     stayed paired.
@@ -910,6 +1107,46 @@ public class NatsPublisherTests
         /// </summary>
         public int Net =>
             Volatile.Read(ref net);
+
+        public void Dispose()
+        {
+            listener.Dispose();
+        }
+    }
+
+    /// <summary>
+    ///     Sums what one <c>long</c> instrument records for as long as it is alive. The publisher's own
+    ///     properties and the exported counters are separate writes, so a counter split is only really
+    ///     pinned by reading the instrument a scrape would read.
+    /// </summary>
+    private sealed class NatsCounterProbe : IDisposable
+    {
+        private readonly MeterListener listener;
+
+        private long total;
+
+        public NatsCounterProbe(Counter<long> instrument)
+        {
+            listener = new MeterListener
+            {
+                InstrumentPublished = (published, self) =>
+                {
+                    if (ReferenceEquals(published, instrument))
+                        self.EnableMeasurementEvents(published);
+                },
+            };
+
+            listener.SetMeasurementEventCallback<long>(
+                (_, measurement, _, _) => Interlocked.Add(ref total, measurement));
+
+            listener.Start();
+        }
+
+        /// <summary>
+        ///     Running total of the measurements recorded since this probe started listening.
+        /// </summary>
+        public long Total =>
+            Interlocked.Read(ref total);
 
         public void Dispose()
         {

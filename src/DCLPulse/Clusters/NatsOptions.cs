@@ -44,9 +44,12 @@ public sealed class NatsOptions
 
     /// <summary>
     ///     Maximum number of distinct peers with an undelivered assignment. Past the bound the
-    ///     longest-waiting peer is evicted and counted as a genuine drop, so a non-zero
-    ///     <c>dcl_pulse_nats_dropped_total</c> is the signal to raise this towards
-    ///     <c>Transport.MaxPeers</c>. The topology snapshot is held separately and never counts here.
+    ///     longest-admitted peer is evicted, which is the only thing
+    ///     <c>dcl_pulse_nats_dropped_total</c> counts — so that counter, and only that counter, is the
+    ///     signal to raise this towards <c>Transport.MaxPeers</c>. A publish that threw is
+    ///     <c>dcl_pulse_nats_publish_failed_total</c>, which this lever cannot help: a larger outbox
+    ///     only lengthens the stale backlog a recovered connection has to drain. The topology snapshot
+    ///     is held separately and never counts here.
     /// </summary>
     public int ChannelCapacity { get; set; } = 1024;
 

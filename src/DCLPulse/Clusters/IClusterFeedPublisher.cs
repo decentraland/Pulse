@@ -13,7 +13,8 @@ public interface IClusterFeedPublisher
     void PublishClusterChange(string wallet, string clusterId, string realm);
 
     /// <summary>
-    ///     The full cluster topology for a completed pass.
+    ///     The full cluster topology for a completed pass. Callers must serialize their calls to this
+    ///     method — it is not safe to invoke from two threads at once.
     /// </summary>
     void PublishTopology(ClusterPass pass);
 }

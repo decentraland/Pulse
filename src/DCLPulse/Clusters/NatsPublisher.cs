@@ -26,30 +26,42 @@ namespace Pulse.Clusters;
 ///     peer's event never displaces another's — which a shared FIFO with oldest-first eviction could
 ///     not guarantee.
 ///     <para />
-///     Genuine loss is therefore confined to more than <see cref="NatsOptions.ChannelCapacity" />
-///     distinct peers pending at once, and is counted separately from benign superseding. With
+///     Genuine loss therefore has three paths, each kept apart from benign superseding and from the
+///     others: eviction past <see cref="NatsOptions.ChannelCapacity" />, counted in
+///     <see cref="DroppedCount" />; a publish that threw, counted in
+///     <see cref="PublishFailedCount" />; and the shutdown discard in <see cref="ReturnPending" />,
+///     deliberately counted nowhere. Each of those three members states its own scope. With
 ///     <see cref="NatsOptions.Url" /> unset the service exits at startup and both
 ///     <see cref="IClusterFeedPublisher" /> methods become no-ops, leaving
 ///     <see cref="ClusterTracker" /> in stats-only mode.
 ///     <para />
-///     Encoding is zero-copy: <see cref="SERIALIZER" /> writes a message straight into the buffer the
-///     NATS client hands it, so the outbox holds live message instances rather than encoded bytes.
-///     Instances are drawn from a free list per pooled type and returned by whoever takes one out, so
-///     steady state neither rents a byte buffer nor copies a payload. What makes that sound is that
-///     <c>NatsConnection.PublishAsync</c> has always finished serializing by the time the task it
-///     returns completes — verified against NATS.Client.Core 3.0.1, whose <c>CommandWriter</c>
-///     serializes synchronously ahead of its state machine and whose not-yet-connected path awaits the
-///     connect and then serializes, both inside the awaited task.
+///     Encoding needs no buffer of Pulse's own: <see cref="SERIALIZER" /> writes a message straight
+///     into the buffer the NATS client hands it, so the outbox holds live message instances rather than
+///     encoded bytes. Instances are drawn from a free list per pooled type and returned by whoever
+///     takes one out, so steady state neither rents a byte buffer here nor copies a payload into one.
+///     What makes that sound is that <c>NatsConnection.PublishAsync</c> has always finished serializing
+///     by the time the task it returns completes — verified against NATS.Client.Core 3.0.1, whose
+///     <c>CommandWriter</c> serializes synchronously ahead of its state machine and whose
+///     not-yet-connected path awaits the connect and then serializes, both inside the awaited task.
+///     Retaining the outbox across an outage rests on a second default of that version:
+///     <c>PublishTimeoutOnDisconnected</c> staying <c>false</c> is what makes a publish wait for the
+///     reconnect instead of throwing once <c>CommandTimeout</c> elapses.
 /// </summary>
 public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 {
-    // Clusters are uncapped, so zero advertises "no cap" rather than implying a bound that no
-    // longer exists.
+    // IslandData.max_peers belongs to archipelago's shape and Pulse caps cluster size nowhere, so
+    // every island goes out carrying zero rather than a bound this server does not enforce.
     private const uint NO_PEER_CAP = 0;
 
     // Stands in for a broker entry that is not a parseable absolute URL, so a typo is reported without
     // echoing a string that may hold credentials.
     private const string UNPARSED_BROKER_URL = "(unparsed broker url)";
+
+    /// <summary>
+    ///     Wait before rebuilding a faulted pipeline. Not a reconnect delay — the client handles
+    ///     broker loss itself — only a guard against a reproducing fault spinning the loop.
+    /// </summary>
+    private static readonly TimeSpan PIPELINE_REBUILD_BACKOFF = TimeSpan.FromSeconds(5);
 
     /// <summary>
     ///     Encodes every message this publisher sends, into the client's own buffer. One instance for
@@ -61,13 +73,20 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     internal static readonly INatsSerialize<IMessage> SERIALIZER = new ProtobufSerializer();
 
     private readonly ILogger<NatsPublisher> logger;
+
+    // Handed to the NATS client so its own diagnostics reach the host's logging instead of the
+    // NullLoggerFactory NatsOpts defaults to.
+    private readonly ILoggerFactory loggerFactory;
+
     private readonly NatsOptions options;
     private readonly SnapshotBoard snapshotBoard;
     private readonly bool feedEnabled;
 
-    // Outbox. Guarded by outboxLock: the tracker thread writes, the drain loop reads. Every entry
-    // holds a message instance checked out of a free list, so anything that leaves the outbox —
-    // superseded, evicted, dequeued or abandoned at shutdown — is returned by whoever took it out.
+    // Outbox. Every access runs under outboxLock, and all three callers mutate: the tracker thread
+    // admits changes and snapshots, the drain loop takes them back out, and Dispose empties whatever is
+    // left. Every entry holds a message instance checked out of a free list, so anything that leaves
+    // the outbox — superseded, evicted, dequeued or abandoned at shutdown — is returned by whoever took
+    // it out.
     private readonly Lock outboxLock = new ();
     private readonly Dictionary<string, PeerClusterChange> pendingChangeBySubject = new (StringComparer.Ordinal);
     private readonly Queue<string> changeOrder = new ();
@@ -97,11 +116,13 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly string discoverySubject;
     private readonly string commitHash;
 
-    // Topology scratch, reached from FillIslandStatus alone and therefore from the tracker thread
-    // alone. islandById maps one pass's cluster ids to the islands just built, so its members are
-    // filed in a single walk; islandPool holds the IslandData a shrinking snapshot no longer needs,
-    // so a later one that grows again reuses them. An instance is only ever filled while no other
-    // holder has it, so the islands reached through either of these belong to no live message.
+    // Topology scratch, reached from FillIslandStatus alone and so covered by no lock of its own: it
+    // relies on PublishTopology's callers serializing their calls, which nothing here enforces, and two
+    // concurrent fills would interleave into both snapshots. islandById maps one pass's cluster ids to
+    // the islands just built, so its members are filed in a single walk; islandPool holds the IslandData
+    // a shrinking snapshot no longer needs, so a later one that grows again reuses them. An instance is
+    // only ever filled while no other holder has it, so the islands reached through either of these
+    // belong to no live message.
     private readonly Dictionary<string, IslandData> islandById = new (StringComparer.Ordinal);
     private readonly Stack<IslandData> islandPool = new ();
 
@@ -111,6 +132,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly ServiceDiscoveryMessage discovery = new () { Status = new ServiceStatus() };
 
     private long publishedCount;
+    private long publishFailedCount;
     private long droppedCount;
     private long supersededCount;
     private long reconnectCount;
@@ -122,10 +144,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     public NatsPublisher(
         ILogger<NatsPublisher> logger,
+        ILoggerFactory loggerFactory,
         IOptions<NatsOptions> options,
         SnapshotBoard snapshotBoard)
     {
         this.logger = logger;
+        this.loggerFactory = loggerFactory;
         this.options = options.Value;
         this.snapshotBoard = snapshotBoard;
 
@@ -147,16 +171,31 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Messages published to the broker since startup.
+    ///     Messages handed to the client without it throwing, since startup. A hand-off rather than a
+    ///     receipt: returning means the PUB frame reached the client's outbound buffer, the flush is not
+    ///     awaited, and core NATS never acknowledges a PUB — so a socket dying while the connection
+    ///     still reads as open lands here exactly as a delivered message does.
     /// </summary>
     public long PublishedCount =>
         Interlocked.Read(ref publishedCount);
 
     /// <summary>
-    ///     Messages genuinely lost — evicted because more than
-    ///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers were pending at once, or failed at
-    ///     the broker. Unlike <see cref="SupersededCount" />, a non-zero rate here means a peer's
-    ///     latest assignment never reached the broker.
+    ///     Publishes that threw, counted for the outbox drain and the heartbeat alike. Every one of
+    ///     them is raised client-side — a timeout, a connect failure, an oversized payload, a subject
+    ///     the client rejects — because core NATS never acknowledges a PUB, so a broker refusing one
+    ///     cannot fail the call: that surfaces through <see cref="OnServerError" /> and a silent gap at
+    ///     the subscriber, never here.
+    /// </summary>
+    public long PublishFailedCount =>
+        Interlocked.Read(ref publishFailedCount);
+
+    /// <summary>
+    ///     Messages genuinely lost to eviction — more than
+    ///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers held an undelivered assignment at
+    ///     once, so the longest-admitted one was pushed out. Unlike <see cref="SupersededCount" />, a
+    ///     non-zero rate here means a peer's latest assignment never reached the broker; unlike
+    ///     <see cref="PublishFailedCount" />, the lever is the capacity. Nothing else counts here —
+    ///     what <see cref="ReturnPending" /> discards at shutdown is deliberately uncounted.
     /// </summary>
     public long DroppedCount =>
         Interlocked.Read(ref droppedCount);
@@ -191,6 +230,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     /// <summary>
     ///     Hands every still-pending message back to its free list and empties the outbox. Idempotent
     ///     — each entry is dropped as it is returned, so a second call finds nothing.
+    ///     <para />
+    ///     What is discarded here is undelivered, and deliberately counted nowhere.
+    ///     <see cref="DroppedCount" /> exists to say "raise <see cref="NatsOptions.ChannelCapacity" />"
+    ///     and <see cref="PublishFailedCount" /> to say "look at the broker"; a shutdown answers to
+    ///     neither, so either counter would fire on every clean stop and name a lever that cannot
+    ///     help. The loss is real but bounded by one outbox and ends with the process.
     /// </summary>
     private void ReturnPending()
     {
@@ -331,8 +376,11 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     /// <summary>
     ///     Takes ownership of <paramref name="change" /> and holds at most one pending change per peer.
     ///     A repeat for the same peer replaces its message and keeps its place in line; a new peer past
-    ///     capacity evicts the longest-waiting one, the only path to genuine loss. Whichever instance
-    ///     the outbox lets go of is returned to the free list here.
+    ///     capacity evicts the longest-admitted one, which is the outbox's own path to genuine loss.
+    ///     Longest-admitted, not longest-waiting: <see cref="changeOrder" /> records the order subjects
+    ///     first entered and a supersede leaves that order untouched, so the evicted peer may be holding
+    ///     a message written a moment ago. Whichever instance the outbox lets go of is returned to the
+    ///     free list here.
     /// </summary>
     private void QueueChange(string subject, PeerClusterChange change)
     {
@@ -380,11 +428,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Takes the next message to deliver: the topology first, so a snapshot declaring a cluster
-    ///     precedes the per-peer events that reference it, then peers in arrival order. Ownership of the
-    ///     instance moves to the caller — the outbox drops its own reference in the same step — so the
-    ///     caller is the one that must return it. Internal so the ordering can be asserted without a
-    ///     broker.
+    ///     Takes the next message to deliver: a pending topology snapshot ahead of any pending change,
+    ///     then changes in admission order. That priority is the whole of it and not an ordering between
+    ///     the two feeds — a snapshot admitted after a change preempts it, and a snapshot superseded
+    ///     before the drain gets here is never handed out at all. Ownership of the instance moves to the
+    ///     caller — the outbox drops its own reference in the same step — so the caller is the one that
+    ///     must return it. Internal so the priority can be asserted without a broker.
     /// </summary>
     internal bool TryDequeueNext(out string subject, [NotNullWhen(true)] out IMessage? message)
     {
@@ -459,39 +508,88 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         if (!heartbeatEnabled)
             logger.LogWarning("NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)");
 
-        var opts = NatsOpts.Default with { Url = options.Url, Name = options.ServerName };
+        logger.LogInformation("NATS publisher started — {Broker}, subject prefix {SubjectPrefix}",
+            SanitizeBrokerUrl(options.Url),
+            string.IsNullOrEmpty(options.SubjectPrefix) ? "(none)" : options.SubjectPrefix);
+
+        // Supervision loop. Losing the broker is handled inside the client — it retries forever with
+        // its own backoff — so reaching the end of one iteration means the pipeline itself faulted,
+        // not that the connection dropped. Rebuilding rather than returning is what keeps a faulted
+        // publisher from staying dead for the rest of the process lifetime.
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await RunConnectionAsync(wakeup, heartbeatEnabled, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "NATS publisher pipeline faulted; rebuilding the connection in {BackoffSeconds}s",
+                    PIPELINE_REBUILD_BACKOFF.TotalSeconds);
+            }
+
+            // Backoff so a fault that reproduces immediately cannot spin.
+            try { await Task.Delay(PIPELINE_REBUILD_BACKOFF, stoppingToken); }
+            catch (OperationCanceledException) { return; }
+        }
+    }
+
+    /// <summary>
+    ///     Owns one connection and the two loops that use it, for as long as they stay healthy.
+    ///     Returns only on shutdown; any other exit propagates to the supervision loop, which rebuilds.
+    /// </summary>
+    private async Task RunConnectionAsync(Channel<byte> signal, bool heartbeatEnabled, CancellationToken stoppingToken)
+    {
+        var opts = NatsOpts.Default with
+        {
+            Url = options.Url,
+            Name = options.ServerName,
+
+            // Routes the client's own diagnostics into the host's logging. NatsOpts defaults to
+            // NullLoggerFactory, which discards them — including the text of a broker-side rejection,
+            // which is written down nowhere else. Every category the client creates sits under
+            // NATS.Client.Core, floored at Warning in appsettings.json so a Debug-level Default
+            // cannot pull it down to per-publish logging.
+            LoggerFactory = loggerFactory,
+
+            // Reconnection is the client's job and its defaults already suit a fail-soft feed:
+            // unlimited retries (MaxReconnectRetry -1) with 2–5 s backoff plus jitter.
+            //
+            // The one default worth overriding: the client normally gives up permanently once the
+            // server returns the same auth error twice. For a publish-only feed that would turn a
+            // rotated credential into a silently dead feed recoverable only by restarting Pulse, so
+            // it keeps retrying instead and surfaces the state through dcl_pulse_nats_connected.
+            IgnoreAuthErrorAbort = true,
+        };
 
         await using var connection = new NatsConnection(opts);
 
         connection.ConnectionOpened += OnConnectionOpened;
         connection.ConnectionDisconnected += OnConnectionDisconnected;
+        connection.ServerError += OnServerError;
 
-        // Both loops run until cancelled, so neither ever completes on its own. Linking them means a
-        // fault in one stops the other instead of leaving half the feed running silently.
+        // The drain runs until cancelled, and so does the heartbeat whenever it runs at all. Linking
+        // them means a fault in one stops the other instead of leaving half the feed running silently.
         using var loops = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
         try
         {
-            logger.LogInformation("NATS publisher started — {Broker}, subject prefix {SubjectPrefix}",
-                SanitizeBrokerUrl(options.Url),
-                string.IsNullOrEmpty(options.SubjectPrefix) ? "(none)" : options.SubjectPrefix);
-
             await Task.WhenAll(
-                DrainAsync(connection, wakeup, loops),
+                DrainAsync(connection, signal, loops),
                 heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            // Normal shutdown.
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "NATS publisher stopped unexpectedly; the cluster feed is no longer being delivered");
         }
         finally
         {
             connection.ConnectionOpened -= OnConnectionOpened;
             connection.ConnectionDisconnected -= OnConnectionDisconnected;
+            connection.ServerError -= OnServerError;
+
+            // Pairs the gauge before the next iteration builds a fresh connection, so a rebuild
+            // cannot leave dcl_pulse_nats_connected stuck at 1.
             MarkDisconnected();
         }
     }
@@ -539,10 +637,10 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Drains the outbox to the broker, woken by <see cref="Signal" />. A failed publish is
-    ///     logged and abandoned: the message is stale by the next pass anyway, and retrying would
-    ///     grow the backlog. A fault that ends the loop is logged once and cancels
-    ///     <paramref name="loops" />.
+    ///     Drains the outbox to the broker, woken by <see cref="Signal" />. A failed publish is logged,
+    ///     counted in <see cref="PublishFailedCount" /> and abandoned rather than retried: re-queueing it
+    ///     grows the backlog that is the likeliest reason the publish failed to begin with. A fault that
+    ///     ends the loop is logged once and cancels <paramref name="loops" />.
     /// </summary>
     private async Task DrainAsync(NatsConnection connection, Channel<byte> signal, CancellationTokenSource loops)
     {
@@ -567,7 +665,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                     }
                     catch (Exception e)
                     {
-                        CountDropped();
+                        CountPublishFailed();
                         logger.LogWarning(e, "Failed to publish to {Subject}; dropping", subject);
                     }
                     finally
@@ -593,9 +691,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Publishes the <c>engine.discovery</c> heartbeat on a fixed cadence. Sent directly rather
-    ///     than through the outbox: a heartbeat delayed behind a backlog would defeat its purpose. A
-    ///     fault that ends the loop is logged once and cancels <paramref name="loops" />.
+    ///     Publishes the <c>engine.discovery</c> heartbeat once per
+    ///     <see cref="NatsOptions.DiscoveryIntervalMs" />, which bounds the cadence from below rather
+    ///     than fixing it: the beat shares one connection with the drain, so it waits behind it for the
+    ///     client's send lock and, with the connection lost, for as long as the outage lasts. Sent
+    ///     directly rather than through the outbox: a heartbeat delayed behind a backlog would defeat its
+    ///     purpose. A fault that ends the loop is logged once and cancels <paramref name="loops" />.
     /// </summary>
     private async Task PublishDiscoveryPeriodicallyAsync(NatsConnection connection, CancellationTokenSource loops)
     {
@@ -628,6 +729,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 }
                 catch (Exception e)
                 {
+                    CountPublishFailed();
                     logger.LogWarning(e, "Failed to publish service discovery heartbeat");
                 }
 
@@ -662,6 +764,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         PulseMetrics.Nats.PUBLISHED.Add(1);
     }
 
+    private void CountPublishFailed()
+    {
+        Interlocked.Increment(ref publishFailedCount);
+        PulseMetrics.Nats.PUBLISH_FAILED.Add(1);
+    }
+
     private void CountDropped()
     {
         Interlocked.Increment(ref droppedCount);
@@ -691,7 +799,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         for (var i = 0; i < data.Count; i++)
             islandPool.Push(data[i]);
 
-        // RepeatedField.Clear keeps its backing array, so refilling the list costs nothing.
+        // RepeatedField.Clear keeps its backing array and only clears the range in use, so refilling the
+        // list allocates nothing.
         data.Clear();
 
         for (var i = 0; i < pass.Clusters.Count; i++)
@@ -771,7 +880,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         MarkDisconnected();
 
         logger.LogWarning(
-            "NATS connection lost; the topology and each peer's latest assignment are retained until it returns");
+            "NATS connection lost; the topology and each peer's latest assignment are retained until it "
+            + "returns, for up to {ChannelCapacity} distinct peers",
+            options.ChannelCapacity);
 
         return ValueTask.CompletedTask;
     }
@@ -785,6 +896,29 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     {
         if (Interlocked.Exchange(ref connected, 0) == 1)
             PulseMetrics.Nats.CONNECTED.Add(-1);
+    }
+
+    /// <summary>
+    ///     Records the error text the broker sent, at <c>Error</c> for the two kinds that mean this
+    ///     publisher is being refused rather than merely disrupted — the credential rejected
+    ///     (<see cref="NatsServerErrorKind.AuthorizationViolation" />) and the publish rejected
+    ///     (<see cref="NatsServerErrorKind.PermissionsViolation" />) — and at <c>Warning</c> for every
+    ///     other kind. Nothing else is touched: an error is not an edge, so
+    ///     <c>pulse.nats.connected</c> keeps whatever value the connection handlers last gave it.
+    ///     <para />
+    ///     Internal for the same reason as <see cref="OnConnectionOpened" /> — it is the only place the
+    ///     broker's own wording is recorded, so the level split has to be assertable without a broker.
+    /// </summary>
+    internal ValueTask OnServerError(object? sender, NatsServerErrorEventArgs args)
+    {
+        LogLevel level =
+            args.Kind is NatsServerErrorKind.AuthorizationViolation or NatsServerErrorKind.PermissionsViolation
+                ? LogLevel.Error
+                : LogLevel.Warning;
+
+        logger.Log(level, "NATS server error ({ErrorKind}): {Error}", args.Kind, args.Error);
+
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>

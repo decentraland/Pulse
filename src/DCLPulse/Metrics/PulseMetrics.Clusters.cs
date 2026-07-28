@@ -43,8 +43,20 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.nats.published");
 
         /// <summary>
-        ///     Messages genuinely lost — evicted because too many distinct peers were pending at once,
-        ///     or failed at the broker. The actionable signal, unlike <see cref="SUPERSEDED" />.
+        ///     Publishes that threw, counted for the outbox drain and the discovery heartbeat alike.
+        ///     Every one of them is raised client-side — a timeout, a connect failure, an oversized
+        ///     payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a
+        ///     broker refusing one cannot fail the call. The lever is the broker or the path to it,
+        ///     never <c>Nats:ChannelCapacity</c>.
+        /// </summary>
+        public static readonly Counter<long> PUBLISH_FAILED =
+            METER.CreateCounter<long>("pulse.nats.publish_failed");
+
+        /// <summary>
+        ///     Messages genuinely lost to eviction — more than <c>Nats:ChannelCapacity</c> distinct
+        ///     peers held an undelivered assignment at once, so the longest-admitted one was pushed out.
+        ///     The actionable signal for capacity, unlike <see cref="SUPERSEDED" />; a publish that
+        ///     failed is counted by <see cref="PUBLISH_FAILED" /> instead.
         /// </summary>
         public static readonly Counter<long> DROPPED =
             METER.CreateCounter<long>("pulse.nats.dropped");

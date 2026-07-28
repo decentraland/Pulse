@@ -3,7 +3,7 @@ namespace DCLPulseBenchmarks;
 /// <summary>
 ///     Population shapes the clustering pass is measured against.
 ///     <para />
-///     The first three are the worked examples from <c>docs/island-clustering-on-aoi.md</c> §3.2,
+///     The first three are the worked examples from <c>docs/clustering-on-aoi.md</c> §3.2,
 ///     reproduced from their published scale and shape — peer counts, region sizes, whether neighbours
 ///     bridge or stay split — because the original coordinates were never recorded.
 ///     <see cref="ClusterTrackerBenchmarks" /> prints the realized topology at setup, so drift from the

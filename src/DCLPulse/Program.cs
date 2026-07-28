@@ -170,6 +170,10 @@ builder.Services.AddSingleton<PeerSnapshotPublisher>();
 builder.Services.AddOptions<ClusterOptions>()
     .Bind(builder.Configuration.GetSection(ClusterOptions.SECTION_NAME));
 
+// Accept the flat NATS_URL that archipelago's services read, as well as Nats__Url, so one
+// CI-injected secret can serve either name. Must run before the bind below.
+builder.Configuration.AddNatsUrlAlias(Environment.GetEnvironmentVariable(NatsOptions.URL_ENV_ALIAS));
+
 builder.Services.AddOptions<NatsOptions>()
     .Bind(builder.Configuration.GetSection(NatsOptions.SECTION_NAME));
 

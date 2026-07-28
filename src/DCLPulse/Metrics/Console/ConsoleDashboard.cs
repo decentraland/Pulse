@@ -114,6 +114,14 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker bannedRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
 
+    private readonly GaugeTracker clusterCountTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker clusterPassDurationTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker clusterReassignmentsTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker natsPublishedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker natsDroppedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker natsReconnectsTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker natsConnectedTracker = new (SPARKLINE_MAX_SAMPLES);
+
     // Per-message-type rate trackers
     private readonly Dictionary<ClientMessage.MessageOneofCase, RateTracker> incomingRateTrackers =
         INCOMING_MESSAGES_CONFIG.Entries.ToDictionary(e => e.Type, _ => new RateTracker(SPARKLINE_MAX_SAMPLES));
@@ -144,6 +152,14 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView bannedRefused = new ();
     private readonly RateStatsView corruptedPacket = new ();
 
+    private readonly RateStatsView clusterCount = new ();
+    private readonly RateStatsView clusterPassDuration = new ();
+    private readonly RateStatsView clusterReassignments = new ();
+    private readonly RateStatsView natsPublished = new ();
+    private readonly RateStatsView natsDropped = new ();
+    private readonly RateStatsView natsReconnects = new ();
+    private readonly RateStatsView natsConnected = new ();
+
     // Per-message-type views
     private readonly MessageTableState<ClientMessage.MessageOneofCase> incomingMessagesState = new (INCOMING_MESSAGES_CONFIG);
     private readonly MessageTableState<ServerMessage.MessageOneofCase> outgoingMessagesState = new (OUTGOING_MESSAGES_CONFIG);
@@ -163,6 +179,17 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline handshakeReplayRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline bannedRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+
+    private readonly Sparkline clusterCountSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline clusterPassDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline clusterReassignmentsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline natsPublishedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline natsDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline natsReconnectsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline natsConnectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+
+    private long previousClusterPasses;
+    private long previousClusterPassDurationUs;
 
     private long lastSnapshotTimestamp = Stopwatch.GetTimestamp();
 
@@ -288,6 +315,8 @@ public sealed class ConsoleDashboard(
         ShiftSample(bannedRefusedSparkline.Values, bannedRefusedRate.PerSec);
         ShiftSample(corruptedPacketSparkline.Values, corruptedPacketRate.PerSec);
 
+        UpdateClusterViews(snap, elapsed);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -296,6 +325,46 @@ public sealed class ConsoleDashboard(
         foreach ((var type, var tracker) in outgoingRateTrackers)
             outgoingRates[type] = tracker.Update(snap.OutgoingMessages.Read(type), elapsed);
         outgoingMessagesState.Apply(outgoingRates);
+    }
+
+    /// <summary>
+    ///     Updates the cluster and feed rows. Pass duration is shown as the mean over the passes
+    ///     completed since the previous snapshot rather than a lifetime mean, so a recent slowdown
+    ///     is visible instead of being diluted by process history.
+    /// </summary>
+    private void UpdateClusterViews(MetricsSnapshot snap, double elapsed)
+    {
+        long passDelta = snap.Clusters.TotalPasses - previousClusterPasses;
+        long durationDelta = snap.Clusters.TotalPassDurationUs - previousClusterPassDurationUs;
+
+        previousClusterPasses = snap.Clusters.TotalPasses;
+        previousClusterPassDurationUs = snap.Clusters.TotalPassDurationUs;
+
+        double meanPassUs = passDelta > 0 ? (double)durationDelta / passDelta : 0;
+
+        RateStats clusterCountStats = clusterCountTracker.Record(snap.Clusters.ClusterCount);
+        RateStats passDurationStats = clusterPassDurationTracker.Record(meanPassUs);
+        RateStats reassignmentsRate = clusterReassignmentsTracker.Update(snap.Clusters.TotalReassignments, elapsed);
+        RateStats publishedRate = natsPublishedTracker.Update(snap.Clusters.TotalNatsPublished, elapsed);
+        RateStats droppedRate = natsDroppedTracker.Update(snap.Clusters.TotalNatsDropped, elapsed);
+        RateStats reconnectsRate = natsReconnectsTracker.Update(snap.Clusters.TotalNatsReconnects, elapsed);
+        RateStats connectedStats = natsConnectedTracker.Record(snap.Clusters.NatsConnected);
+
+        clusterCount.Apply(clusterCountStats, v => v.ToString("N0"));
+        clusterPassDuration.Apply(passDurationStats, v => v.ToString("N0"));
+        clusterReassignments.Apply(reassignmentsRate, v => v.ToString("N0"));
+        natsPublished.Apply(publishedRate, v => v.ToString("N0"));
+        natsDropped.Apply(droppedRate, v => v.ToString("N0"));
+        natsReconnects.Apply(reconnectsRate, v => v.ToString("N0"));
+        natsConnected.Apply(connectedStats, v => v.ToString("N0"));
+
+        ShiftSample(clusterCountSparkline.Values, snap.Clusters.ClusterCount);
+        ShiftSample(clusterPassDurationSparkline.Values, meanPassUs);
+        ShiftSample(clusterReassignmentsSparkline.Values, reassignmentsRate.PerSec);
+        ShiftSample(natsPublishedSparkline.Values, publishedRate.PerSec);
+        ShiftSample(natsDroppedSparkline.Values, droppedRate.PerSec);
+        ShiftSample(natsReconnectsSparkline.Values, reconnectsRate.PerSec);
+        ShiftSample(natsConnectedSparkline.Values, snap.Clusters.NatsConnected);
     }
 
     private Visual BuildVisualTree()
@@ -335,6 +404,20 @@ public sealed class ConsoleDashboard(
 
         var hardening = new Group("Hardening", hardeningTable);
 
+        var clustersTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Clusters", clusterCount, clusterCountSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Pass Duration (µs)", clusterPassDuration, clusterPassDurationSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Reassignments", clusterReassignments, clusterReassignmentsSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("NATS Published", natsPublished, natsPublishedSparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("NATS Dropped", natsDropped, natsDroppedSparkline.Style(STYLE_ERROR)),
+                RateStatsRow("NATS Reconnects", natsReconnects, natsReconnectsSparkline.Style(STYLE_ERROR)),
+                RateStatsRow("NATS Connected", natsConnected, natsConnectedSparkline.Style(STYLE_OUTBOUND)),
+            ]);
+
+        var clusters = new Group("Clusters", clustersTable);
+
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
             ).HorizontalAlignment(Align.Stretch);
@@ -345,6 +428,7 @@ public sealed class ConsoleDashboard(
                 pipeline,
                 webTransportGroup,
                 hardening,
+                clusters,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()
             ).Spacing(1)

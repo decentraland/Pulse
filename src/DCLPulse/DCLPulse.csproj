@@ -25,6 +25,10 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
+        <!-- Core of the official NATS .NET client. Pure managed, no native deps. The NATS.Net
+             umbrella package additionally pulls JetStream / KeyValueStore / ObjectStore / Services,
+             none of which a publish-only feed uses. -->
+        <PackageReference Include="NATS.Client.Core" Version="3.0.1" />
         <PackageReference Include="XenoAtom.Terminal.UI" Version="2.0.2" />
         <PackageReference Include="ZLogger" Version="2.5.10" />
         <PackageReference Include="Decentraland.RustWebTransport" Version="$(RustWebTransportVersion)" />

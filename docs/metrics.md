@@ -260,6 +260,59 @@ Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`
 
 ---
 
+## Cluster metrics
+
+Cluster derivation and the outbound NATS feed. Every value here stays zero while `Clusters:Enabled` is false; the NATS rows additionally stay zero in stats-only mode (`Nats:Url` unset), where the tracker runs but nothing is published.
+
+All of these are recorded once per pass on the tracker's own thread — none of them touch the per-tick or per-packet path.
+
+### Clusters
+
+Gauge of the clusters currently derived. `dcl_pulse_clusters`.
+
+| Signal | Meaning |
+|---|---|
+| Zero with peers connected | No peer has a realm yet, or `Clusters:Enabled` is false |
+| Stable count | Healthy — crowds are holding their shape between passes |
+| Oscillating each pass | Peers straddling a cell boundary; if it persists, raise `Clusters:DwellPasses` |
+| One cluster per peer | Peers are spread beyond one cell of each other — expected in a sparse realm |
+
+### Pass Duration
+
+Cumulative pass wall time in microseconds, paired with a pass count so the mean is `duration_total / passes_total`. `dcl_pulse_cluster_pass_duration_us_total`, `dcl_pulse_cluster_passes_total`. The dashboard shows the mean over passes since the last snapshot rather than the lifetime mean, so a recent slowdown is visible.
+
+| Signal | Meaning |
+|---|---|
+| Well under `PassIntervalMs` | Normal — the pass is O(N + cells) and should finish in single-digit milliseconds |
+| Approaching `PassIntervalMs` | Passes are about to overlap their own cadence; investigate before raising the interval |
+| Growing with peer count | Expected and linear; a superlinear climb means something peer-pairwise crept into the pass |
+
+### Reassignments
+
+Counter of published cluster assignment changes, counted *after* the dwell debounce — so it measures churn a consumer actually sees, not raw pass-to-pass jitter. `dcl_pulse_cluster_reassignments_total`.
+
+| Signal | Meaning |
+|---|---|
+| Roughly tracking peer movement | Normal |
+| Sustained high with a stable cluster count | Peers flapping between two clusters; raise `Clusters:DwellPasses` |
+| Zero while peers move between crowds | Debounce never satisfied, or the feed is wedged — cross-check pass count |
+
+### NATS Published / Dropped / Reconnects / Connected
+
+Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
+
+Drops are counted both for queue-overflow eviction and for broker publish failures. The queue is bounded and evicts oldest-first: every subject on this feed is self-superseding, so a stalled broker degrades freshness and never back-pressures the tracker.
+
+| Signal | Meaning |
+|---|---|
+| `connected` 1, published rising, dropped zero | Healthy |
+| `connected` 0 with `Nats:Url` set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
+| `connected` 0 with `Nats:Url` unset | Stats-only mode, by configuration — not a fault |
+| Dropped rising | Broker slower than the pass rate; raise `Nats:ChannelCapacity` or investigate broker latency |
+| Reconnects climbing steadily | Flapping broker or network path; assignment delivery is lossy in that window |
+
+---
+
 ## Incoming Messages
 
 Per-message-type rates for `ClientMessage` variants. Shows how many of each message type the server processes per second.

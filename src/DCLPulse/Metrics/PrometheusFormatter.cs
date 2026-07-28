@@ -65,6 +65,15 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_banned_refused_total", "Handshake rejections and active-peer evictions triggered by the platform ban list", snap.Hardening.TotalBannedRefused);
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
 
+        WriteGauge(writer, "dcl_pulse_clusters", "Clusters currently derived by the clustering pass", snap.Clusters.ClusterCount);
+        WriteCounter(writer, "dcl_pulse_cluster_passes_total", "Clustering passes completed", snap.Clusters.TotalPasses);
+        WriteCounter(writer, "dcl_pulse_cluster_pass_duration_us_total", "Cumulative clustering pass wall time in microseconds. Divide by dcl_pulse_cluster_passes_total for the mean.", snap.Clusters.TotalPassDurationUs);
+        WriteCounter(writer, "dcl_pulse_cluster_reassignments_total", "Published cluster assignment changes, counted after the dwell debounce", snap.Clusters.TotalReassignments);
+        WriteCounter(writer, "dcl_pulse_nats_published_total", "Messages published to the cluster feed broker", snap.Clusters.TotalNatsPublished);
+        WriteCounter(writer, "dcl_pulse_nats_dropped_total", "Feed messages never delivered — evicted on queue overflow or failed at the broker", snap.Clusters.TotalNatsDropped);
+        WriteCounter(writer, "dcl_pulse_nats_reconnects_total", "Times the broker connection was re-established after a loss", snap.Clusters.TotalNatsReconnects);
+        WriteGauge(writer, "dcl_pulse_nats_connected", "1 while the broker connection is up, 0 otherwise (always 0 in stats-only mode)", snap.Clusters.NatsConnected);
+
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);
         WriteEnumCounters(writer, "dcl_pulse_outgoing_messages_total", "Total outgoing messages by type",

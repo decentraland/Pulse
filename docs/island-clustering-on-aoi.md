@@ -15,7 +15,7 @@ Requirements for the new layer:
 
 ## 2. What Pulse AoI provides
 
-- **`SpatialGrid`** — global cell index, 50-unit XZ cells, packed int64 keys. Written incrementally on every snapshot publish; lock-free reads.
+- **`SpatialGrid`** — global cell index, 100-unit XZ cells (`SpatialHashAreaOfInterest:CellSize`; the options class default is still 50), packed int64 keys. Written incrementally on every snapshot publish; lock-free reads.
 - **`SpatialHashAreaOfInterest`** — per-observer scan of neighboring cells, realm-filtered, `MaxRadius` 100, distance tiers driving 50/100/200 ms update rates.
 - **`SnapshotBoard`** — seqlock latest state per peer (position, parcel, realm); single writer per slot, lock-free reads from any thread.
 - **`PeerSimulation`** — per-worker tick: AoI query → view diff → messages. Workers own disjoint peer stripes; cross-worker coordination is forbidden.
@@ -35,14 +35,24 @@ AoI is pairwise and observer-centric — no group concept exists. Islands are a 
 Cluster at cell granularity, reusing the AoI grid — no second grid:
 
 1. **Enumerate.** A small read-only `SpatialGrid` extension yields occupied cells with occupants. Occupants are partitioned by realm from their latest snapshot (realm-less peers skipped). Nodes are `(realm, cellKey)`.
-2. **Union.** Weighted union-find with path compression over 8-neighbor same-realm occupied cells. Adjacent-cell peers are 0–141 units apart — a coarser proxy for archipelago's 64-unit join distance; boundary noise is absorbed by the dwell debounce (§3.3). Effective join range follows the AoI `CellSize`: one spatial resolution for visibility and clustering.
+2. **Union.** Weighted union-find with path compression over 8-neighbor same-realm occupied cells. Two peers in adjacent cells are between 0 and `2 · CellSize · √2` apart — **0–283 units** at the configured 100 u — a proxy for archipelago's 64-unit join distance that is 4.4× coarser; boundary noise is absorbed by the dwell debounce (§3.3). Effective join range follows the AoI `CellSize`: one spatial resolution for visibility and clustering.
+
+   Two consequences of the 100 u setting worth stating plainly. Pulse will merge groups archipelago would have kept apart far more often than a 50 u grid would, so the §5 shadow-mode comparison should expect systematically fewer, larger clusters rather than a near-match. And since the join band (283 u) now exceeds `MaxRadius` (200 u) by a wider margin, two peers being in one cluster while never being mutually visible is ordinary rather than a chaining edge case — see the "Island ≠ visibility" note below.
 3. **Component → island.** Each root is an island; count, centroid, radius computed in the same sweep.
 
 No cap: a connected crowd is one island, deterministically.
 
-**Limits.** Hard ceiling: instance capacity (`Transport.MaxPeers`, 4095 — fixed arrays, no cross-instance clustering), further confined per realm. The algorithm adds none (O(N + C), C = occupied cells; well under 1 ms/pass at 10k peers). The practical bound is density and belongs to AoI: islands don't affect fan-out, so spread islands can reach instance capacity while dense crowds hit per-observer AoI fan-out (~n² within `MaxRadius`) first. Downstream, LiveKit room mapping shards past ~low thousands (§3.6).
+**Limits.** Hard ceiling: instance capacity (`Transport.MaxPeers`, 4095 — fixed arrays, no cross-instance clustering), further confined per realm. The algorithm adds none: O(N + C), C = occupied cells. Measured **~590 µs/pass at the 4095 ceiling** — Genesis City-sized world, cold working set, `ClusterTrackerBenchmarks` scenario `CeilingUniform` (~424 µs warm; ~230 KB of gen0 per pass, almost all of it the immutable `ClusterPass` the readers hold). The documented scenarios cost far less: ~9 µs for the 100-peer sparse case, ~50–57 µs for the 1 000-peer ones. That is 0.06% of one core at the 1 Hz cadence, so the pass is not a scaling concern below a capacity change; an earlier estimate of "well under 1 ms at 10k peers" was optimistic, since 10k is not reachable on one instance anyway. The practical bound is density and belongs to AoI: islands don't affect fan-out, so spread islands can reach instance capacity while dense crowds hit per-observer AoI fan-out (~n² within `MaxRadius`) first. Downstream, LiveKit room mapping shards past ~low thousands (§3.6).
+
+**Percolation limit — at capacity on a full-size realm, the partition collapses.** Cell-adjacency clustering is site percolation on the grid: once the occupied fraction passes the 8-neighbour (Moore) threshold of ≈ 0.407, the occupied cells form one giant connected component and every peer lands in one cluster. Genesis City (4800 u) at 100 u cells is 48 × 48 = 2304 cells, so `MaxPeers` 4095 spread uniformly gives λ ≈ 1.78 peers/cell and an occupied fraction of `1 − e^−λ` ≈ **0.83** — roughly twice the threshold. Measured (`ClusterTrackerBenchmarks`, `CeilingUniform`): 1904 occupied cells, **2 clusters, the larger holding 4091 of 4095 peers**.
+
+At 50 u the same population occupies ≈ 0.36 of 9216 cells, just *below* threshold — which is why the design's worked examples partitioned sensibly. Doubling the cell size moved the shipping configuration from one side of the percolation transition to the other. Consequences: sticky IDs and the dwell debounce have nothing to stabilise at high density; downstream LiveKit room sharding is load-bearing rather than an overflow path (§3.6); and the exact-distance refinement in §7 becomes the mechanism that decides whether clustering means anything at capacity. This bounds usefulness, not correctness — the pass still runs in well under a millisecond, and sparse realms (the common case, scenario 3) are unaffected.
 
 #### Worked examples
+
+> These three scenarios and their illustrations were produced at a **50-unit** cell size, before the configured value settled at 100. At 100 u the same inputs merge more aggressively, so every cluster count below is a lower bound on merging and an upper bound on cluster count. The qualitative comparisons against archipelago — cap fragmentation, chaining, the sparse-case match — all still hold; the specific counts do not. Regenerating the illustrations is tracked in §7.
+>
+> All three are reproduced as runnable benchmarks — `ClusterScenario` in `src/DCLPulseBenchmarks`, which prints the realized topology at setup. At 100 u they still land on the documented partitions: scenario 1 gives 9 clusters with the crowd intact at 450, scenario 2 one cluster of 1 000, scenario 3 the 32-peer bridge plus singleton loners. What does *not* survive the cell-size change is a densely populated realm — see the percolation note above.
 
 **Scenario 1 — one dense region (450) + 10 sparser regions, 1 000 peers:**
 
@@ -64,7 +74,7 @@ Adjacency is transitive: one island of 1 000, extent ~1 280 units. Notes:
 
 ![Scenario 3: sporadic distribution](img/island-clustering-sporadic-illustration.png)
 
-The common case, and the migration is invisible in it: sparse cells have no occupied neighbors (near-zero union edges); adjacent areas bridge (I1, 32); the near-but-separate pair stays split; each loner is a singleton island — archipelago's semantic exactly. On this input both algorithms produce the **identical partition** (672/672 co-membership pairs). Divergence exists only in scenarios 1–2: cap fragmentation and the 50–141 u boundary band.
+The common case, and the migration is invisible in it: sparse cells have no occupied neighbors (near-zero union edges); adjacent areas bridge (I1, 32); the near-but-separate pair stays split; each loner is a singleton island — archipelago's semantic exactly. On this input both algorithms produce the **identical partition** (672/672 co-membership pairs). Divergence exists only in scenarios 1–2: cap fragmentation and the boundary band (50–141 u as illustrated; 100–283 u at the configured cell size, which widens it considerably).
 
 ### 3.3 Stability
 
@@ -79,7 +89,7 @@ Stability is load-bearing: ID churn breaks dashboard continuity and forces LiveK
 No client protocol change — no `IslandChanged` message, no worker involvement. Two consumers:
 
 - **Stats/monitoring** — served by Pulse directly (§3.5).
-- **Archipelago as listener** — Pulse is the sole author; archipelago core stops clustering, consumes the feed (§3.6), and keeps its external interface (conn-strings, NATS subjects, endpoints) unchanged.
+- **Comms Gatekeeper as listener** — Pulse is the sole author and publishes assignment changes to NATS (§3.6); gatekeeper mints LiveKit conn-strings and re-emits the existing `island_changed` message, so WS Connector and clients are untouched. Archipelago-core is removed, not bridged.
 
 ### 3.5 Stats served by Pulse
 
@@ -87,22 +97,22 @@ No client protocol change — no `IslandChanged` message, no worker involvement.
 
 Today: WS Connector → NATS heartbeats + core → `engine.islands` → stats service REST (`/peers`, `/islands`, `/parcels`, `/hot-scenes`; per peer: wallet, position, parcel, lastPing). Pulse already holds all of it — wallet (`IdentityBoard`), position/parcel/realm/freshness (`SnapshotBoard`), assignment (`IslandBoard`) — and the tracker attaches per-peer detail to each published result, so HTTP serves the last pass at zero marginal cost, ≤ `PassIntervalMs` stale (vs 2 s flush + 60 s heartbeat timeout today).
 
-Surface: `GET /islands`, `/islands/{id}`, `/peers`, `/parcels` on the existing `HttpService`, response-compatible with archipelago stats (`maxPeers` constant or omitted). Exception: `/hot-scenes` needs Catalyst metadata — keep a thin aggregator for it, re-pointed at Pulse; Pulse grows no Catalyst client.
+Surface: `GET /islands`, `/islands/{id}`, `/peers`, `/parcels` on the existing `HttpService`, response-compatible with archipelago stats (`maxPeers` constant or omitted). These are stats endpoints only — the assignment feed is NATS (§3.6). Exception: `/hot-scenes` needs Catalyst metadata — it moves to comms-gatekeeper, which already has a Catalyst `content-client`; Pulse grows no Catalyst client.
 
-### 3.6 Feed: Pulse → Archipelago
+### 3.6 Feed: Pulse → NATS (direct)
 
-Core **polls `GET /islands`** at its ~2 s cadence, diffs assignments per wallet, mints LiveKit conn-strings, republishes `engine.peer.{id}.island_changed`. Downstream sees no change.
+Pulse publishes per-peer assignment changes **directly to NATS**: `peer.{addr}.island_change { islandId, realm }`, emitted whenever a peer's *published* (post-debounce) assignment changes. Comms-gatekeeper subscribes, mints the LiveKit conn-string (ban check is authority-local — its own store), and publishes the existing `engine.peer.{addr}.island_changed` `IslandChangedMessage`. WS Connector and clients are untouched; archipelago-core is removed rather than bridged. (An earlier revision proposed core polling `GET /islands` over HTTP; dropped in favor of direct NATS once core's removal moved into iteration 1.)
 
-**Why HTTP polling** (vs NATS/WS/ENet): the feed is a periodic self-superseding snapshot — pull fits exactly, a missed poll heals itself. Both sides have the machinery already. NATS adds Pulse's only external dependency and its 1 MB payload cap forces chunking at ~10k peers. WS needs a new server stack (`HttpListener` has no Linux WS upgrade) for latency the 2 s consumer can't use. ENet is a game-client transport with no Node bindings. Failure mode is visible staleness, not a dead subscription. Revisit NATS only with multiple consumers.
+Why NATS works here where the topology-snapshot feed ruled it out: per-peer *change events* are small and self-contained — the 1 MB payload concern applied to full-topology snapshots, which this feed doesn't carry. Both consumers in the chain (gatekeeper, WS Connector) are NATS-side services, and event semantics match the consumer: gatekeeper acts per change, not per snapshot. The cost is Pulse's first broker dependency — **publish-only, config-gated, fail-soft**: a NATS outage stalls conn-string delivery, never the tracker or simulation.
 
-**ETag.** `"{bootId}-{version}"`, string-compared against `If-None-Match` before serialization. The feed returns an assignments-only shape (id, realm, member wallets — no positions); its version bumps only when assignments change, which sticky IDs + dwell make infrequent → steady-state polls are empty 304s. The boot ID (a GUID generated at process start) invalidates held ETags across restarts — without it, the reset in-memory version counter could reach a previously served value and 304 a topology the consumer never saw. Version and payload live on the same immutable object — no torn reads. Position-carrying stats endpoints are served unconditioned.
+Delivery semantics: NATS is at-most-once — a dropped event leaves a peer in its previous room until its next reassignment. Mitigation: a low-rate periodic re-publish of current assignments (sweep), plus `GET /islands` (stats) available for reconciliation.
 
-**Latency upgrade path**, if ever needed: long-polling (`?after={version}&timeout=30`) — push-grade latency, request/response semantics, inherent failure detection. SSE/WS is explicitly not the path.
+**Connecting Pulse to NATS** (implementation): NATS.Net official client (pure managed — no native deps; the `<PackageReference>` still triggers the Docker-image rebuild rule). One `NatsPublisher : BackgroundService` owns the connection; producers write to a bounded channel (drop-oldest — feeds are self-superseding, a stalled broker must never back-pressure the tracker): `IslandTracker` emits `island_change` + `engine.islands` + parcel-change batches (it already keeps per-peer previous state for the dwell debounce, so parcel diffing is free), a timer emits `engine.discovery`. Wire compatibility: `engine.islands`/`engine.discovery` must match `@dcl/protocol` `archipelago.proto` messages — extend Pulse's existing proto generation to include them; the two new messages (`island_change`, `parcel_changes`) are added to `@dcl/protocol` so gatekeeper gets TS types from the same source. Test seam: `IIslandFeedPublisher` (NSubstitute). `Nats` config unset = feed disabled, stats-only mode — the rollback story.
 
-**Bridge-owned consequences:**
+**Consequences owned by gatekeeper:**
 
-- *Population mismatch* — peer sets joined by wallet can transiently differ; unknown wallets get no island until they appear (same lag as today). Expose a mismatch metric.
-- *Uncapped islands vs room capacity* — LiveKit rooms are single-node-bound (~low thousands audio; 100 audio subscriptions per participant). Past that the bridge shards rooms (`island:{id}:{shard}`) — a token-issuer concern, decoupled from clustering.
+- *Uncapped islands vs room capacity* — LiveKit rooms are single-node-bound (~low thousands audio; 100 audio subscriptions per participant). Past that, gatekeeper shards rooms (`island:{id}:{shard}`) — a token-issuer concern, decoupled from clustering.
+- *Delivery reach* — a wallet connected to Pulse but without a WS Connector session gets events nobody forwards (harmless); the reverse (WS session, no Pulse connection) gets no island. Expose a mismatch metric.
 
 ### 3.7 Configuration
 
@@ -111,13 +121,15 @@ Core **polls `GET /islands`** at its ~2 s cadence, diffs assignments per wallet,
 | `Enabled` | false | Feature flag |
 | `PassIntervalMs` | 1000 | Tracker pass cadence |
 | `DwellPasses` | 3 | Passes before a reassignment publishes |
+| `IdPrefix` | `I` | Island ID prefix (replaces archipelago `ROOM_PREFIX`) |
+| `Nats` (url, subjects) | — | Feed publisher; unset = feed disabled (stats-only mode) |
 
 ## 4. Comparison
 
 | | Archipelago Core | This proposal |
 | --- | --- | --- |
 | Input | NATS heartbeats (≤ 2 s stale, 60 s disconnect lag) | `SnapshotBoard` (fresh, ~5 s cleanup) |
-| Granularity | peer-pairwise single-linkage, 64/80 | union-find over 50 u `SpatialGrid` cells |
+| Granularity | peer-pairwise single-linkage, 64/80 | union-find over 100 u `SpatialGrid` cells (join band 0–283 u) |
 | Stability | ID survives largest fragment only; merge-order dependent | sticky IDs + dwell debounce |
 | Size cap | 100, blocks merges | none; sharding downstream |
 | Cost | O(pairs) per flush | O(N + C) per pass, off hot path |
@@ -125,11 +137,14 @@ Core **polls `GET /islands`** at its ~2 s cadence, diffs assignments per wallet,
 
 ## 5. Migration
 
-**Iteration 1 — data moves, endpoints don't.** Pulse becomes the sole island author and the source of all island/peer data. Every external endpoint stays exactly where it is: the archipelago stats service keeps serving its REST API (now sourced from Pulse's feed via core), WS Connector keeps delivering `island_changed`. No consumer changes anything.
+Plan of record: [Archipelago ⇒ Pulse migration plan](https://app.notion.com/p/decentraland/Archipelago-Pulse-migration-plan-3a45f41146a58070b6b0dbe541bc7533) (Notion). This section mirrors it.
 
-1. Shadow mode: ship behind `Islands.Enabled`; expose `GET /islands` + Prometheus metrics (island count, pass duration, reassignments/min). Compare topologies against archipelago offline.
-2. Switch authorship: core's engine → feed subscriber (core-side flag); core only diffs, mints conn-strings, republishes `island_changed` and `engine.islands` (keeping the stats service fed unmodified).
-3. **Remove `desiredRoom`.** The hint dies with the engine — it only ever biased merge-target choice when the 100 cap split co-located crowds, which no longer happens. Validated: no production client sets it — unity-explorer's `SendHeartbeatAsync` sends only `Position`, godot-explorer doesn't send it either; the sole sender is the test client. Scope: core stops mapping it to `preferedIslandId`; the field stays in the `Heartbeat` proto (silently ignored) for wire compatibility; the test client drops its usage.
+**Iteration 1 — remove archipelago-core.** Pulse becomes the sole island author; comms-gatekeeper takes over conn-string minting; WS Connector keeps its client-facing role unchanged.
+
+1. Shadow mode: ship `IslandTracker`/`IslandBoard` behind `Islands.Enabled` + Prometheus metrics (island count, pass duration, reassignments/min). Compare topologies against archipelago offline.
+2. Switch: Pulse publishes `peer.{addr}.island_change` to NATS (§3.6); gatekeeper (new NATS client — it has none today) subscribes, mints, publishes the existing `engine.peer.{addr}.island_changed`; WS Connector forwards as before. Core is decommissioned (kept deployable behind a flag as rollback until shadow comparison passes).
+3. **Remove `desiredRoom`.** It dies with core's engine — it only ever biased merge-target choice when the 100 cap split co-located crowds, which no longer happens. Validated: no production client sets it (unity-explorer's `SendHeartbeatAsync` sends only `Position`; godot-explorer doesn't send it; the sole sender is the test client). The proto field stays, silently ignored; the test client drops its usage.
+4. **Client heartbeats stay** (decision — removal deferred to iteration 2). Archipelago-stats keeps building its peer map from `peer.*.heartbeat`, so every stats endpoint is untouched in iteration 1. Pulse-published `engine.islands` + `engine.discovery` replace core's feeds. Iteration-1 Pulse NATS output: `peer.{addr}.island_change`, `engine.islands`, `engine.discovery`.
 
 **Iteration 1 client-side complement — crowd ghost avatars (unity-explorer).** Uncapped islands remove the last server-side bound on co-located crowd size, so the client's GPU becomes the binding constraint; excess visible peers render as ghosts instead of full avatars. The pieces mostly exist:
 
@@ -138,21 +153,21 @@ Core **polls `GET /islands`** at its ~2 s cadence, diffs assignments per wallet,
 - *Transitions:* promotion reuses the existing ghost→full reveal unchanged; demotion is new — reverse reveal, then release wearables through the existing cleanup/pool path. Emote props/audio suppressed while ghosted.
 - *Risks:* demotion churn pressuring wearable pools (mitigated by hysteresis); ghosts are skinned meshes, cheap but not free — past a second threshold, hide outright.
 
-**Iteration 2 — consumers re-point to Pulse directly,** except `/hot-scenes`. That endpoint joins peer-per-parcel counts with scene metadata fetched from Catalyst; the count side moves to Pulse, but the Catalyst side stays in a slimmed-down stats service (the "aggregator") whose sole remaining job is that join — Pulse grows no Catalyst client (§3.5). Impact per consumer:
+**Iteration 2 — remove archipelago-stats + client heartbeats.** Client heartbeats retire (position already flows via `MovementInput`; WS Connector heartbeat intake and `peer.*.heartbeat`/`peer.*.disconnect` go with them). Endpoints migrate to Pulse (`/peers`, `/peers/:id`, `/islands`, `/islands/:id`, `/parcels`, `/status`; `/comms/*` aliases kept; `/core-status` retires — Pulse `/about` + `/health` carry commit + user count), except `/hot-scenes`, which moves to **comms-gatekeeper**. Its position source (heartbeats are gone; the island feed carries assignments, not positions) is NATS — preferred over HTTP between internal services: Pulse publishes `engine.parcel_changes` every N s (default 2 s), a batch of peers whose parcel changed since the last batch (`{ seq, changes: [{ address, realm, parcel | null on disconnect }] }`) — movers only, so batches stay small (worst case `MaxPeers` entries). Gatekeeper maintains wallet → parcel from the deltas, derives per-parcel counts, and joins with cached Catalyst scene metadata via its existing `content-client` — Pulse grows none (§3.5). Drift-healing: a `seq` gap or a periodic timer triggers a full snapshot on the same subject. Public URLs stay stable by rerouting at the CloudFlare edge to the new origins, so consumers need response-shape compatibility only. Impact per consumer:
 
 | Service | Uses today | Iteration 2 change |
 | --- | --- | --- |
 | `realm-provider` | Stats `/core-status`, WS Connector `/status`; builds `archipelago:wss://…/ws` adapter URL | `/core-status` → Pulse health/about; `/status` + adapter URL unchanged (tied to WS Connector, not stats) |
 | `lamb2` | WS Connector `/status` for health; `/archipelago/ws` adapter URL in Catalyst `/about` | None — depends on WS Connector lifetime, not stats |
-| `social-service-ea` | Stats `/peers` (connected peer list) | → Pulse `GET /peers` |
-| `unity-explorer` | Stats `/comms/peers`, `/status`, `/hot-scenes` | `/comms/peers` → Pulse `GET /peers`; `/status` → Pulse; `/hot-scenes` → aggregator (URL may stay) |
-| `godot-explorer` | Stats `/hot-scenes`, `/status` | `/status` → Pulse; `/hot-scenes` → aggregator |
+| `social-service-ea` | Stats `/peers` (connected peer list) | → Pulse `GET /peers` (edge reroute, no change on their side) |
+| `unity-explorer` | Stats `/comms/peers`, `/status`, `/hot-scenes` | `/comms/peers` → Pulse; `/status` → Pulse; `/hot-scenes` → gatekeeper (URLs stay via edge reroute) |
+| `godot-explorer` | Stats `/hot-scenes`, `/status` | `/status` → Pulse; `/hot-scenes` → gatekeeper |
 | `referral` | Stats `/peers` (is user in main realm) | → Pulse `GET /peers` (realm now first-class in the response) |
-| `places` | Stats `/hot-scenes` via realm-provider proxy | None — aggregator keeps the endpoint; proxy re-points if the aggregator URL changes |
-| `sites` | Stats `/hot-scenes` | None — aggregator |
+| `places` | Stats `/hot-scenes` via realm-provider proxy | None — edge reroute keeps the URL |
+| `sites` | Stats `/hot-scenes` | None — edge reroute keeps the URL |
 | `dcl-comms-debugger` | WS Connector `/ws` directly (load testing) | None — transport, not stats |
 
-Takeaways: `/hot-scenes` is the widest-used endpoint (4 consumers) and never moves into Pulse — the aggregator must survive iteration 2. `/peers` consumers (3) are the real re-pointing work; Pulse responses stay shape-compatible (including the legacy `/comms` prefix) to keep those changes URL-only. WS Connector-coupled consumers (`realm-provider` adapter URL, `lamb2`, `dcl-comms-debugger`) are untouched until the WS Connector retirement (§6).
+Takeaways: `/hot-scenes` is the widest-used endpoint (4 consumers) and never moves into Pulse — it lands on gatekeeper's existing Catalyst infrastructure. `/peers` consumers (3) are the real re-pointing work; Pulse responses stay shape-compatible (including the legacy `/comms` prefix) and edge rerouting keeps URLs stable. WS Connector-coupled consumers (`realm-provider` adapter URL, `lamb2`, `dcl-comms-debugger`) are untouched until the WS Connector retirement (§6).
 
 No client protocol change in iterations 1–2; rollback is config-only.
 
@@ -162,12 +177,8 @@ Not part of iterations 1–2; recorded as direction.
 
 | Proposal | Before | After | Implementation glimpse |
 | --- | --- | --- | --- |
-| **WS Connector retirement** | Clients hold a WS session whose only unique function is pushing the LiveKit conn-string; auth, positions (sent twice — WS heartbeat + `MovementInput`), and ban kicks all duplicate Pulse | No WS Connector, no core bridge, no NATS subjects, single position stream; clients get island ID from Pulse and exchange it for a token | Minimal `IslandChanged { island_id, realm }` on ch0 (the per-worker announce path omitted from iteration 1); token exchange at comms-gatekeeper, which validates against Pulse's feed and owns room sharding. Preconditions: clients on a Pulse transport (WebTransport for browsers), `realm-provider`/`lamb2` advertise the Pulse endpoint |
-| **Hot-scenes into Pulse** | Thin aggregator kept alive for one endpoint; hits Catalyst uncached on every request | Aggregator retires; Pulse serves `/hot-scenes` with bounded staleness | `IslandBoard` pattern: background refresher joins parcel counts (already in Pulse) with a minutes-TTL scene-metadata cache (`fetchEntitiesByPointers` on uncached tiles only); endpoint serves the immutable last snapshot — never request-path I/O (the `HttpService` loop is sequential). Catalyst client is Pulse's first external dependency: isolated `BackgroundService`, fail-soft, staleness metric. Fallback if rejected: move the endpoint to `places` |
-| **Ban enforcement consolidation** | Four parallel fail-open enforcement implementations against comms-gatekeeper: Pulse (poll + handshake reject + mid-session kick), WS Connector (per-handshake check + 30 s sweep), core (check at token mint), client status screen — two marked "keep in sync" duplicates | Pulse is the single comms-level enforcement point + gatekeeper checks its own store at token exchange; client status screen unchanged | WS Connector's two checks vanish with the service; core's token-mint check moves into gatekeeper (authority-local, no cross-service hop). Pulse's existing `BansPollingHttpService`/`BanEnforcer` needs no change. Ban **origination** stays in comms-gatekeeper throughout (its internals not analyzed — repo out of scope) |
-| **LiveKit token minting** | Core mints room-join JWTs itself (5-min TTL; grants: mic-only publish, data, subscribe) | Gatekeeper mints at token exchange | Grant policy and room-sharding rules port from `core/components.ts` `mintToken` to gatekeeper; Pulse never holds LiveKit credentials |
-| **Service discovery / health** | Core publishes `engine.discovery` (name, commit, user count) every 10 s → stats `/core-status` (healthy = heartbeat < 90 s old) → `realm-provider` | Pulse `/about` + `/health` serve the same signal directly | Add user count to Pulse's `/about` (commit hash already there); `realm-provider` polls it instead of `/core-status`. The NATS discovery subject retires |
-| **Island ID convention (`ROOM_PREFIX`)** | Sequential IDs `{prefix}{n}` per deployment, prefix from config | Same convention on Pulse sticky IDs | One `Islands.IdPrefix` option stamped by the tracker when assigning fresh IDs — keeps room names unambiguous per deployment |
+| **WS Connector retirement** | Clients hold a WS session whose only unique function is delivering the LiveKit conn-string; auth and ban kicks duplicate Pulse | No WS Connector, no island NATS subjects; clients get island ID from Pulse and exchange it for a token | Minimal `IslandChanged { island_id, realm }` on ch0 (the per-worker announce path omitted from iteration 1); token exchange at comms-gatekeeper (it already mints and owns sharding after iteration 1) — push becomes pull, gatekeeper's NATS subscription retires. Preconditions: clients on a Pulse transport (WebTransport for browsers), `realm-provider`/`lamb2` advertise the Pulse endpoint |
+| **Ban enforcement consolidation** | After iteration 1, three enforcement points remain: Pulse (poll + handshake reject + mid-session kick), WS Connector (per-handshake check + 30 s sweep), client status screen (core's token-mint check already became gatekeeper-local in iteration 1) | Pulse is the single comms-level enforcement point + gatekeeper checks its own store at minting; client status screen unchanged | WS Connector's two checks vanish with its retirement; Pulse's existing `BansPollingHttpService`/`BanEnforcer` needs no change. Ban **origination** stays in comms-gatekeeper throughout (its internals not analyzed — repo out of scope) |
 | **WS Connector `/status` + realm advertisement** | `realm-provider`/`lamb2` poll WS Connector `/status` and advertise `archipelago:wss://…/ws`; one archipelago deployment = one realm | Pulse public status endpoint; adapter string names the Pulse endpoint; one Pulse instance hosts many realms | Status is a subset of Pulse's stats surface. Advertisement change is a `realm-provider`/`lamb2` config/format change. New concern to plan: per-instance capacity (`MaxPeers` 4095) now bounds the *sum* of hosted realms — multi-instance sharding is an open question |
 
 Everything else archipelago does is already Pulse-native and needs no migration: AuthChain auth, duplicate-session eviction, heartbeat expiry (Pulse: ~5 s disconnect cleanup vs 60 s), and kick messaging (`DisconnectReason`).
@@ -175,5 +186,7 @@ Everything else archipelago does is already Pulse-native and needs no migration:
 ## 7. Open questions
 
 - Scene listeners in islands? Proposal: no — no snapshot, naturally excluded.
-- Exact-distance refinement if cell adjacency proves too coarse (merge at ~140 u diagonal / split at ~60 u across boundaries). Deferred until shadow-mode data.
+- Exact-distance refinement if cell adjacency proves too coarse. At the configured 100 u the join band is 0–283 u against archipelago's 64 u, so this is now more likely to be needed than when the proposal was written against 50 u cells — thresholds scale with `CellSize` (merge at ~`2·CellSize·√2`, split at just above `CellSize`). Deferred until shadow-mode data.
+- Regenerate the §3.2 worked examples and illustrations at 100 u, so the documented cluster counts match the shipping configuration.
+- Should `SpatialHashAreaOfInterestOptions.CellSize` default to 100 to match `appsettings.json`? A default that differs from every deployment is a trap for tests and for anyone reading the class.
 - Stats endpoints public (as archipelago's are) or bearer-gated like `/metrics`? They expose wallet ↔ position; decide deliberately.

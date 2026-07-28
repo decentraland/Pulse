@@ -51,6 +51,16 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long bannedRefused;
     private long corruptedPacket;
 
+    // Cluster derivation and feed totals — recorded once per pass on the tracker thread.
+    private int clusterCount;
+    private long clusterPasses;
+    private long clusterPassDurationUs;
+    private long clusterReassignments;
+    private long natsPublished;
+    private long natsDropped;
+    private long natsReconnects;
+    private int natsConnected;
+
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
         ClientMessageCounters incomingMessageCounters,
@@ -125,6 +135,17 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
             },
+            Clusters = new MetricsSnapshot.ClustersSnapshot
+            {
+                ClusterCount = Volatile.Read(ref clusterCount),
+                TotalPasses = Interlocked.Read(ref clusterPasses),
+                TotalPassDurationUs = Interlocked.Read(ref clusterPassDurationUs),
+                TotalReassignments = Interlocked.Read(ref clusterReassignments),
+                TotalNatsPublished = Interlocked.Read(ref natsPublished),
+                TotalNatsDropped = Interlocked.Read(ref natsDropped),
+                TotalNatsReconnects = Interlocked.Read(ref natsReconnects),
+                NatsConnected = Volatile.Read(ref natsConnected),
+            },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
         };
@@ -195,6 +216,24 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
                 break;
+            case "pulse.clusters.passes":
+                Interlocked.Add(ref clusterPasses, value);
+                break;
+            case "pulse.clusters.pass_duration_us":
+                Interlocked.Add(ref clusterPassDurationUs, value);
+                break;
+            case "pulse.clusters.reassignments":
+                Interlocked.Add(ref clusterReassignments, value);
+                break;
+            case "pulse.nats.published":
+                Interlocked.Add(ref natsPublished, value);
+                break;
+            case "pulse.nats.dropped":
+                Interlocked.Add(ref natsDropped, value);
+                break;
+            case "pulse.nats.reconnects":
+                Interlocked.Add(ref natsReconnects, value);
+                break;
         }
     }
 
@@ -209,6 +248,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.pre_auth_in_flight":
                 Interlocked.Add(ref preAuthInFlight, value);
+                break;
+            case "pulse.clusters.count":
+                Interlocked.Add(ref clusterCount, value);
+                break;
+            case "pulse.nats.connected":
+                Interlocked.Add(ref natsConnected, value);
                 break;
         }
     }

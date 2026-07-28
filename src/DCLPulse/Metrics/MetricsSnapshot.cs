@@ -5,6 +5,7 @@ public readonly record struct MetricsSnapshot
     public TransportSnapshot Transport { get; init; }
     public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
+    public ClustersSnapshot Clusters { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
@@ -36,6 +37,22 @@ public readonly record struct MetricsSnapshot
     {
         public long TotalDatagramsDroppedStale { get; init; }
         public long TotalDatagramsDroppedOversize { get; init; }
+    }
+
+    /// <summary>
+    ///     Cluster derivation and the outbound NATS feed. All zero while
+    ///     <c>Clusters:Enabled</c> is false; NATS values also stay zero in stats-only mode.
+    /// </summary>
+    public readonly record struct ClustersSnapshot
+    {
+        public int ClusterCount { get; init; }
+        public long TotalPasses { get; init; }
+        public long TotalPassDurationUs { get; init; }
+        public long TotalReassignments { get; init; }
+        public long TotalNatsPublished { get; init; }
+        public long TotalNatsDropped { get; init; }
+        public long TotalNatsReconnects { get; init; }
+        public int NatsConnected { get; init; }
     }
 
     public readonly record struct HardeningSnapshot

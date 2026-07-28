@@ -171,7 +171,7 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 
 | Option (`Clusters`) | Default | Meaning |
 | --- | --- | --- |
-| `Enabled` | false | Feature flag |
+| `Enabled` | true | Feature flag (set in both `appsettings.json` and `appsettings.Development.json`) |
 | `PassIntervalMs` | 1000 | Tracker pass cadence |
 | `DwellPasses` | 3 | Passes before a reassignment publishes |
 | `IdPrefix` | `C` | Cluster ID prefix (replaces archipelago `ROOM_PREFIX`) |
@@ -185,6 +185,8 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 | `ChannelCapacity` | 1024 | Max distinct peers with an undelivered assignment |
 
 The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — the latter is the name archipelago's services read (`config.requireString("NATS_URL")`), so one CI-injected secret serves both. `Nats__Url` wins if both are set. Because an unresolved URL fails soft rather than erroring, `dcl_pulse_nats_connected` and the startup log are the only signals that a secret never arrived.
+
+**The two flags are independent, and that is the safe default.** `Clusters:Enabled` ships **true**, so the tracker runs everywhere and its metrics are populated; `Nats:Url` ships empty, so nothing is published. A deployment therefore gets shadow mode (§5 step 1) by default and becomes an author only once a broker URL is injected — which is also the rollback: clear the URL and the feed stops while clustering keeps running.
 
 **Metrics** (see [metrics.md](metrics.md)): `dcl_pulse_clusters`, `dcl_pulse_cluster_passes_total`, `dcl_pulse_cluster_pass_duration_us_total`, `dcl_pulse_cluster_reassignments_total`, and for the feed `dcl_pulse_nats_{published,dropped,superseded,reconnects}_total` plus `dcl_pulse_nats_connected`. `dropped` is the actionable one; `superseded` is expected under load.
 

@@ -395,6 +395,12 @@ MetaForge/
 - The solution file is `src/DCLPulse/DCLPulse.sln` — always pass it explicitly since it's not in the repo root.
 - Use `-p:GenerateProto=false` unless the user explicitly asks to regenerate proto files.
 - To run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
+- **Benchmarks** live in `src/DCLPulseBenchmarks` (BenchmarkDotNet). `Program.cs` uses `BenchmarkSwitcher`, so every `[Benchmark]` class in the assembly is selectable from the command line — never edit it to choose a suite. Always `-c Release`:
+  ```bash
+  dotnet run -c Release --project src/DCLPulseBenchmarks -p:GenerateProto=false -- --list flat
+  dotnet run -c Release --project src/DCLPulseBenchmarks -p:GenerateProto=false -- --filter '*ClusterTracker*'
+  ```
+  `DCLPulse.csproj` grants `InternalsVisibleTo` to the benchmarks project, so `internal` entry points (e.g. `ClusterTracker.RunPass`) are callable. Prefer adding a benchmark class here over a throwaway harness in the test project — a measurement nobody can re-run is a measurement nobody will trust. When a benchmark disproves an optimization, record that in the class docs so it is not retried blind (see `ClusterTrackerBenchmarks`).
 - `dotnet restore` auto-fetches `Decentraland.RustEthereum.<version>.nupkg` into the gitignored `packages/` local NuGet source via `src/Directory.Build.targets`. Bump `RustEthereumVersion` in `src/Directory.Build.props` and the next restore pulls the new version from the GitHub Release. The underlying script is `tools/fetch-rust-eth.{sh,ps1}`.
 - **If you touched anything in the restore/build pipeline** — csprojs (especially `<PackageReference>` or `<ProjectReference>`), `src/Directory.Build.{props,targets}`, `src/NuGet.config`, `tools/fetch-rust-eth.{sh,ps1}`, or the `.gitignore` rules around `packages/` — also build the Docker images to catch layered-COPY misses that `dotnet build` won't surface:
   ```bash

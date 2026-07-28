@@ -21,6 +21,7 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="DCLPulseTests" />
+        <InternalsVisibleTo Include="DCLPulseBenchmarks" />
     </ItemGroup>
 
     <ItemGroup>

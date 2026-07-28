@@ -10,19 +10,14 @@ using System.Runtime.InteropServices;
 namespace Pulse.Clusters;
 
 /// <summary>
-///     Derives cluster membership from the same boards area-of-interest reads, on its own thread and
-///     wholly off the hot path: one pass every <see cref="ClusterOptions.PassIntervalMs" /> that
-///     reads <see cref="SpatialGrid" /> and <see cref="SnapshotBoard" /> and never touches a worker,
-///     a peer state dict or <c>PeerSimulation</c>.
+///     Derives cluster membership on its own thread, off the hot path: one pass every
+///     <see cref="ClusterOptions.PassIntervalMs" /> reads <see cref="SpatialGrid" /> and
+///     <see cref="SnapshotBoard" /> and touches no worker, peer state dict or <c>PeerSimulation</c>.
 ///     <para />
 ///     A pass is weighted union-find with path halving over occupied grid cells using 8-neighbor
-///     adjacency, with nodes keyed <c>(realm, cellKey)</c> so a cluster never spans realms. Cost is
-///     O(N + C) in peers and occupied cells — no peer-pair tests. Clustering on cells rather than
-///     distances makes the effective join range follow the AoI <c>CellSize</c>: one spatial
-///     resolution for both visibility and clustering.
-///     <para />
-///     Working buffers are fields and are cleared, not reallocated, between passes. The published
-///     <see cref="ClusterPass" /> is necessarily fresh each time — readers hold it by reference.
+///     adjacency, nodes keyed <c>(realm, cellKey)</c> so a cluster never spans realms. Cost is
+///     O(N + C) in peers and occupied cells — no peer-pair tests. Working buffers are fields, cleared
+///     rather than reallocated between passes.
 /// </summary>
 public sealed class ClusterTracker : BackgroundService
 {
@@ -30,9 +25,8 @@ public sealed class ClusterTracker : BackgroundService
     private const int NONE = -1;
 
     // Forward half of the 8-neighborhood: the +X column plus the cell straight ahead in +Z. Every
-    // node probes and union is symmetric, so each adjacent pair is still visited exactly once, from
-    // whichever of the two cells holds the other at one of these offsets. Half the lookups of the
-    // full ring for an identical partition, and the probe is the bulk of a pass.
+    // node probes and union is symmetric, so each adjacent pair is still visited exactly once — half
+    // the lookups of the full ring for an identical partition.
     private static readonly int[] NEIGHBOR_DX = [1, 1, 1, 0];
     private static readonly int[] NEIGHBOR_DZ = [-1, 0, 1, 1];
 
@@ -44,10 +38,9 @@ public sealed class ClusterTracker : BackgroundService
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
 
-    // Per-pass realm interning. A node key carries a dense realm id rather than the realm name, so
-    // a neighbor probe hashes two integers instead of re-hashing a client-supplied string. Rebuilt
-    // every pass: realm names arrive on the wire, so a table carried across passes would grow
-    // without bound.
+    // Per-pass realm interning. A node key carries a dense realm id, so a neighbor probe hashes two
+    // integers instead of a client-supplied string. Rebuilt every pass: realm names arrive on the
+    // wire, so a table carried across passes would grow without bound.
     private readonly List<string> realmNames = [];
     private readonly Dictionary<string, int> realmIdByName = new ();
 
@@ -63,7 +56,7 @@ public sealed class ClusterTracker : BackgroundService
     private readonly List<PassComponent> components = [];
 
     // Scratch for one component's overlap tally against the previous pass. Cleared per component,
-    // and holds one entry per previous cluster the component draws members from — a handful.
+    // and holds one entry per previous cluster the component draws members from.
     private readonly Dictionary<string, int> overlapCounts = new ();
 
     // State carried across passes, owned solely by this thread.
@@ -96,8 +89,8 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     // A List indexer hands back a copy of a struct element, so in-place updates go through the
-    // backing store instead. Properties rather than cached locals: re-reading costs a couple of
-    // instructions and cannot go stale when the list grows mid-loop.
+    // backing store instead. Properties rather than cached locals: a re-read cannot go stale when
+    // the list grows mid-loop.
     private Span<PassNode> NodeSpan =>
         CollectionsMarshal.AsSpan(nodes);
 
@@ -149,19 +142,15 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     One clustering pass, start to finish. Each step is isolated so it can be reasoned about
-    ///     and tested on its own.
-    ///     <para />
-    ///     Internal rather than private so tests can drive passes deterministically instead of
-    ///     racing the background loop's timer.
+    ///     One clustering pass, start to finish. Internal rather than private so a pass can be driven
+    ///     directly instead of by the background loop's timer.
     /// </summary>
     internal void RunPass()
     {
         long startTicks = Stopwatch.GetTimestamp();
 
-        // Stamps every per-pass liveness check in this class: a peer slot, a cluster record and a
-        // claim are all "current" exactly when they carry this number, so nothing has to be cleared
-        // to mark it stale.
+        // Stamps every per-pass liveness check: a peer slot, a cluster record and a claim are
+        // current exactly when they carry this number, so nothing has to be cleared to go stale.
         passNumber++;
 
         CollectNodes();
@@ -174,9 +163,8 @@ public sealed class ClusterTracker : BackgroundService
         RememberComputedAssignments();
         clusterBoard.Publish(pass);
 
-        // Topology before the per-peer events, so a snapshot declaring a cluster reaches consumers
-        // ahead of the assignments that reference it. A consumer that has to resolve a cluster id —
-        // gatekeeper sizing a room for sharding — would otherwise join against the previous pass.
+        // Topology before the per-peer events, so a snapshot declaring a cluster is published ahead
+        // of the assignments that reference it.
         feedPublisher.PublishTopology(pass);
 
         int reassignments = PublishAssignmentChanges();
@@ -193,7 +181,7 @@ public sealed class ClusterTracker : BackgroundService
         if (reassignments > 0)
             PulseMetrics.Clusters.REASSIGNMENTS.Add(reassignments);
 
-        // Reported as a delta so the collector accumulates it like any other up-down counter.
+        // An up-down counter takes the delta, not the absolute count.
         PulseMetrics.Clusters.COUNT.Add(clusterCount - lastClusterCount);
         lastClusterCount = clusterCount;
     }
@@ -221,12 +209,11 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Resolves one occupant into a <see cref="PassMember" />, or skips it. Peers whose snapshot
-    ///     is unreadable, whose realm is unset, or whose wallet is unknown are skipped — they cannot
-    ///     be placed in a realm-partitioned cluster nor addressed on the feed. A peer already
-    ///     collected this pass is skipped too: the grid read is weakly consistent, so a peer that
-    ///     changes cell mid-enumeration can surface in both its old and its new cell, and every
-    ///     later step assumes a peer appears at most once.
+    ///     Resolves one occupant into a <see cref="PassMember" />, or skips it. A peer whose snapshot
+    ///     is unreadable, whose realm is unset or whose wallet is unknown cannot be placed in a
+    ///     realm-partitioned cluster. A peer already collected this pass is skipped too: the grid read
+    ///     is weakly consistent, so a peer that changes cell mid-enumeration can surface in both its
+    ///     old and its new cell, and every later step assumes a peer appears at most once.
     /// </summary>
     private void TryCollectMember(PeerIndex peer)
     {
@@ -248,9 +235,8 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Partitions the members just appended for one cell into a node per distinct realm,
-    ///     reordering them in place so every node's members are contiguous in
-    ///     <see cref="members" />. One cell almost always holds a single realm, so this settles
-    ///     into a single linear scan.
+    ///     reordering them in place so every node's members are contiguous in <see cref="members" />.
+    ///     One cell almost always holds a single realm, so this settles into one linear scan.
     /// </summary>
     private void GroupCellMembersByRealm(long cellKey, int cellFirstMember)
     {
@@ -308,10 +294,10 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Unions each node with its same-realm neighbors. Two peers in adjacent cells are between 0
-    ///     and <c>2 * CellSize * sqrt(2)</c> apart — 0–283 units at the configured 100-unit cell size
-    ///     — a much coarser proxy for archipelago's 64-unit join distance, with the resulting
-    ///     boundary noise absorbed by the dwell debounce rather than by a second distance threshold.
+    ///     Unions each node with its same-realm neighbors. Cell adjacency is the whole join test: two
+    ///     peers in adjacent cells are between 0 and <c>2 * CellSize * sqrt(2)</c> apart, and the
+    ///     resulting boundary noise is absorbed by the dwell debounce rather than by a second
+    ///     distance threshold.
     /// </summary>
     private void UnionNeighbors()
     {
@@ -374,10 +360,9 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Files one node under its union-find root's component, creating that component the first
-    ///     time the root is reached and pushing the node onto its chain. The chain is what lets a
-    ///     component's members be walked without a separate ordering array: a component is its
-    ///     nodes, and a node's members are already contiguous. Only a root node's
-    ///     <see cref="PassNode.Component" /> is meaningful.
+    ///     time the root is reached and pushing the node onto its chain. The chain plus each node's
+    ///     contiguous member slice is what lets a component's members be walked without a separate
+    ///     ordering array. Only a root node's <see cref="PassNode.Component" /> is meaningful.
     /// </summary>
     private void AttachToComponent(Span<PassNode> table, int node)
     {
@@ -408,10 +393,10 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Gives each component the ID of the previous cluster it shares the most members with,
-    ///     so a crowd that splits or merges keeps a stable identity across passes. Ties resolve to
-    ///     the older cluster. When two components claim the same previous ID the one with the larger
-    ///     overlap keeps it and the other takes a fresh ID.
+    ///     Gives each component the ID of the previous cluster it shares the most members with, so a
+    ///     crowd that splits or merges keeps a stable identity across passes. Ties resolve to the
+    ///     older cluster; when two components claim the same ID the larger overlap keeps it and the
+    ///     other takes a fresh one.
     /// </summary>
     private void AssignStickyIds()
     {
@@ -484,9 +469,8 @@ public sealed class ClusterTracker : BackgroundService
             return;
         }
 
-        // On an exact tie the component discovered first keeps the ID. Discovery order follows
-        // grid enumeration, so which of two equal-sized fragments inherits is arbitrary — both
-        // outcomes are equally correct, and archipelago made no guarantee here either.
+        // On an exact tie the component discovered first keeps the ID. Discovery order follows grid
+        // enumeration, so which of two equal-sized fragments inherits is arbitrary.
         if (table[component].InheritedOverlap > table[record.Claimant].InheritedOverlap)
         {
             table[record.Claimant].InheritedId = null;
@@ -511,8 +495,7 @@ public sealed class ClusterTracker : BackgroundService
     {
         var id = $"{options.IdPrefix}{++nextClusterNumber}";
 
-        // Minted IDs are never inheritable in the pass that mints them — inheritance only reads
-        // previous-pass assignments — so no component ever contests the claim.
+        // Inheritance only reads previous-pass assignments, so a freshly minted ID is uncontested.
         clusterRecords[id] = new ClusterRecord
         {
             CreationSeq = nextClusterNumber,
@@ -525,8 +508,8 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Drops bookkeeping for clusters that no longer exist, so the registry cannot grow without
-    ///     bound over a long-lived process. Every component holds exactly one distinct ID, so
-    ///     matching counts mean nothing vanished.
+    ///     bound. Every component holds exactly one distinct ID, so matching counts mean nothing
+    ///     vanished.
     /// </summary>
     private void PruneVanishedClusters()
     {
@@ -538,8 +521,7 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Materializes the immutable pass result: per-cluster geometry plus the per-peer detail the
-    ///     stats surface serves.
+    ///     Materializes the immutable pass result: per-cluster geometry plus per-peer detail.
     /// </summary>
     private ClusterPass BuildPass()
     {
@@ -556,9 +538,7 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Builds one cluster's metadata and appends its members to the pass-wide peer detail at
-    ///     <paramref name="peerCursor" />. Centroid and radius are computed on the XZ plane,
-    ///     matching what archipelago reported, so <c>engine.islands</c> stays comparable during
-    ///     shadow mode.
+    ///     <paramref name="peerCursor" />. Centroid and radius are computed on the XZ plane only.
     /// </summary>
     private ClusterInfo BuildCluster(
         int component,
@@ -599,8 +579,8 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Records what this pass computed, so the next pass can measure cluster-identity overlap
-    ///     against it. Kept separate from the published assignment: a fragment mid-debounce must
-    ///     still inherit its own ID rather than be minted a new one every pass.
+    ///     against it. Kept separate from the published assignment: a fragment mid-debounce must still
+    ///     inherit its own ID rather than be minted a new one every pass.
     /// </summary>
     private void RememberComputedAssignments()
     {
@@ -634,9 +614,9 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Emits a feed event for one peer if its published assignment — cluster and realm together
-    ///     — differs from what the feed was last told, and either the change is exempt from the
-    ///     debounce or the peer has dwelled long enough. Returns whether it published.
+    ///     Emits a feed event for one peer if its assignment — cluster and realm together — differs
+    ///     from the last one published, and either the change is exempt from the debounce or the peer
+    ///     has dwelled long enough. Returns whether it published.
     /// </summary>
     private bool TryPublishAssignment(PassMember member, string clusterId)
     {
@@ -654,7 +634,7 @@ public sealed class ClusterTracker : BackgroundService
 
         // The debounce is bypassed on first assignment, teleport, realm change, and deletion of the
         // peer's previous cluster — cases where the published assignment is already known to be
-        // wrong, so waiting would keep serving a stale room.
+        // wrong, so waiting would only prolong it.
         bool immediate = state.PublishedClusterId is null
                          || member.IsTeleport
                          || realmChanged
@@ -694,9 +674,8 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Clears carried-over state for peers absent from this pass. Mandatory rather than tidy:
-    ///     <see cref="PeerIndex" /> is a recycled ENet slot, so state left behind for a departed
-    ///     peer would otherwise be inherited by whichever wallet lands on that slot next and make
-    ///     its first assignment look like an unchanged one.
+    ///     <see cref="PeerIndex" /> is a recycled ENet slot, so state left behind would be inherited
+    ///     by the next wallet on that slot and make its first assignment look unchanged.
     /// </summary>
     private void ForgetVanishedPeers()
     {
@@ -724,18 +703,16 @@ public sealed class ClusterTracker : BackgroundService
         ///     The cell coordinates are mixed as two separate inputs, deliberately.
         ///     <see cref="long" /> hashes as <c>low ^ high</c>, so a packed cell key folds to
         ///     <c>x ^ z</c>: a 96x96 grid of cells yields 128 distinct hash codes, and every cell on
-        ///     an anti-diagonal collides. Feeding <see cref="CellKey" /> whole — to the generated
-        ///     record hash or to <c>HashCode.Combine(RealmId, CellKey)</c> — does not fix it, because
-        ///     the fold happens before any mixing and no mixing restores lost entropy. Probing the
-        ///     node table is the bulk of a pass, so those chains would dominate its cost.
+        ///     an anti-diagonal collides. Feeding <see cref="CellKey" /> whole does not fix it — the
+        ///     fold happens before any mixing, and no mixing restores lost entropy.
         /// </summary>
         public override int GetHashCode() =>
             HashCode.Combine(RealmId, (int)CellKey, (int)(CellKey >> 32));
     }
 
     /// <summary>
-    ///     A peer as observed by one pass, resolved once so later steps never re-read the boards
-    ///     and never see a torn view of a peer mid-pass.
+    ///     A peer as observed by one pass, resolved once so later steps never re-read the boards and
+    ///     never see a torn view of a peer mid-pass.
     /// </summary>
     private readonly record struct PassMember(
         PeerIndex Peer,
@@ -747,9 +724,9 @@ public sealed class ClusterTracker : BackgroundService
     );
 
     /// <summary>
-    ///     One node of the cell graph: its identity, the slice of <see cref="members" /> it owns,
-    ///     its union-find links, and the component it ended up in. Mutable, and updated in place
-    ///     through <see cref="NodeSpan" /> — union-find rewrites parents on nearly every read.
+    ///     One node of the cell graph: its identity, the slice of <see cref="members" /> it owns, its
+    ///     union-find links, and the component it ended up in. Updated in place through
+    ///     <see cref="NodeSpan" /> — union-find rewrites parents on nearly every read.
     /// </summary>
     private struct PassNode
     {
@@ -768,8 +745,8 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     One connected component of the cell graph, and the cluster it publishes as. Mutable, and
-    ///     updated in place through <see cref="ComponentSpan" />.
+    ///     One connected component of the cell graph, and the cluster it publishes as. Updated in
+    ///     place through <see cref="ComponentSpan" />.
     /// </summary>
     private struct PassComponent
     {
@@ -790,15 +767,13 @@ public sealed class ClusterTracker : BackgroundService
     /// <summary>
     ///     What the tracker carries about one peer slot between passes.
     ///     <para />
-    ///     Two distinct notions of "previous cluster", deliberately kept apart:
-    ///     <see cref="PreviousPassClusterId" /> is what the last pass <i>computed</i>. It defines
-    ///     cluster identity continuity, so it is what sticky-ID inheritance measures overlap
-    ///     against. <see cref="PublishedClusterId" /> is what consumers were last <i>told</i>, which
-    ///     the dwell debounce holds back — only the debounce decision may read it.
-    ///     <para />
-    ///     Conflating them starves the debounce: a fragment whose reassignment is still being
-    ///     debounced would look unassigned to the inheritance step and be minted a fresh ID on every
-    ///     pass, so its candidate would never repeat and its streak would never reach DwellPasses.
+    ///     Two notions of "previous cluster", deliberately kept apart:
+    ///     <see cref="PreviousPassClusterId" /> is what the last pass <i>computed</i>, which is what
+    ///     sticky-ID inheritance measures overlap against; <see cref="PublishedClusterId" /> is what
+    ///     the feed was last <i>told</i>, read only by the debounce decision. Conflating them starves
+    ///     the debounce: a fragment mid-debounce would look unassigned to inheritance and be minted a
+    ///     fresh ID every pass, so its candidate would never repeat and its streak never reach
+    ///     <see cref="ClusterOptions.DwellPasses" />.
     /// </summary>
     private struct PeerClusterState
     {
@@ -817,9 +792,9 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Bookkeeping for one cluster ID that exists or existed. <see cref="LastLivePass" /> equal
-    ///     to the current pass marks the cluster live, and is what makes <see cref="Claimant" />
-    ///     meaningful; anything older is pruned at the end of the pass.
+    ///     Bookkeeping for one cluster ID that exists or existed. <see cref="LastLivePass" /> equal to
+    ///     the current pass marks the cluster live and makes <see cref="Claimant" /> meaningful;
+    ///     anything older is pruned at the end of the pass.
     /// </summary>
     private struct ClusterRecord
     {
@@ -831,9 +806,8 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Walks one component's members: its chain of nodes, and within each node the contiguous
-    ///     slice of <see cref="members" /> that node owns. Mirrors the shape of
-    ///     <see cref="SpatialGrid.OccupiedCellEnumerator" /> so both read the same way at the call
-    ///     site, and keeps the two-level indirection out of every step that needs members.
+    ///     slice of <see cref="members" /> that node owns, keeping the two-level indirection out of
+    ///     every step that needs members.
     /// </summary>
     private struct MemberEnumerator(ClusterTracker tracker, int firstNode)
     {

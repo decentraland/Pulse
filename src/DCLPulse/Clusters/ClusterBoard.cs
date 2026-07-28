@@ -5,8 +5,8 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Metadata for one cluster in a single tracker pass. <see cref="Centroid" /> is the mean of
-///     member positions and <see cref="Radius" /> the distance from it to the farthest member —
-///     the same geometry archipelago reported, so <c>engine.islands</c> stays shape-compatible.
+///     member positions and <see cref="Radius" /> the distance from it to the farthest member — the
+///     geometry archipelago reported.
 /// </summary>
 public readonly record struct ClusterInfo(
     string Id,
@@ -17,8 +17,8 @@ public readonly record struct ClusterInfo(
 );
 
 /// <summary>
-///     Per-peer detail for one member of a cluster, carried so the stats surface can serve
-///     wallet ↔ position ↔ parcel ↔ cluster from the last pass at zero marginal cost.
+///     Per-peer detail for one member of a cluster: wallet, cluster, realm, position and parcel as of
+///     the pass that built it.
 /// </summary>
 public readonly record struct ClusterPeerInfo(
     PeerIndex Peer,
@@ -30,8 +30,8 @@ public readonly record struct ClusterPeerInfo(
 );
 
 /// <summary>
-///     The immutable result of one clustering pass. Never mutated after construction, so any
-///     number of readers can hold it for as long as they like while the tracker builds the next.
+///     The immutable result of one clustering pass. Never mutated after construction, so any number of
+///     readers can hold it while the tracker builds the next.
 /// </summary>
 public sealed class ClusterPass(
     IReadOnlyList<ClusterInfo> clusters,
@@ -40,16 +40,14 @@ public sealed class ClusterPass(
 {
     public static readonly ClusterPass EMPTY = new ([], [], []);
 
-    // Indexed by PeerIndex; null where the peer is unassigned. Gives readers O(1) "which cluster
-    // is this peer in" without scanning Peers.
-
     public IReadOnlyList<ClusterInfo> Clusters { get; } = clusters;
 
     public IReadOnlyList<ClusterPeerInfo> Peers { get; } = peers;
 
     /// <summary>
-    ///     The cluster this peer belonged to as of this pass, or null if it was unassigned
-    ///     (no realm, or not present in the grid when the pass ran).
+    ///     The cluster this peer belonged to as of this pass, or null if it was unassigned (no realm,
+    ///     or not present in the grid when the pass ran). Indexed by <see cref="PeerIndex" />, so it
+    ///     answers in constant time rather than scanning <see cref="Peers" />.
     /// </summary>
     public string? GetClusterId(PeerIndex peer)
     {
@@ -60,13 +58,12 @@ public sealed class ClusterPass(
 }
 
 /// <summary>
-///     Holds the latest <see cref="ClusterPass" />. Single writer (the tracker thread) swaps the
-///     whole result in with one <see cref="Volatile.Write{T}" />; readers are lock-free and always
-///     observe a complete, self-consistent pass — never a half-built one.
+///     Holds the latest <see cref="ClusterPass" />. Single writer (the tracker thread) swaps the whole
+///     result in with one <see cref="Volatile.Write{T}" />; readers are lock-free and always observe a
+///     complete pass, never a half-built one.
 ///     <para />
-///     A board separate from <c>SnapshotBoard</c> is the sanctioned exception to the
-///     ledger-column rule: this state is globally derived rather than per-peer, has exactly one
-///     writer, and is never mutated by a worker.
+///     A board separate from <c>SnapshotBoard</c> is deliberate: this state is globally derived rather
+///     than per-peer, has exactly one writer, and is never mutated by a worker.
 /// </summary>
 public sealed class ClusterBoard
 {

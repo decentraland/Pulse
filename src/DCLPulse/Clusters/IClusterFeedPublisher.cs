@@ -2,8 +2,8 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Outbound cluster feed. Both methods are fire-and-forget hand-offs: they enqueue and return
-///     without waiting on the broker, so a stalled or absent NATS server can never slow the
-///     tracker pass down. Implementations must not throw.
+///     without waiting on the broker, so a stalled or absent NATS server never slows a tracker pass.
+///     Implementations must not throw.
 /// </summary>
 public interface IClusterFeedPublisher
 {

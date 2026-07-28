@@ -77,19 +77,17 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
         cells.GetValueOrDefault(ComputeKey(position));
 
     /// <summary>
-    ///     Enumerates the currently occupied cells with their occupants. Lock-free — it neither
-    ///     takes <c>writeLock</c> nor blocks <see cref="Set" />/<see cref="Remove" />.
-    ///     <para />
-    ///     Weakly consistent, like any <see cref="ConcurrentDictionary{TKey,TValue}" /> enumeration:
-    ///     cells added or removed while enumerating may or may not be observed. Every cell that is
-    ///     observed is internally consistent, because occupant sets are copy-on-write.
+    ///     Enumerates the currently occupied cells with their occupants. Lock-free — it neither takes
+    ///     <c>writeLock</c> nor blocks <see cref="Set" />/<see cref="Remove" />, and is therefore
+    ///     weakly consistent like any <see cref="ConcurrentDictionary{TKey,TValue}" /> enumeration:
+    ///     cells added or removed mid-enumeration may or may not be observed, but every cell that is
+    ///     observed is internally consistent because occupant sets are copy-on-write.
     /// </summary>
     public OccupiedCellEnumerator GetOccupiedCells() =>
         new (cells.GetEnumerator());
 
     /// <summary>
-    ///     Splits a packed cell key back into its cell coordinates. Inverse of the internal packing
-    ///     used by <see cref="GetOccupiedCells" />, so callers can walk cell neighborhoods.
+    ///     Splits a packed cell key back into its cell coordinates. Inverse of <see cref="PackKey" />.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void UnpackKey(long key, out int x, out int z)
@@ -99,8 +97,7 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
     }
 
     /// <summary>
-    ///     Packs cell coordinates into the key used by <see cref="GetOccupiedCells" />. Exposed so
-    ///     callers can address a neighboring cell without re-deriving the encoding.
+    ///     Packs cell coordinates into the key carried by <see cref="OccupiedCell" />.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static long PackKey(int x, int z) =>
@@ -115,19 +112,15 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
         (int)MathF.Floor(v * inverseCellSize);
 
     /// <summary>
-    ///     One occupied cell as observed by <see cref="GetOccupiedCells" />.
-    ///     <para />
-    ///     <see cref="Occupants" /> must be treated as read-only. It is safe to hold and iterate
-    ///     without locking because <see cref="Set" /> and <see cref="Remove" /> replace the set
-    ///     instance rather than mutating it, so an observed reference never changes underneath the
-    ///     reader. Mutating it would corrupt the grid for every other reader.
+    ///     One occupied cell as observed by <see cref="GetOccupiedCells" />. <see cref="Occupants" />
+    ///     is read-only: <see cref="Set" /> and <see cref="Remove" /> replace the set instance rather
+    ///     than mutating it, so an observed reference is safe to iterate without locking but mutating
+    ///     it would corrupt the grid for every other reader.
     /// </summary>
     public readonly record struct OccupiedCell(long Key, HashSet<PeerIndex> Occupants);
 
     /// <summary>
-    ///     Allocation-free-per-item enumerator over occupied cells. Mirrors the shape of
-    ///     <see cref="Peers.Simulation.SnapshotBoard.ActivePeerEnumerator" /> so both boards read
-    ///     the same way at the call site.
+    ///     Allocation-free-per-item enumerator over occupied cells.
     /// </summary>
     public struct OccupiedCellEnumerator(IEnumerator<KeyValuePair<long, HashSet<PeerIndex>>> inner)
     {

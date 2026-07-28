@@ -5,9 +5,8 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     Precedence rules for the two accepted spellings of the broker URL: the service-specific
-///     <c>Nats__Url</c> and the flat <c>NATS_URL</c> that archipelago's services read. Getting this
-///     wrong fails silently — an unresolved URL leaves the publisher in stats-only mode with no
-///     error, so the rules are pinned here rather than left to inspection.
+///     <c>Nats__Url</c> and the flat <c>NATS_URL</c>. Getting this wrong fails silently — an unresolved
+///     URL leaves the publisher in stats-only mode with no error.
 /// </summary>
 [TestFixture]
 public class NatsUrlAliasTests
@@ -38,7 +37,7 @@ public class NatsUrlAliasTests
     [Test]
     public void SectionKey_Wins_WhenSetInEnvironmentDoubleUnderscoreForm()
     {
-        // Nats__Url is how the section key arrives from CI; the environment provider translates the
+        // Nats__Url arrives from CI as the section key once the environment provider translates the
         // double underscore, so the alias must not override it.
         ConfigurationManager configuration = new ();
         configuration.AddInMemoryCollection([new KeyValuePair<string, string?>("Nats:Url", SECTION_URL)]);

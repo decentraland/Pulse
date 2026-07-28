@@ -63,9 +63,8 @@ public class NatsPublisherTests
     }
 
     /// <summary>
-    ///     The defect this guards: a shared oldest-first queue would evict one peer's assignment to
-    ///     admit another's, leaving the evicted peer addressed by a stale cluster until its next
-    ///     reassignment — which may never arrive if it stops moving.
+    ///     Guards against a shared oldest-first queue, which would evict one peer's assignment to admit
+    ///     another's and leave the evicted peer published under a stale cluster indefinitely.
     /// </summary>
     [Test]
     public void RepeatedChangeForSamePeer_IsSupersededNotDropped()

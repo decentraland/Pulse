@@ -331,9 +331,9 @@ public sealed class ConsoleDashboard(
     }
 
     /// <summary>
-    ///     Updates the cluster and feed rows. Pass duration is shown as the mean over the passes
-    ///     completed since the previous snapshot rather than a lifetime mean, so a recent slowdown
-    ///     is visible instead of being diluted by process history.
+    ///     Updates the cluster and feed rows. Pass duration is the mean over the passes completed since
+    ///     the previous snapshot, not a lifetime mean, so a recent slowdown is not diluted by process
+    ///     history.
     /// </summary>
     private void UpdateClusterViews(MetricsSnapshot snap, double elapsed)
     {

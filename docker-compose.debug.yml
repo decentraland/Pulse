@@ -14,9 +14,8 @@ services:
       Logging__LogLevel__Default: Debug
       Peers__ResyncWithDelta: false
       WebTransport__Enabled: true
-      # Cluster derivation is off by default in appsettings; the debug stack turns it on and points
-      # it at the sidecar broker so the NATS feed is exercisable locally. Drop Nats__Url to get
-      # stats-only mode (tracker runs, nothing published).
+      # Off by default in appsettings; the debug stack turns clustering on and points it at the
+      # sidecar broker. Drop Nats__Url for stats-only mode (tracker runs, nothing published).
       Clusters__Enabled: true
       Nats__Url: nats://nats:4222
     depends_on:

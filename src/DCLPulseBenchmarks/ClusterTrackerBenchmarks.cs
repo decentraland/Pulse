@@ -10,36 +10,31 @@ using System.Numerics;
 namespace DCLPulseBenchmarks;
 
 /// <summary>
-///     Cost of one <see cref="ClusterTracker" /> pass — the 1 Hz off-hot-path job that derives
-///     cluster membership by union-find over occupied <see cref="SpatialGrid" /> cells — across the
-///     population shapes in <see cref="ClusterScenario" />.
+///     Cost of one <see cref="ClusterTracker" /> pass — the 1 Hz off-hot-path job that derives cluster
+///     membership by union-find over occupied <see cref="SpatialGrid" /> cells — across the population
+///     shapes in <see cref="ClusterScenario" />.
 ///     <para />
-///     <b>Which number to read.</b> <see cref="Pass" /> repeats over an unchanging grid, so by the
-///     time it is measured the whole working set is in cache. Production never looks like that: a
-///     second of tick and packet traffic passes between two tracker passes and evicts all of it.
-///     <see cref="PassWithChurn" /> is therefore the realistic figure — it moves peers before each
-///     pass, which both dirties the grid and cold-starts the caches. It necessarily includes the
-///     movement cost, so subtract <see cref="Churn" /> to isolate the pass. At the 4095 ceiling that
-///     put a cold pass at ~590 us against ~424 us warm, so the warm figure understates by roughly a
-///     third rather than by the order of magnitude one might fear. Prefer <see cref="Pass" /> for
-///     regression detection — much lower variance — and the cold figure when quoting a real cost.
+///     <b>Which number to read.</b> <see cref="Pass" /> repeats over an unchanging grid, so its working
+///     set is in cache; a second of tick and packet traffic between two production passes evicts all of
+///     it. <see cref="PassWithChurn" /> is the realistic figure — it moves peers first, dirtying the
+///     grid and cold-starting the caches — and includes the movement cost, so subtract
+///     <see cref="Churn" />. At the 4095 ceiling that was ~590 us cold against ~424 us warm. Prefer
+///     <see cref="Pass" /> for regression detection (much lower variance) and the cold figure when
+///     quoting a real cost.
 ///     <para />
 ///     <b>Geometry.</b> <see cref="CELL_SIZE" /> matches <c>SpatialHashAreaOfInterest:CellSize</c> in
-///     appsettings.json, and worlds are Genesis City sized. The scenarios were originally drawn at a
-///     50-unit cell size, where the join band was 0–141 units against 0–283 at 100; regions that were
-///     documented as staying split may therefore merge here. Setup prints the realized cluster count
-///     per scenario so that is observable rather than silent.
+///     appsettings.json, and worlds are Genesis City sized. The scenarios were drawn at a 50-unit cell
+///     size, where the join band was 0–141 units against 0–283 at 100, so regions documented as staying
+///     split may merge here — setup prints the realized cluster count per scenario.
 ///     <para />
-///     <b>Churn model.</b> Walkers are leashed to their starting point
-///     (<see cref="LEASH" />) rather than travelling, so a long benchmark run cannot dissolve the
-///     scenario it is supposed to be measuring — an unleashed walker drifts thousands of units over
-///     the invocation count BenchmarkDotNet chooses.
+///     <b>Churn model.</b> Walkers are leashed to their starting point (<see cref="LEASH" />) rather
+///     than travelling, so a long run cannot dissolve the scenario it is measuring.
 ///     <para />
-///     <b>Measured and rejected.</b> Narrowing the per-peer board read to just the four fields a pass
+///     <b>Measured and rejected.</b> Narrowing the per-peer board read to the four fields a pass
 ///     consumes (realm, position, parcel, teleport flag) measured at parity with the full
-///     <see cref="PeerSnapshot" /> read — 8.09 us vs 8.17 us for 4095 peers. Those four fields are
-///     scattered across the struct, so a narrowed read touches the same cache lines and only saves a
-///     few nanoseconds of memcpy. Not worth the API surface; do not re-try it without new evidence.
+///     <see cref="PeerSnapshot" /> read — 8.09 us vs 8.17 us for 4095 peers. The four fields are
+///     scattered across the struct, so a narrowed read touches the same cache lines. Do not re-try it
+///     without new evidence.
 /// </summary>
 [MemoryDiagnoser]
 public class ClusterTrackerBenchmarks
@@ -57,7 +52,7 @@ public class ClusterTrackerBenchmarks
     // Passes per PassWithChurn invocation, so the reported mean is per pass.
     private const int CHURN_PASSES = 8;
 
-    // A walking avatar covers a few units per second. Only a fraction of a population moves at any
+    // A walking avatar covers a few units per second, only a fraction of a population moves at any
     // moment, and each mover stays within LEASH of where it started.
     private const float MOVING_FRACTION = 0.4f;
     private const float SPEED_PER_PASS = 4f;
@@ -127,8 +122,8 @@ public class ClusterTrackerBenchmarks
             Publish(i);
         }
 
-        // Settle sticky IDs and published assignments, so the first measured pass is a steady-state
-        // one rather than the first-assignment path.
+        // Settle sticky IDs and published assignments, so the first measured pass is a steady-state one
+        // rather than the first-assignment path.
         for (var i = 0; i < 4; i++)
             _tracker.RunPass();
 
@@ -136,8 +131,8 @@ public class ClusterTrackerBenchmarks
     }
 
     /// <summary>
-    ///     One pass over an unchanging grid, everything in cache. Low variance, so it is the
-    ///     sensitive regression check — but see the class remarks before quoting it as a real cost.
+    ///     One pass over an unchanging grid, everything in cache. Low variance, so it is the sensitive
+    ///     regression check — see the class remarks before quoting it as a real cost.
     /// </summary>
     [Benchmark(Description = "Pass, warm working set")]
     public void Pass()
@@ -160,8 +155,8 @@ public class ClusterTrackerBenchmarks
     }
 
     /// <summary>
-    ///     The movement alone, to be subtracted from <see cref="PassWithChurn" />. This is ordinary
-    ///     server work — a grid update and a snapshot publish per mover — not tracker cost.
+    ///     The movement alone, to be subtracted from <see cref="PassWithChurn" />: a grid update and a
+    ///     snapshot publish per mover, which is ordinary server work rather than tracker cost.
     /// </summary>
     [Benchmark(Description = "Churn only (subtrahend)", OperationsPerInvoke = CHURN_PASSES)]
     public void Churn()
@@ -200,7 +195,7 @@ public class ClusterTrackerBenchmarks
 
     /// <summary>
     ///     Prints what the scenario actually built, so a documented cluster count that no longer holds
-    ///     at the configured cell size shows up in the benchmark log.
+    ///     at the configured cell size shows up in the log.
     /// </summary>
     private void ReportTopology(ClusterBoard clusterBoard)
     {
@@ -335,8 +330,8 @@ public class ClusterTrackerBenchmarks
     }
 
     /// <summary>
-    ///     Scatters <paramref name="count" /> peers uniformly over a disc, so density does not pile up
-    ///     at the centre the way independent per-axis offsets would.
+    ///     Scatters <paramref name="count" /> peers uniformly over a disc, so density does not pile up at
+    ///     the centre the way independent per-axis offsets would.
     /// </summary>
     private static void AddDisc(List<Vector3> into, Random random, Vector3 center, float radius, int count)
     {

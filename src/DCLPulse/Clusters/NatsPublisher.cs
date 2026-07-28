@@ -12,40 +12,26 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Sole owner of Pulse's NATS connection and the only component that talks to the broker.
-///     Publish-only and fail-soft by construction: producers hand messages to a coalescing outbox and
-///     never block, so a slow, stalled or absent broker can delay the feed but never the tracker
-///     pass or the simulation.
+///     Publish-only and fail-soft: producers hand messages to a coalescing outbox and never block, so
+///     a slow, stalled or absent broker can delay the feed but never a tracker pass.
 ///     <para />
-///     The outbox keeps the two feeds apart, because they supersede differently:
-///     <list type="bullet">
-///         <item>
-///             <c>engine.islands</c> is a whole-world snapshot — a newer one fully replaces an older
-///             one, so it lives in a single latest-wins slot and can never occupy more than one
-///             delivery slot or crowd out an assignment.
-///         </item>
-///         <item>
-///             <c>peer.{addr}.cluster_change</c> supersedes only <b>per peer</b>. Two peers' events
-///             carry disjoint information, so they are held one-per-peer: a peer's newer assignment
-///             replaces its own older one, and one peer's event can never displace another's.
-///         </item>
-///     </list>
-///     A single shared FIFO with oldest-first eviction would have been wrong for the second case —
-///     it could discard peer A's assignment to make room for peer B's, leaving A addressed by a stale
-///     cluster until its next reassignment, which may never come if A stops moving.
+///     The outbox keeps the two feeds apart because they supersede differently.
+///     <c>engine.islands</c> is a whole-world snapshot, so it lives in a single latest-wins slot and
+///     never competes with an assignment. <c>peer.{addr}.cluster_change</c> supersedes per peer only,
+///     so changes are held one per peer: a peer's newer assignment replaces its own older one, and one
+///     peer's event never displaces another's — which a shared FIFO with oldest-first eviction could
+///     not guarantee.
 ///     <para />
-///     Genuine loss is therefore confined to sustained overload with more than
-///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers pending at once, and is counted
-///     separately from benign superseding.
-///     <para />
-///     With <see cref="NatsOptions.Url" /> unset the service exits at startup and both
-///     <see cref="IClusterFeedPublisher" /> methods degrade to constant-time no-ops, leaving
-///     <see cref="ClusterTracker" /> running in stats-only mode. That is the rollback path.
+///     Genuine loss is therefore confined to more than <see cref="NatsOptions.ChannelCapacity" />
+///     distinct peers pending at once, and is counted separately from benign superseding. With
+///     <see cref="NatsOptions.Url" /> unset the service exits at startup and both
+///     <see cref="IClusterFeedPublisher" /> methods become no-ops, leaving
+///     <see cref="ClusterTracker" /> in stats-only mode.
 /// </summary>
 public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 {
-    // Clusters are uncapped by design — clustering no longer blocks merges at a room size, and
-    // room sharding is the token issuer's concern. Zero advertises "no cap" to consumers rather
-    // than implying a bound that no longer exists.
+    // Clusters are uncapped, so zero advertises "no cap" rather than implying a bound that no
+    // longer exists.
     private const uint NO_PEER_CAP = 0;
 
     private readonly ILogger<NatsPublisher> logger;
@@ -65,9 +51,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly string clusterChangeSubjectPrefix;
 
     // Named "island", not "cluster", on purpose: engine.islands is archipelago's topology subject
-    // carrying archipelago's IslandStatusMessage. Pulse re-publishes that shape verbatim so
-    // archipelago-stats keeps working after core is decommissioned. Pulse's own concept is the
-    // cluster; the island vocabulary survives only where it is archipelago's contract.
+    // carrying archipelago's IslandStatusMessage, and Pulse re-publishes that shape verbatim. The
+    // island vocabulary survives only where it is archipelago's contract.
     private readonly string islandsSubject;
 
     private readonly string discoverySubject;
@@ -114,9 +99,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     /// <summary>
     ///     Messages genuinely lost — evicted because more than
-    ///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers were pending at once, or failed
-    ///     at the broker. Distinct from <see cref="SupersededCount" />: a non-zero rate here means a
-    ///     peer may be addressed by a stale cluster.
+    ///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers were pending at once, or failed at
+    ///     the broker. Unlike <see cref="SupersededCount" />, a non-zero rate here means a peer's
+    ///     latest assignment never reached the broker.
     /// </summary>
     public long DroppedCount =>
         Interlocked.Read(ref droppedCount);
@@ -148,9 +133,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             var message = new PeerClusterChange { ClusterId = clusterId, Realm = realm };
 
-            // Wallets are lower-cased so one wallet always maps to one subject, regardless of the
-            // checksum casing the auth chain happened to carry. The subject is also the coalescing
-            // key, so per-subject latest-wins is exactly per-peer latest-wins.
+            // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
+            // chain carried. The subject is also the coalescing key, so per-subject latest-wins is
+            // exactly per-peer latest-wins.
             QueueChange(
                 $"{clusterChangeSubjectPrefix}{wallet.ToLowerInvariant()}.cluster_change",
                 message.ToByteArray());
@@ -188,8 +173,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     /// <summary>
     ///     Holds at most one pending change per peer. A repeat for the same peer replaces its payload
-    ///     and keeps its place in line; a new peer past capacity evicts the longest-waiting peer,
-    ///     which is the only path to genuine loss.
+    ///     and keeps its place in line; a new peer past capacity evicts the longest-waiting one, the
+    ///     only path to genuine loss.
     /// </summary>
     private void QueueChange(string subject, byte[] payload)
     {
@@ -218,8 +203,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     /// <summary>
     ///     Takes the next message to deliver: the topology first, so a snapshot declaring a cluster
-    ///     precedes the per-peer events that reference it, then peers in arrival order.
-    ///     Internal so the ordering guarantee can be asserted without a broker.
+    ///     precedes the per-peer events that reference it, then peers in arrival order. Internal so
+    ///     the ordering can be asserted without a broker.
     /// </summary>
     internal bool TryDequeueNext(out string subject, out byte[] payload)
     {
@@ -326,9 +311,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Heartbeat that keeps archipelago-stats considering the service healthy after
-    ///     archipelago-core is decommissioned. Published directly rather than through the channel:
-    ///     a heartbeat delayed behind a backlog would defeat its purpose.
+    ///     Publishes the <c>engine.discovery</c> heartbeat on a fixed cadence. Sent directly rather
+    ///     than through the outbox: a heartbeat delayed behind a backlog would defeat its purpose.
     /// </summary>
     private async Task PublishDiscoveryPeriodicallyAsync(NatsConnection connection, CancellationToken stoppingToken)
     {
@@ -396,8 +380,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Projects a pass onto the message archipelago-core published, so the stats service keeps
-    ///     working unchanged after core is removed.
+    ///     Projects a pass onto <c>IslandStatusMessage</c>, the shape archipelago-core published.
     /// </summary>
     private static IslandStatusMessage BuildIslandStatus(ClusterPass pass)
     {

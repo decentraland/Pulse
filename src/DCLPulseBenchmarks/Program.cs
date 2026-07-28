@@ -8,8 +8,8 @@ using System.Reflection;
 ManualConfig config = DefaultConfig.Instance
                                    .AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance));
 
-// Every [Benchmark] class in the assembly is selectable, so a suite can be chosen without editing
-// this file. With no arguments BenchmarkDotNet lists the classes and prompts for one.
+// Every [Benchmark] class in the assembly is selectable, so a suite is chosen by argument rather than
+// by editing this file. With no arguments BenchmarkDotNet lists the classes and prompts for one.
 //
 //   dotnet run -c Release --project src/DCLPulseBenchmarks -- --list flat
 //   dotnet run -c Release --project src/DCLPulseBenchmarks -- --filter *ClusterTracker*

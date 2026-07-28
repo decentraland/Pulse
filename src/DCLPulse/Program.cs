@@ -165,13 +165,11 @@ builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
 builder.Services.AddSingleton<PeerSnapshotPublisher>();
 
 // Clusters — derived off the hot path by a background pass over the AoI boards. The publisher is
-// registered even when NATS is unconfigured: it then serves as a no-op IClusterFeedPublisher so the
-// tracker keeps running in stats-only mode.
+// registered even when NATS is unconfigured, where it serves as a no-op IClusterFeedPublisher.
 builder.Services.AddOptions<ClusterOptions>()
     .Bind(builder.Configuration.GetSection(ClusterOptions.SECTION_NAME));
 
-// Accept the flat NATS_URL that archipelago's services read, as well as Nats__Url, so one
-// CI-injected secret can serve either name. Must run before the bind below.
+// Accepts the flat NATS_URL alongside Nats__Url. Must run before the bind below.
 builder.Configuration.AddNatsUrlAlias(Environment.GetEnvironmentVariable(NatsOptions.URL_ENV_ALIAS));
 
 builder.Services.AddOptions<NatsOptions>()

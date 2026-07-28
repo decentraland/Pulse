@@ -79,8 +79,8 @@ public class ClusterTrackerTests
     }
 
     /// <summary>
-    ///     Every one of the 8 neighbor offsets must merge, even though a pass only probes the four
-    ///     that point "ahead" — the other four are reached from the neighbor's own probe.
+    ///     All 8 neighbor offsets must merge, even though a pass probes only the four pointing ahead —
+    ///     the other four are reached from the neighbor's own probe.
     /// </summary>
     [TestCase(-1, -1)]
     [TestCase(-1, 0)]
@@ -170,8 +170,7 @@ public class ClusterTrackerTests
     {
         ClusterTracker tracker = CreateTracker();
 
-        // Placed in the grid and snapshot board but never registered in the identity board, so it
-        // cannot be addressed on the feed.
+        // In the grid and snapshot board, but never registered in the identity board.
         grid.Set(new PeerIndex(0), new Vector3(10, 0, 10));
         snapshotBoard.SetActive(new PeerIndex(0));
         PublishSnapshot(new PeerIndex(0), new Vector3(10, 0, 10), REALM);
@@ -264,8 +263,8 @@ public class ClusterTrackerTests
         tracker.RunPass();
         feedPublisher.ClearReceivedCalls();
 
-        // Peer 2 leaves a three-peer crowd, so the pair it left behind keeps the original ID
-        // outright and peer 2 is unambiguously the fragment that must take a new one.
+        // Peer 2 leaves a three-peer crowd, so the pair keeps the original ID outright and peer 2 is
+        // unambiguously the fragment that must take a new one.
         MovePeer(new PeerIndex(2), new Vector3(500, 0, 500));
 
         tracker.RunPass();
@@ -320,8 +319,8 @@ public class ClusterTrackerTests
         string crowdId = ClusterIdOf(new PeerIndex(0));
         feedPublisher.ClearReceivedCalls();
 
-        // The loner's own cluster ceases to exist when it merges into the crowd, so waiting three
-        // passes would leave it addressed by a cluster nobody is in.
+        // The loner's own cluster ceases to exist when it merges into the crowd, so waiting three passes
+        // would leave it published under a cluster nobody is in.
         MovePeer(new PeerIndex(3), new Vector3(25, 0, 25));
         tracker.RunPass();
 
@@ -329,8 +328,8 @@ public class ClusterTrackerTests
     }
 
     /// <summary>
-    ///     A crowd that changes realm together overlaps itself completely, so it keeps its sticky
-    ///     ID. The feed carries the realm alongside the ID, so the change still has to be published.
+    ///     A crowd that changes realm together overlaps itself completely, so it keeps its sticky ID.
+    ///     The feed carries the realm alongside the ID, so the change is still published.
     /// </summary>
     [Test]
     public void CrowdChangingRealmTogether_RepublishesWithTheNewRealm()
@@ -414,8 +413,8 @@ public class ClusterTrackerTests
         tracker.RunPass();
         Assert.That(clusterBoard.Current.Clusters, Is.Empty);
 
-        // The recycled slot must be treated as a first assignment, not an unchanged one — PeerIndex
-        // is an ENet slot and the next wallet to land here is a different player.
+        // The recycled slot must be treated as a first assignment, not an unchanged one: PeerIndex is an
+        // ENet slot, and the next wallet to land here is a different player.
         SetupPeer(new PeerIndex(0), new Vector3(10, 0, 10), wallet: "0xreused");
         tracker.RunPass();
 
@@ -459,17 +458,15 @@ public class ClusterTrackerTests
     }
 
     /// <summary>
-    ///     The cluster the peer belongs to as of the last published pass. Used where a test needs
-    ///     the ID itself rather than just a comparison: which of several components is minted C1
-    ///     depends on grid enumeration order, so the ID cannot be spelled out as a literal.
+    ///     The cluster the peer belongs to as of the last published pass. Which of several components is
+    ///     minted C1 depends on grid enumeration order, so the ID cannot be spelled out as a literal.
     /// </summary>
     private string ClusterIdOf(PeerIndex peer) =>
         clusterBoard.Current.Peers.Single(info => info.Peer.Equals(peer)).ClusterId;
 
     /// <summary>
-    ///     Three co-located peers. Used wherever a test moves one peer out and needs the remaining
-    ///     fragment to win the sticky ID outright — an even 1-versus-1 split ties on shared members,
-    ///     and which side keeps the ID is then arbitrary.
+    ///     Three co-located peers, so moving one out leaves a fragment that wins the sticky ID outright —
+    ///     an even 1-versus-1 split ties on shared members, and which side keeps the ID is arbitrary.
     /// </summary>
     private void SetupCrowdOfThree()
     {
@@ -506,8 +503,8 @@ public class ClusterTrackerTests
         string? realm,
         bool isTeleport = false)
     {
-        // The tracker reads GlobalPosition, Realm, Parcel and IsTeleport; the quantized
-        // parcel-local codes are irrelevant here and left at their defaults.
+        // The tracker reads GlobalPosition, Realm, Parcel and IsTeleport; the quantized parcel-local
+        // codes are left at their defaults.
         snapshotBoard.Publish(peer, TestSnapshots.Make(
             seq: snapshotBoard.LastSeq(peer) + 1,
             globalPosition: position,

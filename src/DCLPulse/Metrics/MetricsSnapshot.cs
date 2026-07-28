@@ -51,6 +51,7 @@ public readonly record struct MetricsSnapshot
         public long TotalReassignments { get; init; }
         public long TotalNatsPublished { get; init; }
         public long TotalNatsDropped { get; init; }
+        public long TotalNatsSuperseded { get; init; }
         public long TotalNatsReconnects { get; init; }
         public int NatsConnected { get; init; }
     }

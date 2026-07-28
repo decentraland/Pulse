@@ -44,11 +44,19 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.nats.published");
 
         /// <summary>
-        ///     Messages never delivered — evicted from the queue under overflow, or failed at the
-        ///     broker. Sustained non-zero means the feed is lagging reality.
+        ///     Messages genuinely lost — evicted because too many distinct peers were pending at
+        ///     once, or failed at the broker. Non-zero means some peer may be addressed by a stale
+        ///     cluster, so this is the actionable signal, not <see cref="SUPERSEDED" />.
         /// </summary>
         public static readonly Counter<long> DROPPED =
             METER.CreateCounter<long>("pulse.nats.dropped");
+
+        /// <summary>
+        ///     Messages replaced before delivery by a newer one for the same subject. Expected under
+        ///     load and harmless: the replacement carries strictly fresher state.
+        /// </summary>
+        public static readonly Counter<long> SUPERSEDED =
+            METER.CreateCounter<long>("pulse.nats.superseded");
 
         public static readonly Counter<long> RECONNECTS =
             METER.CreateCounter<long>("pulse.nats.reconnects");

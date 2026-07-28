@@ -12,13 +12,30 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Sole owner of Pulse's NATS connection and the only component that talks to the broker.
-///     Publish-only and fail-soft by construction: producers hand messages to a bounded channel and
+///     Publish-only and fail-soft by construction: producers hand messages to a coalescing outbox and
 ///     never block, so a slow, stalled or absent broker can delay the feed but never the tracker
 ///     pass or the simulation.
 ///     <para />
-///     On overflow the oldest queued message is evicted rather than the newest. Every subject here
-///     is self-superseding — a newer assignment or topology snapshot fully replaces an older one —
-///     so dropping the stale end preserves the most useful state.
+///     The outbox keeps the two feeds apart, because they supersede differently:
+///     <list type="bullet">
+///         <item>
+///             <c>engine.islands</c> is a whole-world snapshot — a newer one fully replaces an older
+///             one, so it lives in a single latest-wins slot and can never occupy more than one
+///             delivery slot or crowd out an assignment.
+///         </item>
+///         <item>
+///             <c>peer.{addr}.cluster_change</c> supersedes only <b>per peer</b>. Two peers' events
+///             carry disjoint information, so they are held one-per-peer: a peer's newer assignment
+///             replaces its own older one, and one peer's event can never displace another's.
+///         </item>
+///     </list>
+///     A single shared FIFO with oldest-first eviction would have been wrong for the second case —
+///     it could discard peer A's assignment to make room for peer B's, leaving A addressed by a stale
+///     cluster until its next reassignment, which may never come if A stops moving.
+///     <para />
+///     Genuine loss is therefore confined to sustained overload with more than
+///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers pending at once, and is counted
+///     separately from benign superseding.
 ///     <para />
 ///     With <see cref="NatsOptions.Url" /> unset the service exits at startup and both
 ///     <see cref="IClusterFeedPublisher" /> methods degrade to constant-time no-ops, leaving
@@ -34,7 +51,17 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly ILogger<NatsPublisher> logger;
     private readonly NatsOptions options;
     private readonly SnapshotBoard snapshotBoard;
-    private readonly Channel<FeedMessage>? channel;
+    private readonly bool feedEnabled;
+
+    // Outbox. Guarded by outboxLock: the tracker thread writes, the drain loop reads.
+    private readonly Lock outboxLock = new ();
+    private readonly Dictionary<string, byte[]> pendingChangeBySubject = new (StringComparer.Ordinal);
+    private readonly Queue<string> changeOrder = new ();
+    private byte[]? pendingTopology;
+
+    // Wake signal, not a queue: capacity 1 with DropWrite so repeated signals coalesce into one.
+    private readonly Channel<byte>? wakeup;
+
     private readonly string clusterChangeSubjectPrefix;
 
     // Named "island", not "cluster", on purpose: engine.islands is archipelago's topology subject
@@ -48,6 +75,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     private long publishedCount;
     private long droppedCount;
+    private long supersededCount;
     private long reconnectCount;
     private volatile bool connected;
     private bool everConnected;
@@ -66,14 +94,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         islandsSubject = $"{prefix}engine.islands";
         discoverySubject = $"{prefix}engine.discovery";
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
+        feedEnabled = this.options.IsConfigured;
 
-        if (!this.options.IsConfigured) return;
+        if (!feedEnabled) return;
 
-        channel = Channel.CreateBounded<FeedMessage>(new BoundedChannelOptions(this.options.ChannelCapacity)
+        wakeup = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
         {
-            // Wait rather than DropOldest: eviction is done explicitly in Enqueue so drops can be
-            // counted, which BoundedChannelFullMode does not report.
-            FullMode = BoundedChannelFullMode.Wait,
+            // A pending signal already means "there is work"; a second adds nothing.
+            FullMode = BoundedChannelFullMode.DropWrite,
             SingleReader = true,
         });
     }
@@ -85,10 +113,20 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         Interlocked.Read(ref publishedCount);
 
     /// <summary>
-    ///     Messages evicted from the queue because the broker could not keep up.
+    ///     Messages genuinely lost — evicted because more than
+    ///     <see cref="NatsOptions.ChannelCapacity" /> distinct peers were pending at once, or failed
+    ///     at the broker. Distinct from <see cref="SupersededCount" />: a non-zero rate here means a
+    ///     peer may be addressed by a stale cluster.
     /// </summary>
     public long DroppedCount =>
         Interlocked.Read(ref droppedCount);
+
+    /// <summary>
+    ///     Messages replaced before delivery by a newer one for the same subject. Expected under
+    ///     load and harmless — the newer message carries strictly fresher state.
+    /// </summary>
+    public long SupersededCount =>
+        Interlocked.Read(ref supersededCount);
 
     /// <summary>
     ///     Times the client has re-established the connection after losing it.
@@ -104,17 +142,18 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     public void PublishClusterChange(string wallet, string clusterId, string realm)
     {
-        if (channel is null) return;
+        if (!feedEnabled) return;
 
         try
         {
             var message = new PeerClusterChange { ClusterId = clusterId, Realm = realm };
 
             // Wallets are lower-cased so one wallet always maps to one subject, regardless of the
-            // checksum casing the auth chain happened to carry.
-            Enqueue(channel, new FeedMessage(
+            // checksum casing the auth chain happened to carry. The subject is also the coalescing
+            // key, so per-subject latest-wins is exactly per-peer latest-wins.
+            QueueChange(
                 $"{clusterChangeSubjectPrefix}{wallet.ToLowerInvariant()}.cluster_change",
-                message.ToByteArray()));
+                message.ToByteArray());
         }
         catch (Exception e)
         {
@@ -124,11 +163,22 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     public void PublishTopology(ClusterPass pass)
     {
-        if (channel is null) return;
+        if (!feedEnabled) return;
 
         try
         {
-            Enqueue(channel, new FeedMessage(islandsSubject, BuildIslandStatus(pass).ToByteArray()));
+            byte[] payload = BuildIslandStatus(pass).ToByteArray();
+
+            lock (outboxLock)
+            {
+                // Latest wins: an undelivered snapshot is worthless once a newer one exists.
+                if (pendingTopology is not null)
+                    CountSuperseded();
+
+                pendingTopology = payload;
+            }
+
+            Signal();
         }
         catch (Exception e)
         {
@@ -136,9 +186,79 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         }
     }
 
+    /// <summary>
+    ///     Holds at most one pending change per peer. A repeat for the same peer replaces its payload
+    ///     and keeps its place in line; a new peer past capacity evicts the longest-waiting peer,
+    ///     which is the only path to genuine loss.
+    /// </summary>
+    private void QueueChange(string subject, byte[] payload)
+    {
+        lock (outboxLock)
+        {
+            if (pendingChangeBySubject.ContainsKey(subject))
+            {
+                CountSuperseded();
+                pendingChangeBySubject[subject] = payload;
+            }
+            else
+            {
+                if (pendingChangeBySubject.Count >= options.ChannelCapacity && changeOrder.TryDequeue(out string? evicted))
+                {
+                    pendingChangeBySubject.Remove(evicted);
+                    CountDropped();
+                }
+
+                pendingChangeBySubject[subject] = payload;
+                changeOrder.Enqueue(subject);
+            }
+        }
+
+        Signal();
+    }
+
+    /// <summary>
+    ///     Takes the next message to deliver: the topology first, so a snapshot declaring a cluster
+    ///     precedes the per-peer events that reference it, then peers in arrival order.
+    ///     Internal so the ordering guarantee can be asserted without a broker.
+    /// </summary>
+    internal bool TryDequeueNext(out string subject, out byte[] payload)
+    {
+        lock (outboxLock)
+        {
+            if (pendingTopology is not null)
+            {
+                subject = islandsSubject;
+                payload = pendingTopology;
+                pendingTopology = null;
+
+                return true;
+            }
+
+            while (changeOrder.TryDequeue(out string? next))
+            {
+                if (!pendingChangeBySubject.Remove(next, out byte[]? queued)) continue;
+
+                subject = next;
+                payload = queued;
+
+                return true;
+            }
+        }
+
+        subject = string.Empty;
+        payload = [];
+
+        return false;
+    }
+
+    private void Signal()
+    {
+        wakeup?.Writer.TryWrite(0);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (channel is null)
+        if (wakeup is null)
         {
             logger.LogInformation("NATS feed disabled (Nats:Url not set) — cluster tracker runs in stats-only mode");
             return;
@@ -157,7 +277,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 options.Url, string.IsNullOrEmpty(options.SubjectPrefix) ? "(none)" : options.SubjectPrefix);
 
             await Task.WhenAll(
-                DrainAsync(connection, stoppingToken),
+                DrainAsync(connection, wakeup, stoppingToken),
                 PublishDiscoveryPeriodicallyAsync(connection, stoppingToken));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -177,26 +297,30 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Drains the hand-off channel to the broker. A failed publish is logged and abandoned:
-    ///     the message is stale by the next pass anyway, and retrying would grow the backlog.
+    ///     Drains the outbox to the broker, woken by <see cref="Signal" />. A failed publish is
+    ///     logged and abandoned: the message is stale by the next pass anyway, and retrying would
+    ///     grow the backlog.
     /// </summary>
-    private async Task DrainAsync(NatsConnection connection, CancellationToken stoppingToken)
+    private async Task DrainAsync(NatsConnection connection, Channel<byte> signal, CancellationToken stoppingToken)
     {
-        await foreach (FeedMessage message in channel!.Reader.ReadAllAsync(stoppingToken))
+        await foreach (byte _ in signal.Reader.ReadAllAsync(stoppingToken))
         {
-            try
+            while (TryDequeueNext(out string subject, out byte[] payload))
             {
-                await connection.PublishAsync(message.Subject, message.Payload, cancellationToken: stoppingToken);
-                CountPublished();
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception e)
-            {
-                CountDropped();
-                logger.LogWarning(e, "Failed to publish to {Subject}; dropping", message.Subject);
+                try
+                {
+                    await connection.PublishAsync(subject, payload, cancellationToken: stoppingToken);
+                    CountPublished();
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception e)
+                {
+                    CountDropped();
+                    logger.LogWarning(e, "Failed to publish to {Subject}; dropping", subject);
+                }
             }
         }
     }
@@ -253,25 +377,6 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         return count;
     }
 
-    /// <summary>
-    ///     Queues a message, evicting the oldest entries to make room. Bounded by the channel
-    ///     capacity so it always terminates even while a producer races the reader.
-    /// </summary>
-    private void Enqueue(Channel<FeedMessage> queue, FeedMessage message)
-    {
-        for (var attempt = 0; attempt <= options.ChannelCapacity; attempt++)
-        {
-            if (queue.Writer.TryWrite(message)) return;
-
-            if (!queue.Reader.TryRead(out _)) break;
-
-            CountDropped();
-        }
-
-        // Never queued: the reader drained nothing and every attempt lost the race.
-        CountDropped();
-    }
-
     private void CountPublished()
     {
         Interlocked.Increment(ref publishedCount);
@@ -282,6 +387,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     {
         Interlocked.Increment(ref droppedCount);
         PulseMetrics.Nats.DROPPED.Add(1);
+    }
+
+    private void CountSuperseded()
+    {
+        Interlocked.Increment(ref supersededCount);
+        PulseMetrics.Nats.SUPERSEDED.Add(1);
     }
 
     /// <summary>
@@ -355,14 +466,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             PulseMetrics.Nats.CONNECTED.Add(-1);
         }
 
-        logger.LogWarning("NATS connection lost; queued messages will be dropped oldest-first until it returns");
+        logger.LogWarning(
+            "NATS connection lost; the topology and each peer's latest assignment are retained until it returns");
 
         return ValueTask.CompletedTask;
     }
-
-    /// <summary>
-    ///     A serialized message awaiting delivery. Encoding happens on the producer thread so the
-    ///     queue never retains a reference to a live pass result.
-    /// </summary>
-    private readonly record struct FeedMessage(string Subject, byte[] Payload);
 }

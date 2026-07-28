@@ -70,7 +70,8 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_cluster_pass_duration_us_total", "Cumulative clustering pass wall time in microseconds. Divide by dcl_pulse_cluster_passes_total for the mean.", snap.Clusters.TotalPassDurationUs);
         WriteCounter(writer, "dcl_pulse_cluster_reassignments_total", "Published cluster assignment changes, counted after the dwell debounce", snap.Clusters.TotalReassignments);
         WriteCounter(writer, "dcl_pulse_nats_published_total", "Messages published to the cluster feed broker", snap.Clusters.TotalNatsPublished);
-        WriteCounter(writer, "dcl_pulse_nats_dropped_total", "Feed messages never delivered — evicted on queue overflow or failed at the broker", snap.Clusters.TotalNatsDropped);
+        WriteCounter(writer, "dcl_pulse_nats_dropped_total", "Feed messages genuinely lost — evicted because too many distinct peers were pending, or failed at the broker. Non-zero means a peer may be addressed by a stale cluster.", snap.Clusters.TotalNatsDropped);
+        WriteCounter(writer, "dcl_pulse_nats_superseded_total", "Feed messages replaced before delivery by a newer one for the same subject. Expected under load and harmless.", snap.Clusters.TotalNatsSuperseded);
         WriteCounter(writer, "dcl_pulse_nats_reconnects_total", "Times the broker connection was re-established after a loss", snap.Clusters.TotalNatsReconnects);
         WriteGauge(writer, "dcl_pulse_nats_connected", "1 while the broker connection is up, 0 otherwise (always 0 in stats-only mode)", snap.Clusters.NatsConnected);
 

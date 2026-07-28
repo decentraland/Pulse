@@ -58,6 +58,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long clusterReassignments;
     private long natsPublished;
     private long natsDropped;
+    private long natsSuperseded;
     private long natsReconnects;
     private int natsConnected;
 
@@ -143,6 +144,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalReassignments = Interlocked.Read(ref clusterReassignments),
                 TotalNatsPublished = Interlocked.Read(ref natsPublished),
                 TotalNatsDropped = Interlocked.Read(ref natsDropped),
+                TotalNatsSuperseded = Interlocked.Read(ref natsSuperseded),
                 TotalNatsReconnects = Interlocked.Read(ref natsReconnects),
                 NatsConnected = Volatile.Read(ref natsConnected),
             },
@@ -230,6 +232,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.nats.dropped":
                 Interlocked.Add(ref natsDropped, value);
+                break;
+            case "pulse.nats.superseded":
+                Interlocked.Add(ref natsSuperseded, value);
                 break;
             case "pulse.nats.reconnects":
                 Interlocked.Add(ref natsReconnects, value);

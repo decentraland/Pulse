@@ -173,10 +173,15 @@ public sealed class ClusterTracker : BackgroundService
 
         RememberComputedAssignments();
         clusterBoard.Publish(pass);
+
+        // Topology before the per-peer events, so a snapshot declaring a cluster reaches consumers
+        // ahead of the assignments that reference it. A consumer that has to resolve a cluster id —
+        // gatekeeper sizing a room for sharding — would otherwise join against the previous pass.
+        feedPublisher.PublishTopology(pass);
+
         int reassignments = PublishAssignmentChanges();
         ForgetVanishedPeers();
 
-        feedPublisher.PublishTopology(pass);
         RecordPassMetrics(startTicks, pass.Clusters.Count, reassignments);
     }
 

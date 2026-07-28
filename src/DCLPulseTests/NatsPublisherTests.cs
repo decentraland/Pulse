@@ -57,9 +57,103 @@ public class NatsPublisherTests
         for (var i = 0; i < 5; i++)
             publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", "realm-a");
 
-        // Capacity 2, five writes — the three oldest are evicted to make room.
+        // Capacity 2, five distinct peers — the three longest-waiting are evicted to make room.
         Assert.That(publisher.DroppedCount, Is.EqualTo(3));
         Assert.That(publisher.PublishedCount, Is.Zero);
+    }
+
+    /// <summary>
+    ///     The defect this guards: a shared oldest-first queue would evict one peer's assignment to
+    ///     admit another's, leaving the evicted peer addressed by a stale cluster until its next
+    ///     reassignment — which may never arrive if it stops moving.
+    /// </summary>
+    [Test]
+    public void RepeatedChangeForSamePeer_IsSupersededNotDropped()
+    {
+        NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 1);
+
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C2", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C3", "realm-a");
+
+        Assert.That(publisher.DroppedCount, Is.Zero, "a peer's own newer assignment must not count as loss");
+        Assert.That(publisher.SupersededCount, Is.EqualTo(2));
+
+        // Only the newest survives, and it is the only thing pending.
+        Assert.That(publisher.TryDequeueNext(out string subject, out _), Is.True);
+        Assert.That(subject, Does.EndWith("0xwallet0.cluster_change"));
+        Assert.That(publisher.TryDequeueNext(out _, out _), Is.False);
+    }
+
+    [Test]
+    public void ManyPeers_EachKeepsItsOwnSlot()
+    {
+        NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 4);
+
+        // Two rounds over the same four peers: coalescing per peer, so nothing is lost.
+        for (var round = 0; round < 2; round++)
+            for (var i = 0; i < 4; i++)
+                publisher.PublishClusterChange($"0xwallet{i}", $"C{round}", "realm-a");
+
+        Assert.That(publisher.DroppedCount, Is.Zero);
+        Assert.That(publisher.SupersededCount, Is.EqualTo(4));
+        Assert.That(DrainSubjects(publisher), Has.Count.EqualTo(4));
+    }
+
+    [Test]
+    public void RepeatedTopology_CoalescesIntoOnePendingSnapshot()
+    {
+        NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 4);
+
+        publisher.PublishTopology(MakePass());
+        publisher.PublishTopology(MakePass());
+        publisher.PublishTopology(MakePass());
+
+        Assert.That(publisher.DroppedCount, Is.Zero);
+        Assert.That(publisher.SupersededCount, Is.EqualTo(2));
+        Assert.That(DrainSubjects(publisher), Is.EqualTo(new[] { "engine.islands" }));
+    }
+
+    [Test]
+    public void Topology_NeverEvictsAPeerAssignment()
+    {
+        // Capacity is fully consumed by peer assignments; topology must not compete for it.
+        NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 2);
+
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
+        publisher.PublishClusterChange("0xwallet1", "C1", "realm-a");
+
+        for (var i = 0; i < 20; i++)
+            publisher.PublishTopology(MakePass());
+
+        Assert.That(publisher.DroppedCount, Is.Zero, "topology must never displace an assignment");
+
+        List<string> drained = DrainSubjects(publisher);
+        Assert.That(drained, Has.Count.EqualTo(3));
+        Assert.That(drained, Has.Member("engine.islands"));
+        Assert.That(drained.Count(s => s.EndsWith("cluster_change", StringComparison.Ordinal)), Is.EqualTo(2));
+    }
+
+    [Test]
+    public void Topology_IsDeliveredBeforeTheChangesThatReferenceIt()
+    {
+        NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 4);
+
+        // Enqueued changes-first on purpose: the outbox, not the call order, must decide delivery.
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
+        publisher.PublishTopology(MakePass());
+
+        Assert.That(DrainSubjects(publisher)[0], Is.EqualTo("engine.islands"));
+    }
+
+    private static List<string> DrainSubjects(NatsPublisher publisher)
+    {
+        var subjects = new List<string>();
+
+        while (publisher.TryDequeueNext(out string subject, out _))
+            subjects.Add(subject);
+
+        return subjects;
     }
 
     [Test]

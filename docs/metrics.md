@@ -262,7 +262,9 @@ Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`
 
 ## Cluster metrics
 
-Cluster derivation and the outbound NATS feed. Every value here stays zero while `Clusters:Enabled` is false; the NATS rows additionally stay zero in stats-only mode (`Nats:Url` unset), where the tracker runs but nothing is published.
+Cluster derivation and the outbound NATS feed. Every value here stays zero while `Clusters:Enabled` is false; the NATS rows additionally stay zero in stats-only mode (broker URL unset), where the tracker runs but nothing is published.
+
+The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — the latter is the name archipelago's services use, so one CI-injected secret can serve both. `Nats__Url` wins if both are set. Because an unresolved URL fails soft rather than erroring, `dcl_pulse_nats_connected` is the signal that the URL never arrived: check the startup log for `NATS feed disabled (Nats:Url not set)`.
 
 All of these are recorded once per pass on the tracker's own thread — none of them touch the per-tick or per-packet path.
 
@@ -297,18 +299,24 @@ Counter of published cluster assignment changes, counted *after* the dwell debou
 | Sustained high with a stable cluster count | Peers flapping between two clusters; raise `Clusters:DwellPasses` |
 | Zero while peers move between crowds | Debounce never satisfied, or the feed is wedged — cross-check pass count |
 
-### NATS Published / Dropped / Reconnects / Connected
+### NATS Published / Dropped / Superseded / Reconnects / Connected
 
-Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
+Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
 
-Drops are counted both for queue-overflow eviction and for broker publish failures. The queue is bounded and evicts oldest-first: every subject on this feed is self-superseding, so a stalled broker degrades freshness and never back-pressures the tracker.
+**Dropped and superseded are different events, and only one of them is a problem.**
+
+The outbox keeps the two feeds apart because they supersede differently. `engine.islands` is a whole-world snapshot, so it sits in a single latest-wins slot — a newer snapshot replaces an undelivered one and never occupies more than one delivery slot. `peer.{addr}.cluster_change` supersedes only *per peer*, so it is held one entry per peer: a peer's newer assignment replaces its own older one, and one peer's event can never displace another's.
+
+- **Superseded** — replaced before delivery by a newer message on the same subject. Expected whenever the broker lags a pass; harmless, because the replacement carries strictly fresher state.
+- **Dropped** — genuinely lost. Either more than `Nats:ChannelCapacity` distinct peers were pending at once, or the broker rejected the publish. Actionable: a lost `cluster_change` leaves that peer addressed by a stale cluster until its *next* reassignment, which may never come if the peer stops moving.
 
 | Signal | Meaning |
 |---|---|
-| `connected` 1, published rising, dropped zero | Healthy |
-| `connected` 0 with `Nats:Url` set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
-| `connected` 0 with `Nats:Url` unset | Stats-only mode, by configuration — not a fault |
-| Dropped rising | Broker slower than the pass rate; raise `Nats:ChannelCapacity` or investigate broker latency |
+| `connected` 1, published rising, dropped zero | Healthy — superseded may be non-zero and is fine |
+| `connected` 0 with a broker URL set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
+| `connected` 0 with no broker URL | Stats-only mode, by configuration — not a fault |
+| Superseded rising, dropped zero | Broker slower than the pass rate; freshness degrades but nothing is lost |
+| **Dropped rising** | More than `Nats:ChannelCapacity` peers pending, or broker rejections. Raise the capacity toward `Transport.MaxPeers` and check broker latency — some peer is in the wrong room |
 | Reconnects climbing steadily | Flapping broker or network path; assignment delivery is lossy in that window |
 
 ---

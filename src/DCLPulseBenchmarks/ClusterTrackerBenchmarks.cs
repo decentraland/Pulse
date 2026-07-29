@@ -6,6 +6,7 @@ using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Numerics;
+using Decentraland.Pulse;
 
 namespace DCLPulseBenchmarks;
 
@@ -62,15 +63,15 @@ public class ClusterTrackerBenchmarks
     [ParamsAllValues]
     public ClusterScenario Scenario { get; set; }
 
-    private ClusterTracker _tracker = null!;
-    private RealmSpatialGrids _grids = null!;
-    private SnapshotBoard _snapshotBoard = null!;
+    private ClusterTracker tracker = null!;
+    private RealmSpatialGrids grids = null!;
+    private SnapshotBoard snapshotBoard = null!;
 
-    private Vector3[] _positions = null!;
-    private Vector3[] _homes = null!;
-    private Vector2[] _headings = null!;
-    private bool[] _moving = null!;
-    private uint[] _seq = null!;
+    private Vector3[] positions = null!;
+    private Vector3[] homes = null!;
+    private Vector2[] headings = null!;
+    private bool[] moving = null!;
+    private uint[] seq = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -78,18 +79,18 @@ public class ClusterTrackerBenchmarks
         // Deterministic seed, so a regression is a real regression and not a different world.
         var random = new Random(1234);
 
-        _homes = BuildWorld(Scenario, random);
-        _positions = (Vector3[])_homes.Clone();
+        homes = BuildWorld(Scenario, random);
+        positions = (Vector3[])homes.Clone();
 
-        int peerCount = _positions.Length;
+        var peerCount = positions.Length;
         var identityBoard = new IdentityBoard(peerCount);
         var clusterBoard = new ClusterBoard();
 
-        _grids = new RealmSpatialGrids(CELL_SIZE, peerCount);
-        _snapshotBoard = new SnapshotBoard(peerCount, RING_CAPACITY);
-        _headings = new Vector2[peerCount];
-        _moving = new bool[peerCount];
-        _seq = new uint[peerCount];
+        grids = new RealmSpatialGrids(CELL_SIZE, peerCount);
+        snapshotBoard = new SnapshotBoard(peerCount, RING_CAPACITY);
+        headings = new Vector2[peerCount];
+        moving = new bool[peerCount];
+        seq = new uint[peerCount];
 
         var options = new OptionsWrapper<ClusterOptions>(new ClusterOptions
         {
@@ -99,11 +100,11 @@ public class ClusterTrackerBenchmarks
             IdPrefix = "C",
         });
 
-        _tracker = new ClusterTracker(
+        tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
-            _grids,
-            _snapshotBoard,
+            grids,
+            snapshotBoard,
             identityBoard,
             clusterBoard,
             new NoOpFeedPublisher(),
@@ -114,19 +115,19 @@ public class ClusterTrackerBenchmarks
             var peer = new PeerIndex((uint)i);
 
             double angle = random.NextDouble() * Math.PI * 2;
-            _headings[i] = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
-            _moving[i] = random.NextSingle() < MOVING_FRACTION;
+            headings[i] = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
+            moving[i] = random.NextSingle() < MOVING_FRACTION;
 
-            _snapshotBoard.SetActive(peer);
+            snapshotBoard.SetActive(peer);
             identityBoard.Set(peer, $"0xwallet{i}");
-            _grids.Set(peer, REALM, _positions[i]);
+            grids.Set(peer, REALM, positions[i]);
             Publish(i);
         }
 
         // Settle sticky IDs and published assignments, so the first measured pass is a steady-state one
         // rather than the first-assignment path.
         for (var i = 0; i < 4; i++)
-            _tracker.RunPass();
+            tracker.RunPass();
 
         ReportTopology(clusterBoard);
     }
@@ -138,7 +139,7 @@ public class ClusterTrackerBenchmarks
     [Benchmark(Description = "Pass, warm working set")]
     public void Pass()
     {
-        _tracker.RunPass();
+        tracker.RunPass();
     }
 
     /// <summary>
@@ -151,7 +152,7 @@ public class ClusterTrackerBenchmarks
         for (var i = 0; i < CHURN_PASSES; i++)
         {
             MoveWalkers();
-            _tracker.RunPass();
+            tracker.RunPass();
         }
     }
 
@@ -172,24 +173,24 @@ public class ClusterTrackerBenchmarks
     /// </summary>
     private void MoveWalkers()
     {
-        for (var i = 0; i < _positions.Length; i++)
+        for (var i = 0; i < positions.Length; i++)
         {
-            if (!_moving[i]) continue;
+            if (!moving[i]) continue;
 
             var next = new Vector3(
-                _positions[i].X + (_headings[i].X * SPEED_PER_PASS),
+                positions[i].X + headings[i].X * SPEED_PER_PASS,
                 0,
-                _positions[i].Z + (_headings[i].Y * SPEED_PER_PASS));
+                positions[i].Z + headings[i].Y * SPEED_PER_PASS);
 
-            if (Vector3.DistanceSquared(next, _homes[i]) > LEASH * LEASH)
+            if (Vector3.DistanceSquared(next, homes[i]) > LEASH * LEASH)
             {
-                _headings[i] = -_headings[i];
-                next = _positions[i];
+                headings[i] = -headings[i];
+                next = positions[i];
             }
 
-            _positions[i] = next;
+            positions[i] = next;
 
-            _grids.Set(new PeerIndex((uint)i), REALM, next);
+            grids.Set(new PeerIndex((uint)i), REALM, next);
             Publish(i);
         }
     }
@@ -202,7 +203,7 @@ public class ClusterTrackerBenchmarks
     {
         var cells = new HashSet<long>();
 
-        foreach (Vector3 position in _positions)
+        foreach (var position in positions)
             cells.Add(SpatialGrid.PackKey(
                 (int)MathF.Floor(position.X / CELL_SIZE), (int)MathF.Floor(position.Z / CELL_SIZE)));
 
@@ -213,14 +214,14 @@ public class ClusterTrackerBenchmarks
             largest = Math.Max(largest, cluster.Count);
 
         Console.WriteLine(
-            $"// {Scenario}: peers={_positions.Length} occupiedCells={cells.Count} "
+            $"// {Scenario}: peers={positions.Length} occupiedCells={cells.Count} "
             + $"clusters={clusters.Count} largest={largest}");
     }
 
     private void Publish(int peer)
     {
-        _snapshotBoard.Publish(new PeerIndex((uint)peer), new PeerSnapshot(
-            Seq: ++_seq[peer],
+        snapshotBoard.Publish(new PeerIndex((uint)peer), new PeerSnapshot(
+            Seq: ++seq[peer],
             ServerTick: 0,
             Parcel: 0,
             PositionX: 0,
@@ -229,7 +230,7 @@ public class ClusterTrackerBenchmarks
             VelocityX: 0,
             VelocityY: 0,
             VelocityZ: 0,
-            GlobalPosition: _positions[peer],
+            GlobalPosition: positions[peer],
             RotationY: 0,
             JumpCount: 0,
             MovementBlend: 0,
@@ -237,8 +238,8 @@ public class ClusterTrackerBenchmarks
             HeadYaw: null,
             HeadPitch: null,
             PointAt: null,
-            AnimationFlags: Decentraland.Pulse.PlayerAnimationFlags.None,
-            GlideState: Decentraland.Pulse.GlideState.PropClosed,
+            AnimationFlags: PlayerAnimationFlags.None,
+            GlideState: GlideState.PropClosed,
             Realm: REALM));
     }
 

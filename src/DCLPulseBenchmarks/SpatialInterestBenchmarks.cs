@@ -13,24 +13,29 @@ namespace DCLPulseBenchmarks;
 /// <summary>
 ///     Compares two implementations of spatial interest management:
 ///     - LinearScan: flat array of cell keys, scans all peer slots per query (PR #2 approach)
-///     - CopyOnWrite: current SpatialGrid with lock + copy-on-write HashSet per cell
+///     - CopyOnWrite: current RealmSpatialGrids — a per-realm SpatialGrid with copy-on-write HashSet
+///     per cell, mutated under one shared lock
 ///     Peers are distributed pseudo-randomly in a ±500 world (cellSize=50).
 ///     Observer sits at origin. ~4% of peers fall in the 3×3 neighbourhood.
 ///     "1W" methods are single-threaded baselines.
 ///     "4W" methods model the production setup: 4 parallel workers, each owning
 ///     a peer stripe (PeerIndex % 4 == workerIndex), as in PeersManager.
+///     Every peer here shares one realm, so the read comparison is not quite like-for-like: the
+///     reference implementations still test each candidate's realm, while the production path gets
+///     that for free from the partition. The write comparison is unaffected.
 /// </summary>
 [MemoryDiagnoser]
 public class SpatialInterestBenchmarks
 {
     private const float CELL_SIZE = 50f;
     private const int WORKER_COUNT = 4;
+    private const string REALM = "benchmark";
 
     [Params(128, 512, 4095)]
     public int PeerCount { get; set; }
 
     // Current implementation (copy-on-write)
-    private SpatialGrid _cowGrid = null!;
+    private RealmSpatialGrids _cowGrid = null!;
     private SpatialHashAreaOfInterest _cowAoi = null!;
 
     // Linear scan reference (PR #2)
@@ -63,7 +68,7 @@ public class SpatialInterestBenchmarks
         _snapshotBoard = new SnapshotBoard(PeerCount, ringCapacity: 4);
         _collector = new InterestCollector();
 
-        _cowGrid = new SpatialGrid(CELL_SIZE, PeerCount);
+        _cowGrid = new RealmSpatialGrids(CELL_SIZE, PeerCount);
         _linearGrid = new LinearScanGrid(CELL_SIZE, PeerCount);
 
         IOptions<SpatialHashAreaOfInterestOptions> aoiOptions = Options.Create(new SpatialHashAreaOfInterestOptions
@@ -88,7 +93,7 @@ public class SpatialInterestBenchmarks
             _peerPositions[i] = pos;
             _altPositions[i] = new Vector3(x + CELL_SIZE, 0, z + CELL_SIZE);
 
-            _cowGrid.Set(peer, pos);
+            _cowGrid.Set(peer, REALM, pos);
             _linearGrid.Set(peer, pos);
             _cdGrid.Set(peer, pos);
 
@@ -134,7 +139,7 @@ public class SpatialInterestBenchmarks
             PointAt: null,
             AnimationFlags: PlayerAnimationFlags.None,
             GlideState: GlideState.PropClosed,
-            Realm: "benchmark");
+            Realm: REALM);
     }
 
     // ── Single-worker baselines ───────────────────────────────────────────────
@@ -219,7 +224,7 @@ public class SpatialInterestBenchmarks
     public void CopyOnWrite_Set_1W()
     {
         for (uint i = 0; i < (uint)PeerCount; i++)
-            _cowGrid.Set(new PeerIndex(i), _peerPositions[i]);
+            _cowGrid.Set(new PeerIndex(i), REALM, _peerPositions[i]);
     }
 
     [BenchmarkCategory("Write")]
@@ -240,7 +245,7 @@ public class SpatialInterestBenchmarks
         Parallel.For(0, WORKER_COUNT, w =>
         {
             for (var i = (uint)w; i < (uint)PeerCount; i += WORKER_COUNT)
-                _cowGrid.Set(new PeerIndex(i), _peerPositions[i]);
+                _cowGrid.Set(new PeerIndex(i), REALM, _peerPositions[i]);
         });
     }
 
@@ -285,8 +290,8 @@ public class SpatialInterestBenchmarks
         for (uint i = 0; i < (uint)PeerCount; i++)
         {
             var pi = new PeerIndex(i);
-            _cowGrid.Set(pi, _peerPositions[i]);
-            _cowGrid.Set(pi, _altPositions[i]);
+            _cowGrid.Set(pi, REALM, _peerPositions[i]);
+            _cowGrid.Set(pi, REALM, _altPositions[i]);
         }
     }
 
@@ -326,8 +331,8 @@ public class SpatialInterestBenchmarks
             for (var i = (uint)w; i < (uint)PeerCount; i += WORKER_COUNT)
             {
                 var pi = new PeerIndex(i);
-                _cowGrid.Set(pi, _peerPositions[i]);
-                _cowGrid.Set(pi, _altPositions[i]);
+                _cowGrid.Set(pi, REALM, _peerPositions[i]);
+                _cowGrid.Set(pi, REALM, _altPositions[i]);
             }
         });
     }
@@ -368,7 +373,7 @@ public class SpatialInterestBenchmarks
         for (uint i = 0; i < (uint)PeerCount; i++)
         {
             var pi = new PeerIndex(i);
-            _cowGrid.Set(pi, _peerPositions[i]);
+            _cowGrid.Set(pi, REALM, _peerPositions[i]);
             _cowGrid.Remove(pi);
         }
     }
@@ -409,7 +414,7 @@ public class SpatialInterestBenchmarks
             for (var i = (uint)w; i < (uint)PeerCount; i += WORKER_COUNT)
             {
                 var pi = new PeerIndex(i);
-                _cowGrid.Set(pi, _peerPositions[i]);
+                _cowGrid.Set(pi, REALM, _peerPositions[i]);
                 _cowGrid.Remove(pi);
             }
         });

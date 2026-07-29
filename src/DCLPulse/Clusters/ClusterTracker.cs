@@ -11,13 +11,15 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Derives cluster membership on its own thread, off the hot path: one pass every
-///     <see cref="ClusterOptions.PassIntervalMs" /> reads <see cref="SpatialGrid" /> and
+///     <see cref="ClusterOptions.PassIntervalMs" /> reads <see cref="RealmSpatialGrids" /> and
 ///     <see cref="SnapshotBoard" /> and touches no worker, peer state dict or <c>PeerSimulation</c>.
 ///     <para />
-///     A pass is weighted union-find with path halving over occupied grid cells using 8-neighbor
-///     adjacency, nodes keyed <c>(realm, cellKey)</c> so a cluster never spans realms. Cost is
-///     O(N + C) in peers and occupied cells — no peer-pair tests. Working buffers are fields, cleared
-///     rather than reallocated between passes.
+///     A pass runs weighted union-find with path halving over occupied grid cells using 8-neighbor
+///     adjacency, one realm's grid at a time. A cluster cannot span realms because the cells it is
+///     built from cannot: realm isolation is the grid's, so partitioning costs no realm comparison
+///     here. (<see cref="TryPublishAssignment" /> still compares the published realm — that is change
+///     detection for the feed, not partitioning.) Cost is O(N + C) in peers and occupied cells — no
+///     peer-pair tests. Working buffers are fields, cleared rather than reallocated between passes.
 /// </summary>
 public sealed class ClusterTracker : BackgroundService
 {
@@ -32,20 +34,15 @@ public sealed class ClusterTracker : BackgroundService
 
     private readonly ILogger<ClusterTracker> logger;
     private readonly ClusterOptions options;
-    private readonly SpatialGrid spatialGrid;
+    private readonly RealmSpatialGrids realmGrids;
     private readonly SnapshotBoard snapshotBoard;
     private readonly IdentityBoard identityBoard;
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
 
-    // Per-pass realm interning. A node key carries a dense realm id, so a neighbor probe hashes two
-    // integers instead of a client-supplied string. Rebuilt every pass: realm names arrive on the
-    // wire, so a table carried across passes would grow without bound.
-    private readonly List<string> realmNames = [];
-    private readonly Dictionary<string, int> realmIdByName = new ();
-
-    // Per-pass cell graph. One node per (realm, cell), carrying its slice of members and its own
-    // union-find state.
+    // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
+    // its own union-find state. Cleared between realms — the same cell exists in every realm, and
+    // only same-realm neighbors may union.
     private readonly Dictionary<NodeKey, int> nodeIndexByKey = new ();
     private readonly List<PassNode> nodes = [];
 
@@ -70,7 +67,7 @@ public sealed class ClusterTracker : BackgroundService
     public ClusterTracker(
         ILogger<ClusterTracker> logger,
         IOptions<ClusterOptions> options,
-        SpatialGrid spatialGrid,
+        RealmSpatialGrids realmGrids,
         SnapshotBoard snapshotBoard,
         IdentityBoard identityBoard,
         ClusterBoard clusterBoard,
@@ -79,7 +76,7 @@ public sealed class ClusterTracker : BackgroundService
     {
         this.logger = logger;
         this.options = options.Value;
-        this.spatialGrid = spatialGrid;
+        this.realmGrids = realmGrids;
         this.snapshotBoard = snapshotBoard;
         this.identityBoard = identityBoard;
         this.clusterBoard = clusterBoard;
@@ -153,8 +150,7 @@ public sealed class ClusterTracker : BackgroundService
         // current exactly when they carry this number, so nothing has to be cleared to go stale.
         passNumber++;
 
-        CollectNodes();
-        UnionNeighbors();
+        CollectAndUnionRealms();
         GroupComponents();
         AssignStickyIds();
 
@@ -187,33 +183,52 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Reads occupied cells and builds one node per <c>(realm, cell)</c> pair.
+    ///     Builds and unions the cell graph, realm by realm. Nodes and members accumulate across
+    ///     realms — later steps work on the pass as a whole — while the key index that neighbor probes
+    ///     consult holds one realm at a time, which is what confines every union to a single realm.
     /// </summary>
-    private void CollectNodes()
+    private void CollectAndUnionRealms()
     {
-        realmNames.Clear();
-        realmIdByName.Clear();
-        nodeIndexByKey.Clear();
         nodes.Clear();
         members.Clear();
 
-        foreach (SpatialGrid.OccupiedCell cell in spatialGrid.GetOccupiedCells())
+        foreach (RealmSpatialGrids.RealmGrid realmGrid in realmGrids.GetRealmGrids())
         {
-            int cellFirstMember = members.Count;
+            nodeIndexByKey.Clear();
 
-            foreach (PeerIndex peer in cell.Occupants)
-                TryCollectMember(peer);
+            int realmFirstNode = nodes.Count;
 
-            GroupCellMembersByRealm(cell.Key, cellFirstMember);
+            CollectRealmNodes(realmGrid.Realm, realmGrid.Grid);
+            UnionRealmNeighbors(realmFirstNode);
         }
     }
 
     /// <summary>
-    ///     Resolves one occupant into a <see cref="PassMember" />, or skips it. A peer whose snapshot
-    ///     is unreadable, whose realm is unset or whose wallet is unknown cannot be placed in a
-    ///     realm-partitioned cluster. A peer already collected this pass is skipped too: the grid read
-    ///     is weakly consistent, so a peer that changes cell mid-enumeration can surface in both its
-    ///     old and its new cell, and every later step assumes a peer appears at most once.
+    ///     Reads one realm's occupied cells and builds a node per cell that has at least one collectable
+    ///     occupant. Every occupant of the grid is in this realm, so no member needs a realm test.
+    /// </summary>
+    private void CollectRealmNodes(string realm, SpatialGrid grid)
+    {
+        foreach (SpatialGrid.OccupiedCell cell in grid.GetOccupiedCells())
+        {
+            int firstMember = members.Count;
+
+            foreach (PeerIndex peer in cell.Occupants)
+                TryCollectMember(peer);
+
+            // Later steps assume every node owns at least one member.
+            if (members.Count == firstMember) continue;
+
+            AddNode(realm, cell.Key, firstMember, members.Count - firstMember);
+        }
+    }
+
+    /// <summary>
+    ///     Resolves one occupant into a <see cref="PassMember" />, or skips it. A peer whose snapshot is
+    ///     unreadable or whose wallet is unknown cannot be published as a cluster member. A peer already
+    ///     collected this pass is skipped too: the grid read is weakly consistent, so a peer that
+    ///     changes cell — or realm — mid-enumeration can surface twice, and every later step assumes a
+    ///     peer appears at most once. The grid it was found in first decides the realm it clusters in.
     /// </summary>
     private void TryCollectMember(PeerIndex peer)
     {
@@ -221,7 +236,6 @@ public sealed class ClusterTracker : BackgroundService
 
         if (state.LastSeenPass == passNumber) return;
         if (!snapshotBoard.TryRead(peer, out PeerSnapshot snapshot)) return;
-        if (snapshot.Realm is null) return;
 
         string? wallet = identityBoard.GetWalletIdByPeerIndex(peer);
 
@@ -229,61 +243,19 @@ public sealed class ClusterTracker : BackgroundService
 
         state.LastSeenPass = passNumber;
 
-        members.Add(new PassMember(
-            peer, wallet, snapshot.Realm, snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport));
+        members.Add(new PassMember(peer, wallet, snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport));
     }
 
-    /// <summary>
-    ///     Partitions the members just appended for one cell into a node per distinct realm,
-    ///     reordering them in place so every node's members are contiguous in <see cref="members" />.
-    ///     One cell almost always holds a single realm, so this settles into one linear scan.
-    /// </summary>
-    private void GroupCellMembersByRealm(long cellKey, int cellFirstMember)
-    {
-        int cursor = cellFirstMember;
-
-        while (cursor < members.Count)
-        {
-            string realm = members[cursor].Realm;
-            int groupStart = cursor;
-            cursor++;
-
-            // Pull every remaining member of the same realm up next to the group.
-            for (int scan = cursor; scan < members.Count; scan++)
-            {
-                if (!string.Equals(members[scan].Realm, realm, StringComparison.Ordinal)) continue;
-
-                (members[cursor], members[scan]) = (members[scan], members[cursor]);
-                cursor++;
-            }
-
-            AddNode(new NodeKey(InternRealm(realm), cellKey), groupStart, cursor - groupStart);
-        }
-    }
-
-    /// <summary>
-    ///     Maps a realm name to its dense id for this pass, assigning one if the realm is new.
-    /// </summary>
-    private int InternRealm(string realm)
-    {
-        if (realmIdByName.TryGetValue(realm, out int id)) return id;
-
-        id = realmNames.Count;
-        realmNames.Add(realm);
-        realmIdByName[realm] = id;
-
-        return id;
-    }
-
-    private void AddNode(NodeKey key, int memberStart, int memberCount)
+    private void AddNode(string realm, long cellKey, int memberStart, int memberCount)
     {
         int index = nodes.Count;
 
-        nodeIndexByKey[key] = index;
+        nodeIndexByKey[new NodeKey(cellKey)] = index;
 
         nodes.Add(new PassNode
         {
-            Key = key,
+            Realm = realm,
+            CellKey = cellKey,
             MemberStart = memberStart,
             MemberCount = memberCount,
             Parent = index,
@@ -294,23 +266,22 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Unions each node with its same-realm neighbors. Cell adjacency is the whole join test: two
-    ///     peers in adjacent cells are between 0 and <c>2 * CellSize * sqrt(2)</c> apart, and the
+    ///     Unions each of one realm's nodes with its neighbors. Cell adjacency is the whole join test:
+    ///     two peers in adjacent cells are between 0 and <c>2 * CellSize * sqrt(2)</c> apart, and the
     ///     resulting boundary noise is absorbed by the dwell debounce rather than by a second
     ///     distance threshold.
     /// </summary>
-    private void UnionNeighbors()
+    private void UnionRealmNeighbors(int firstNode)
     {
         Span<PassNode> table = NodeSpan;
 
-        for (var node = 0; node < table.Length; node++)
+        for (int node = firstNode; node < table.Length; node++)
         {
-            NodeKey key = table[node].Key;
-            SpatialGrid.UnpackKey(key.CellKey, out int x, out int z);
+            SpatialGrid.UnpackKey(table[node].CellKey, out int x, out int z);
 
             for (var i = 0; i < NEIGHBOR_DX.Length; i++)
             {
-                var neighborKey = new NodeKey(key.RealmId, SpatialGrid.PackKey(x + NEIGHBOR_DX[i], z + NEIGHBOR_DZ[i]));
+                var neighborKey = new NodeKey(SpatialGrid.PackKey(x + NEIGHBOR_DX[i], z + NEIGHBOR_DZ[i]));
 
                 if (nodeIndexByKey.TryGetValue(neighborKey, out int neighbor))
                     Union(table, node, neighbor);
@@ -373,10 +344,10 @@ public sealed class ClusterTracker : BackgroundService
         {
             component = components.Count;
 
-            // Union only ever merges same-realm nodes, so any node of the component names its realm.
+            // Union only ever merges nodes of one realm's grid, so any node names the component's realm.
             components.Add(new PassComponent
             {
-                RealmId = table[node].Key.RealmId,
+                Realm = table[node].Realm,
                 FirstNode = NONE,
                 Id = string.Empty,
             });
@@ -547,7 +518,6 @@ public sealed class ClusterTracker : BackgroundService
         ref int peerCursor)
     {
         PassComponent info = components[component];
-        string realm = realmNames[info.RealmId];
         Vector3 centroid = Centroid(component, info.MemberCount);
         var radiusSquared = 0f;
 
@@ -559,12 +529,12 @@ public sealed class ClusterTracker : BackgroundService
             radiusSquared = MathF.Max(radiusSquared, (dx * dx) + (dz * dz));
 
             peers[peerCursor++] = new ClusterPeerInfo(
-                member.Peer, member.Wallet, info.Id, realm, member.Position, member.Parcel);
+                member.Peer, member.Wallet, info.Id, info.Realm, member.Position, member.Parcel);
 
             clusterIdByPeer[member.Peer.Value] = info.Id;
         }
 
-        return new ClusterInfo(info.Id, realm, info.MemberCount, centroid, MathF.Sqrt(radiusSquared));
+        return new ClusterInfo(info.Id, info.Realm, info.MemberCount, centroid, MathF.Sqrt(radiusSquared));
     }
 
     private Vector3 Centroid(int component, int memberCount)
@@ -603,10 +573,10 @@ public sealed class ClusterTracker : BackgroundService
 
         for (var component = 0; component < components.Count; component++)
         {
-            string clusterId = components[component].Id;
+            PassComponent info = components[component];
 
             foreach (PassMember member in MembersOf(component))
-                if (TryPublishAssignment(member, clusterId))
+                if (TryPublishAssignment(member, info.Id, info.Realm))
                     reassignments++;
         }
 
@@ -618,11 +588,11 @@ public sealed class ClusterTracker : BackgroundService
     ///     from the last one published, and either the change is exempt from the debounce or the peer
     ///     has dwelled long enough. Returns whether it published.
     /// </summary>
-    private bool TryPublishAssignment(PassMember member, string clusterId)
+    private bool TryPublishAssignment(PassMember member, string clusterId, string realm)
     {
         ref PeerClusterState state = ref peerStates[member.Peer.Value];
 
-        bool realmChanged = !string.Equals(state.PublishedRealm, member.Realm, StringComparison.Ordinal);
+        bool realmChanged = !string.Equals(state.PublishedRealm, realm, StringComparison.Ordinal);
 
         if (!realmChanged && string.Equals(state.PublishedClusterId, clusterId, StringComparison.Ordinal))
         {
@@ -643,11 +613,11 @@ public sealed class ClusterTracker : BackgroundService
         if (!immediate && !HasDwelled(ref state, clusterId)) return false;
 
         state.PublishedClusterId = clusterId;
-        state.PublishedRealm = member.Realm;
+        state.PublishedRealm = realm;
         state.CandidateClusterId = null;
         state.CandidateStreak = 0;
 
-        feedPublisher.PublishClusterChange(member.Wallet, clusterId, member.Realm);
+        feedPublisher.PublishClusterChange(member.Wallet, clusterId, realm);
 
         return true;
     }
@@ -694,10 +664,10 @@ public sealed class ClusterTracker : BackgroundService
         new (this, components[component].FirstNode);
 
     /// <summary>
-    ///     A union-find node: one grid cell within one realm. Keying by realm is what keeps a
-    ///     cluster from ever spanning realms.
+    ///     A union-find node's identity within the realm currently being collected: its grid cell.
+    ///     A wrapper rather than a bare <see cref="long" /> key purely for the hash below.
     /// </summary>
-    private readonly record struct NodeKey(int RealmId, long CellKey)
+    private readonly record struct NodeKey(long CellKey)
     {
         /// <summary>
         ///     The cell coordinates are mixed as two separate inputs, deliberately.
@@ -707,17 +677,17 @@ public sealed class ClusterTracker : BackgroundService
         ///     fold happens before any mixing, and no mixing restores lost entropy.
         /// </summary>
         public override int GetHashCode() =>
-            HashCode.Combine(RealmId, (int)CellKey, (int)(CellKey >> 32));
+            HashCode.Combine((int)CellKey, (int)(CellKey >> 32));
     }
 
     /// <summary>
     ///     A peer as observed by one pass, resolved once so later steps never re-read the boards and
-    ///     never see a torn view of a peer mid-pass.
+    ///     never see a torn view of a peer mid-pass. Carries no realm: the realm belongs to the node
+    ///     the member was collected into, and every member of a node shares it.
     /// </summary>
     private readonly record struct PassMember(
         PeerIndex Peer,
         string Wallet,
-        string Realm,
         Vector3 Position,
         int Parcel,
         bool IsTeleport
@@ -730,7 +700,8 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private struct PassNode
     {
-        public NodeKey Key;
+        public string Realm;
+        public long CellKey;
         public int MemberStart;
         public int MemberCount;
 
@@ -750,7 +721,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private struct PassComponent
     {
-        public int RealmId;
+        public string Realm;
 
         // Head of this component's node chain, or NONE while it is still empty.
         public int FirstNode;

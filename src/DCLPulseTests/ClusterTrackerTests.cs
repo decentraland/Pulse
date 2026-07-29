@@ -19,7 +19,7 @@ public class ClusterTrackerTests
     private const string REALM = "realm-a";
     private const string OTHER_REALM = "realm-b";
 
-    private SpatialGrid grid;
+    private RealmSpatialGrids grids;
     private SnapshotBoard snapshotBoard;
     private IdentityBoard identityBoard;
     private ClusterBoard clusterBoard;
@@ -28,7 +28,7 @@ public class ClusterTrackerTests
     [SetUp]
     public void SetUp()
     {
-        grid = new SpatialGrid(CELL_SIZE, MAX_PEERS);
+        grids = new RealmSpatialGrids(CELL_SIZE, MAX_PEERS);
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
         clusterBoard = new ClusterBoard();
@@ -141,7 +141,7 @@ public class ClusterTrackerTests
     {
         ClusterTracker tracker = CreateTracker();
 
-        // Same cell, so only the realm partition can separate them.
+        // Same cell in both realms, so only the grid partition can separate them.
         SetupPeer(new PeerIndex(0), new Vector3(10, 0, 10));
         SetupPeer(new PeerIndex(1), new Vector3(12, 0, 12), OTHER_REALM);
 
@@ -151,6 +151,28 @@ public class ClusterTrackerTests
         Assert.That(pass.Clusters, Has.Count.EqualTo(2));
         Assert.That(pass.Clusters.Select(i => i.Realm), Is.EquivalentTo(new[] { REALM, OTHER_REALM }));
         Assert.That(pass.GetClusterId(new PeerIndex(0)), Is.Not.EqualTo(pass.GetClusterId(new PeerIndex(1))));
+    }
+
+    [Test]
+    public void AdjacentCellsInDifferentRealms_AreNotNeighbours()
+    {
+        ClusterTracker tracker = CreateTracker();
+
+        // Cells are indexed per realm, so a neighbour probe must not reach a cell of another realm.
+        // realm-b straddles realm-a's cell on both sides, so whichever realm the tracker walks first,
+        // the other one probes across it.
+        SetupPeer(new PeerIndex(0), new Vector3(75, 0, 25));                    // realm-a, cell x=1
+        SetupPeer(new PeerIndex(1), new Vector3(25, 0, 25), OTHER_REALM);       // realm-b, cell x=0
+        SetupPeer(new PeerIndex(2), new Vector3(125, 0, 25), OTHER_REALM);      // realm-b, cell x=2
+
+        tracker.RunPass();
+
+        ClusterPass pass = clusterBoard.Current;
+
+        // realm-a's single cell, plus realm-b's two cells that are not adjacent to each other.
+        Assert.That(pass.Clusters, Has.Count.EqualTo(3));
+        Assert.That(pass.Clusters.Select(c => c.Count), Is.All.EqualTo(1));
+        Assert.That(pass.Clusters.Count(c => c.Realm == OTHER_REALM), Is.EqualTo(2));
     }
 
     [Test]
@@ -171,7 +193,7 @@ public class ClusterTrackerTests
         ClusterTracker tracker = CreateTracker();
 
         // In the grid and snapshot board, but never registered in the identity board.
-        grid.Set(new PeerIndex(0), new Vector3(10, 0, 10));
+        grids.Set(new PeerIndex(0), REALM, new Vector3(10, 0, 10));
         snapshotBoard.SetActive(new PeerIndex(0));
         PublishSnapshot(new PeerIndex(0), new Vector3(10, 0, 10), REALM);
 
@@ -405,7 +427,7 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Current.GetClusterId(new PeerIndex(0)), Is.EqualTo("C1"));
 
         // Simulate a disconnect: the peer leaves the grid and its snapshot slot is released.
-        grid.Remove(new PeerIndex(0));
+        grids.Remove(new PeerIndex(0));
         snapshotBoard.ClearActive(new PeerIndex(0));
         identityBoard.Remove(new PeerIndex(0));
         feedPublisher.ClearReceivedCalls();
@@ -449,7 +471,7 @@ public class ClusterTrackerTests
         return new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
-            grid,
+            grids,
             snapshotBoard,
             identityBoard,
             clusterBoard,
@@ -481,7 +503,10 @@ public class ClusterTrackerTests
         string? realm = REALM,
         string? wallet = null)
     {
-        grid.Set(peer, position);
+        // A realmless peer is placed in no grid at all, matching what the publisher does.
+        if (realm is not null)
+            grids.Set(peer, realm, position);
+
         snapshotBoard.SetActive(peer);
         identityBoard.Set(peer, wallet ?? $"0xwallet{peer.Value}");
         PublishSnapshot(peer, position, realm);
@@ -493,7 +518,9 @@ public class ClusterTrackerTests
         string? realm = REALM,
         bool isTeleport = false)
     {
-        grid.Set(peer, position);
+        if (realm is not null)
+            grids.Set(peer, realm, position);
+
         PublishSnapshot(peer, position, realm, isTeleport);
     }
 

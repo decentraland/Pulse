@@ -93,7 +93,7 @@ Pulse uses ENet over UDP. A couple of non-obvious behaviors worth knowing before
 
 Two knobs control concurrent-peer capacity:
 
-- `Transport.MaxPeers` — size of the `PeerIndex` pool and every per-peer array board (`SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `SpatialGrid`). Hard ceiling on active + in-grace slots.
+- `Transport.MaxPeers` — size of the `PeerIndex` pool and every per-peer array board (`SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `RealmSpatialGrids`). Hard ceiling on active + in-grace slots.
 - `Transport.MaxConcurrentConnections` — ENet host capacity. `0` = `MaxPeers`. Set below `MaxPeers` to reserve slots for the allocator's pending-recycle grace window — without headroom, a burst of reconnects can exhaust the `PeerIndex` pool while ENet still has free slots, causing `SERVER_FULL` refusals on otherwise admittable connections.
 
 Rule of thumb: `MaxConcurrentConnections ≈ MaxPeers - ceil(peakDisconnectsPerSecond × Peers.DisconnectionCleanTimeoutMs / 1000)`.

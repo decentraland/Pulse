@@ -157,7 +157,7 @@ builder.Services.AddSingleton(sp =>
 {
     SpatialHashAreaOfInterestOptions aoiOptions = sp.GetRequiredService<SpatialHashAreaOfInterestOptions>();
     ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
-    return new SpatialGrid(aoiOptions.CellSize, transportOptions.MaxPeers);
+    return new RealmSpatialGrids(aoiOptions.CellSize, transportOptions.MaxPeers);
 });
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
@@ -188,7 +188,7 @@ builder.Services.AddSingleton(sp =>
     return new ClusterTracker(
         sp.GetRequiredService<ILogger<ClusterTracker>>(),
         sp.GetRequiredService<IOptions<ClusterOptions>>(),
-        sp.GetRequiredService<SpatialGrid>(),
+        sp.GetRequiredService<RealmSpatialGrids>(),
         sp.GetRequiredService<SnapshotBoard>(),
         sp.GetRequiredService<IdentityBoard>(),
         sp.GetRequiredService<ClusterBoard>(),

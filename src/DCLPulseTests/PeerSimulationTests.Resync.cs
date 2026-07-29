@@ -316,7 +316,7 @@ public partial class PeerSimulationTests
 
     private PeerSimulation CreateSimulationWithResyncDelta() =>
         new (
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
             Substitute.For<ILogger<PeerSimulation>>(),

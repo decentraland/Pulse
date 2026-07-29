@@ -23,6 +23,7 @@ public partial class PeerSimulationTests
     ///     Tests that depend on sweep timing use this value.
     /// </summary>
     private const uint SWEEP_INTERVAL = 100;
+    private const string REALM = "realm-a";
 
     private static readonly uint[] SimulationSteps = [50u, 100u, 200u];
 
@@ -44,7 +45,7 @@ public partial class PeerSimulationTests
     ///     Mutated by <see cref="SetVisibleSubjects" /> to control what the mock returns.
     /// </summary>
     private List<(PeerIndex Subject, PeerViewSimulationTier Tier)> visibleSubjects;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ProfileBoard profileBoard;
 
     [SetUp]
@@ -55,7 +56,7 @@ public partial class PeerSimulationTests
 
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
-        spatialGrid = new SpatialGrid(50, MAX_PEERS);
+        realmGrids = new RealmSpatialGrids(50, MAX_PEERS);
         messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
         areaOfInterest = Substitute.For<IAreaOfInterest>();
         visibleSubjects = new List<(PeerIndex, PeerViewSimulationTier)>();
@@ -78,7 +79,7 @@ public partial class PeerSimulationTests
         peerIndexAllocator = Substitute.For<IPeerIndexAllocator>();
 
         simulation = new PeerSimulation(
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, peerIndexAllocator,
             Substitute.For<ILogger<PeerSimulation>>());

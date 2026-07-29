@@ -29,7 +29,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
-    private readonly SpatialGrid spatialGrid;
+    private readonly RealmSpatialGrids realmGrids;
     private readonly IdentityBoard identityBoard;
     private readonly MessagePipe messagePipe;
     private readonly ITimeProvider timeProvider;
@@ -66,7 +66,7 @@ public sealed class PeerSimulation : IPeerSimulation
     public PeerSimulation(
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
-        SpatialGrid spatialGrid,
+        RealmSpatialGrids realmGrids,
         IdentityBoard identityBoard,
         MessagePipe messagePipe,
         uint[] simulationSteps,
@@ -83,7 +83,7 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
-        this.spatialGrid = spatialGrid;
+        this.realmGrids = realmGrids;
         this.identityBoard = identityBoard;
         this.messagePipe = messagePipe;
         this.timeProvider = timeProvider;
@@ -206,7 +206,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 continue;
 
             // Same-wallet ghost suppression: during the disconnect-cleanup window a stale
-            // PeerIndex from the prior session still occupies SnapshotBoard/SpatialGrid/
+            // PeerIndex from the prior session still occupies SnapshotBoard/realm grid/
             // IdentityBoard and surfaces to its own freshly reconnected PeerIndex as a
             // visible subject. The PeerIndex differs (allocator pending-recycle), so the
             // == observerId check above doesn't catch it. Skipping by wallet here prevents
@@ -722,7 +722,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private void CleanupDisconnectedPeer(PeerIndex peerId)
     {
         snapshotBoard.ClearActive(peerId);
-        spatialGrid.Remove(peerId);
+        realmGrids.Remove(peerId);
         identityBoard.Remove(peerId);
         profileBoard.Remove(peerId);
         observerViews.Remove(peerId);

@@ -11,14 +11,15 @@ namespace DCLPulseBenchmarks;
 
 /// <summary>
 ///     Cost of one <see cref="ClusterTracker" /> pass — the 1 Hz off-hot-path job that derives cluster
-///     membership by union-find over occupied <see cref="SpatialGrid" /> cells — across the population
-///     shapes in <see cref="ClusterScenario" />.
+///     membership by union-find over each realm's occupied <see cref="SpatialGrid" /> cells — across the
+///     population shapes in <see cref="ClusterScenario" />. Every scenario puts its peers in one realm,
+///     so these figures do not exercise the per-realm loop's overhead, only its per-cell savings.
 ///     <para />
 ///     <b>Which number to read.</b> <see cref="Pass" /> repeats over an unchanging grid, so its working
 ///     set is in cache; a second of tick and packet traffic between two production passes evicts all of
 ///     it. <see cref="PassWithChurn" /> is the realistic figure — it moves peers first, dirtying the
 ///     grid and cold-starting the caches — and includes the movement cost, so subtract
-///     <see cref="Churn" />. At the 4095 ceiling that was ~590 us cold against ~424 us warm. Prefer
+///     <see cref="Churn" />. At the 4095 ceiling that is ~494 us cold against ~321 us warm. Prefer
 ///     <see cref="Pass" /> for regression detection (much lower variance) and the cold figure when
 ///     quoting a real cost.
 ///     <para />
@@ -30,11 +31,11 @@ namespace DCLPulseBenchmarks;
 ///     <b>Churn model.</b> Walkers are leashed to their starting point (<see cref="LEASH" />) rather
 ///     than travelling, so a long run cannot dissolve the scenario it is measuring.
 ///     <para />
-///     <b>Measured and rejected.</b> Narrowing the per-peer board read to the four fields a pass
-///     consumes (realm, position, parcel, teleport flag) measured at parity with the full
-///     <see cref="PeerSnapshot" /> read — 8.09 us vs 8.17 us for 4095 peers. The four fields are
-///     scattered across the struct, so a narrowed read touches the same cache lines. Do not re-try it
-///     without new evidence.
+///     <b>Measured and rejected.</b> Narrowing the per-peer board read to the handful of fields a pass
+///     consumes (position, parcel, teleport flag — and realm, which the pass read at the time) measured
+///     at parity with the full <see cref="PeerSnapshot" /> read — 8.09 us vs 8.17 us for 4095 peers.
+///     Those fields are scattered across the struct, so a narrowed read touches the same cache lines.
+///     Do not re-try it without new evidence.
 /// </summary>
 [MemoryDiagnoser]
 public class ClusterTrackerBenchmarks
@@ -62,7 +63,7 @@ public class ClusterTrackerBenchmarks
     public ClusterScenario Scenario { get; set; }
 
     private ClusterTracker _tracker = null!;
-    private SpatialGrid _grid = null!;
+    private RealmSpatialGrids _grids = null!;
     private SnapshotBoard _snapshotBoard = null!;
 
     private Vector3[] _positions = null!;
@@ -84,7 +85,7 @@ public class ClusterTrackerBenchmarks
         var identityBoard = new IdentityBoard(peerCount);
         var clusterBoard = new ClusterBoard();
 
-        _grid = new SpatialGrid(CELL_SIZE, peerCount);
+        _grids = new RealmSpatialGrids(CELL_SIZE, peerCount);
         _snapshotBoard = new SnapshotBoard(peerCount, RING_CAPACITY);
         _headings = new Vector2[peerCount];
         _moving = new bool[peerCount];
@@ -101,7 +102,7 @@ public class ClusterTrackerBenchmarks
         _tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
-            _grid,
+            _grids,
             _snapshotBoard,
             identityBoard,
             clusterBoard,
@@ -118,7 +119,7 @@ public class ClusterTrackerBenchmarks
 
             _snapshotBoard.SetActive(peer);
             identityBoard.Set(peer, $"0xwallet{i}");
-            _grid.Set(peer, _positions[i]);
+            _grids.Set(peer, REALM, _positions[i]);
             Publish(i);
         }
 
@@ -188,7 +189,7 @@ public class ClusterTrackerBenchmarks
 
             _positions[i] = next;
 
-            _grid.Set(new PeerIndex((uint)i), next);
+            _grids.Set(new PeerIndex((uint)i), REALM, next);
             Publish(i);
         }
     }

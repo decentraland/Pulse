@@ -20,7 +20,7 @@ public class TeleportHandlerTests
 
     private ITimeProvider timeProvider;
     private SnapshotBoard snapshotBoard;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ParcelEncoder parcelEncoder;
     private TeleportHandler handler;
     private Dictionary<PeerIndex, PeerState> peers;
@@ -32,10 +32,10 @@ public class TeleportHandlerTests
         timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
 
         snapshotBoard = new SnapshotBoard(100, 10);
-        spatialGrid = new SpatialGrid(100, 100);
+        realmGrids = new RealmSpatialGrids(100, 100);
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
 
-        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, realmGrids, parcelEncoder, timeProvider);
 
         handler = new TeleportHandler(
             Substitute.For<ILogger<TeleportHandler>>(),
@@ -144,7 +144,7 @@ public class TeleportHandlerTests
             parcelIndex: parcelIndex, position: new Vector3(2, 3, 4)));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        HashSet<PeerIndex>? gridPeers = spatialGrid.GetPeers(snapshot.GlobalPosition);
+        HashSet<PeerIndex>? gridPeers = realmGrids.PeersAt("realm-a", snapshot.GlobalPosition);
         Assert.That(gridPeers, Is.Not.Null);
         Assert.That(gridPeers, Does.Contain(peer));
     }

@@ -17,8 +17,9 @@ Requirements for the new layer:
 
 ## 2. What Pulse AoI provides
 
-- **`SpatialGrid`** — global cell index, 100-unit XZ cells (`SpatialHashAreaOfInterest:CellSize`; the options class default is still 50), packed int64 keys. Written incrementally on every snapshot publish; lock-free reads.
-- **`SpatialHashAreaOfInterest`** — per-observer scan of neighboring cells, realm-filtered, `MaxRadius` 100, distance tiers driving 50/100/200 ms update rates.
+- **`RealmSpatialGrids`** — one `SpatialGrid` per realm, created on a realm's first occupant and dropped with its last, plus the per-peer record of which realm and cell each slot occupies. Realm isolation is structural: a grid holds one realm's peers and nothing else, so no consumer compares realms. Written incrementally on every snapshot publish under one shared write lock; lock-free reads.
+- **`SpatialGrid`** — cell index for one realm, 100-unit XZ cells (`SpatialHashAreaOfInterest:CellSize`; the options class default is still 50), packed int64 keys. Occupant sets are copy-on-write, so a reader that holds one keeps iterating a consistent cell.
+- **`SpatialHashAreaOfInterest`** — resolves the observer's realm grid once, then scans neighboring cells within it, `MaxRadius` 100, distance tiers driving 50/100/200 ms update rates.
 - **`SnapshotBoard`** — seqlock latest state per peer (position, parcel, realm); single writer per slot, lock-free reads from any thread.
 - **`PeerSimulation`** — per-worker tick: AoI query → view diff → messages. Workers own disjoint peer stripes; cross-worker coordination is forbidden.
 
@@ -34,19 +35,21 @@ AoI is pairwise and observer-centric — no group concept exists. Clusters are a
 
 Working buffers are fields cleared between passes rather than reallocated. The published `ClusterPass` is necessarily fresh each pass, since readers hold it by reference — it is the bulk of the per-pass allocation (§3.2).
 
-### 3.2 Algorithm: union-find over occupied `SpatialGrid` cells
+### 3.2 Algorithm: union-find over occupied grid cells, one realm at a time
 
-Cluster at cell granularity, reusing the AoI grid — no second grid:
+Cluster at cell granularity, reusing the AoI grids — no second grid:
 
-1. **Enumerate.** A small read-only `SpatialGrid` extension (`GetOccupiedCells`) yields occupied cells with occupants, lock-free over the existing `ConcurrentDictionary` — safe because occupant sets are copy-on-write. Occupants are partitioned by realm from their latest snapshot. Peers with no realm, or no wallet in `IdentityBoard`, are skipped: neither can be placed in a realm-partitioned cluster nor addressed on the feed. Nodes are `(realm, cellKey)`.
-2. **Union.** Weighted union-find with path compression over 8-neighbor same-realm occupied cells. Two peers in adjacent cells are between 0 and `2 · CellSize · √2` apart — **0–283 units** at the configured 100 u — a proxy for archipelago's 64-unit join distance that is 4.4× coarser; boundary noise is absorbed by the dwell debounce (§3.3). Effective join range follows the AoI `CellSize`: one spatial resolution for visibility and clustering.
+1. **Enumerate.** `RealmSpatialGrids.GetRealmGrids` yields the realms that hold peers; each realm's `GetOccupiedCells` yields its occupied cells with occupants, lock-free over the existing `ConcurrentDictionary`. Nodes are cells, and a node's realm is the grid it came from — partitioning never reads a realm off a snapshot or compares two. (The debounce in §3.3 does compare the last *published* realm, which is change detection, not partitioning.) Peers with no wallet in `IdentityBoard` are skipped: they cannot be addressed on the feed. Peers with no realm never appear, because nothing placed them in a grid.
+2. **Union.** Weighted union-find with path halving over 8-neighbor occupied cells, run per realm — the cell-key index that neighbor probes consult holds one realm at a time, which is what confines a cluster to a single realm. Two peers in adjacent cells are between 0 and `2 · CellSize · √2` apart — **0–283 units** at the configured 100 u — a proxy for archipelago's 64-unit join distance that is 4.4× coarser; boundary noise is absorbed by the dwell debounce (§3.3). Effective join range follows the AoI `CellSize`: one spatial resolution for visibility and clustering.
 
    Two consequences of the 100 u setting worth stating plainly. Pulse will merge groups archipelago would have kept apart far more often than a 50 u grid would, so the §5 shadow-mode comparison should expect systematically fewer, larger clusters rather than a near-match. And since the join band (283 u) now exceeds `MaxRadius` (200 u) by a wider margin, two peers being in one cluster while never being mutually visible is ordinary rather than a chaining edge case — see the "Cluster ≠ visibility" note below.
 3. **Component → cluster.** Each root is a cluster; count, centroid and radius are computed in the same sweep, on the XZ plane to match what archipelago reported.
 
 No cap: a connected crowd is one cluster, deterministically.
 
-**Limits.** Hard ceiling: instance capacity (`Transport.MaxPeers`, 4095 — fixed arrays, no cross-instance clustering), further confined per realm. The algorithm adds none: O(N + C), C = occupied cells. Measured **~590 µs/pass at the 4095 ceiling** — Genesis City-sized world, cold working set, `ClusterTrackerBenchmarks` scenario `CeilingUniform` (~424 µs warm; ~230 KB of gen0 per pass, almost all of it the immutable `ClusterPass` the readers hold). The documented scenarios cost far less: ~9 µs for the 100-peer sparse case, ~50–57 µs for the 1 000-peer ones. That is 0.06% of one core at the 1 Hz cadence, so the pass is not a scaling concern below a capacity change; an earlier estimate of "well under 1 ms at 10k peers" was optimistic, since 10k is not reachable on one instance anyway. The practical bound is density and belongs to AoI: clusters don't affect fan-out, so spread clusters can reach instance capacity while dense crowds hit per-observer AoI fan-out (~n² within `MaxRadius`) first. Downstream, LiveKit room mapping shards past ~low thousands (§3.6).
+**Limits.** Hard ceiling: instance capacity (`Transport.MaxPeers`, 4095 — fixed arrays, no cross-instance clustering), further confined per realm. The algorithm adds none: O(N + C), C = occupied cells. Measured **~494 µs/pass at the 4095 ceiling** — Genesis City-sized world, cold working set, `ClusterTrackerBenchmarks` scenario `CeilingUniform` (~321 µs warm; ~230 KB of gen0 per pass, almost all of it the immutable `ClusterPass` the readers hold). The documented scenarios cost far less: ~9 µs for the 100-peer sparse case, ~52–56 µs for the 1 000-peer ones.
+
+Splitting the grid per realm (§2) moved the ceiling figure down from ~590 µs cold / ~424 µs warm. The work it removed — partitioning each cell's occupants by realm, and interning the realm name — ran once per occupied cell, so the gain tracks cell count rather than peer count: `CeilingUniform` has 1 904 occupied cells and improved ~16% cold, while the 28–52-cell 1 000-peer scenarios are unchanged within noise. Allocation and the resulting partition are identical. That is 0.06% of one core at the 1 Hz cadence, so the pass is not a scaling concern below a capacity change; an earlier estimate of "well under 1 ms at 10k peers" was optimistic, since 10k is not reachable on one instance anyway. The practical bound is density and belongs to AoI: clusters don't affect fan-out, so spread clusters can reach instance capacity while dense crowds hit per-observer AoI fan-out (~n² within `MaxRadius`) first. Downstream, LiveKit room mapping shards past ~low thousands (§3.6).
 
 **Percolation limit — at capacity on a full-size realm, the partition collapses.** Cell-adjacency clustering is site percolation on the grid: once the occupied fraction passes the 8-neighbour (Moore) threshold of ≈ 0.407, the occupied cells form one giant connected component and every peer lands in one cluster. Genesis City (4800 u) at 100 u cells is 48 × 48 = 2304 cells, so `MaxPeers` 4095 spread uniformly gives λ ≈ 1.78 peers/cell and an occupied fraction of `1 − e^−λ` ≈ **0.83** — roughly twice the threshold. Measured (`ClusterTrackerBenchmarks`, `CeilingUniform`): 1904 occupied cells, **2 clusters, the larger holding 4091 of 4095 peers**.
 
@@ -195,7 +198,7 @@ The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — th
 | | Archipelago Core | Pulse clusters |
 | --- | --- | --- |
 | Input | NATS heartbeats (≤ 2 s stale, 60 s disconnect lag) | `SnapshotBoard` (fresh, ~5 s cleanup) |
-| Granularity | peer-pairwise single-linkage, 64/80 | union-find over 100 u `SpatialGrid` cells (join band 0–283 u) |
+| Granularity | peer-pairwise single-linkage, 64/80 | union-find over 100 u cells of the realm's `SpatialGrid` (join band 0–283 u) |
 | Stability | ID survives largest fragment only; merge-order dependent | sticky IDs + dwell debounce |
 | Size cap | 100, blocks merges | none; sharding downstream |
 | Cost | O(pairs) per flush | O(N + C) per pass, off hot path |

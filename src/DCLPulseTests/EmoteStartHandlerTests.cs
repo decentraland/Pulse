@@ -19,7 +19,7 @@ public class EmoteStartHandlerTests
     private const uint MONOTONIC_TIME = 5000;
 
     private SnapshotBoard snapshotBoard;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ParcelEncoder parcelEncoder;
     private ITimeProvider timeProvider;
     private EmoteStartHandler handler;
@@ -29,12 +29,12 @@ public class EmoteStartHandlerTests
     public void SetUp()
     {
         snapshotBoard = new SnapshotBoard(100, 16);
-        spatialGrid = new SpatialGrid(100, 100);
+        realmGrids = new RealmSpatialGrids(100, 100);
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
 
-        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, realmGrids, parcelEncoder, timeProvider);
 
         handler = new EmoteStartHandler(publisher,
             Substitute.For<ILogger<EmoteStartHandler>>(),
@@ -149,11 +149,15 @@ public class EmoteStartHandlerTests
         peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peer);
 
+        // Grids are per realm, so the peer needs the realm a teleport or handshake seed would have
+        // given it before an emote publish can place it anywhere.
+        snapshotBoard.Publish(peer, TestSnapshots.Make(seq: 0, realm: "realm-a"));
+
         handler.Handle(peers, peer, CreateEmoteMessage("wave", durationMs: 3000,
             position: new Vector3(5f, 0f, 5f)));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        Assert.That(spatialGrid.GetPeers(snapshot.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.PeersAt("realm-a", snapshot.GlobalPosition), Does.Contain(peer));
     }
 
     [Test]

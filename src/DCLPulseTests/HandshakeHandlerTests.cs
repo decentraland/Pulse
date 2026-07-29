@@ -32,7 +32,7 @@ public class HandshakeHandlerTests
     private const string TIMESTAMP = "1700000000000";
 
     private SnapshotBoard snapshotBoard;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ParcelEncoder parcelEncoder;
     private ITimeProvider timeProvider;
     private ITransport transport;
@@ -45,7 +45,7 @@ public class HandshakeHandlerTests
     public void SetUp()
     {
         snapshotBoard = new SnapshotBoard(100, 16);
-        spatialGrid = new SpatialGrid(100, 100);
+        realmGrids = new RealmSpatialGrids(100, 100);
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(NOW_MS);
@@ -55,7 +55,7 @@ public class HandshakeHandlerTests
         ISignatureVerifier verifier = Substitute.For<ISignatureVerifier>();
         verifier.Verify(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>()).Returns(true);
 
-        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, realmGrids, parcelEncoder, timeProvider);
 
         var fieldValidator = new FieldValidator(
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),

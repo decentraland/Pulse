@@ -25,6 +25,23 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void PlayerJoined_SentOnceWhenTheSubjectIsCollectedTwice()
+    {
+        // RealmSpatialGrids.Set adds a peer to its new cell before vacating the old one, so a reader
+        // that catches the move can legitimately find the same subject in two cells of one query.
+        // InterestCollector does not de-duplicate, so the simulation itself has to absorb it.
+        SetVisibleSubjects(
+            (subject, PeerViewSimulationTier.TIER_0),
+            (subject, PeerViewSimulationTier.TIER_0));
+
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        OutgoingMessage msg = DrainSingleMessage();
+        Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
+        Assert.That(msg.Message.PlayerJoined.State.SubjectId, Is.EqualTo(subject.Value));
+    }
+
+    [Test]
     public void PlayerJoined_ContainsFullState()
     {
         var snapshot = TestSnapshots.Make(

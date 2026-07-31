@@ -55,7 +55,7 @@ That is 0.04% of one core at the 1 Hz cadence, so the pass is not a scaling conc
 
 **Percolation limit — at capacity on a full-size realm, the partition collapses.** Cell-adjacency clustering is site percolation on the grid: once the occupied fraction passes the 8-neighbour (Moore) threshold of ≈ 0.407, the occupied cells form one giant connected component and every peer lands in one cluster. Genesis City (4800 u) at 100 u cells is 48 × 48 = 2304 cells, so `MaxPeers` 4095 spread uniformly gives λ ≈ 1.78 peers/cell and an occupied fraction of `1 − e^−λ` ≈ **0.83** — roughly twice the threshold. Measured (`ClusterTrackerBenchmarks`, `CeilingUniform`): 1904 occupied cells, **2 clusters, the larger holding 4091 of 4095 peers**.
 
-At 50 u the same population occupies ≈ 0.36 of 9216 cells, just *below* threshold — which is why the design's worked examples partitioned sensibly. Doubling the cell size moved the shipping configuration from one side of the percolation transition to the other. Consequences: sticky IDs and the dwell debounce have nothing to stabilise at high density; gatekeeper maps one cluster to one LiveKit room — sharding was not implemented (§3.6) — so a percolated ~4095-peer cluster becomes a single room, well past the ~low-thousands single-node audio guidance, an accepted open risk (§7); and the exact-distance refinement in §7 becomes the mechanism that decides whether clustering means anything at capacity. This bounds usefulness, not correctness — the pass still runs in well under a millisecond, and sparse realms (the common case, scenario 3) are unaffected.
+At 50 u the same population occupies ≈ 0.36 of 9216 cells, just *below* threshold — which is why the design's worked examples partitioned sensibly. Doubling the cell size moved the shipping configuration from one side of the percolation transition to the other. Consequences: sticky IDs and the dwell debounce have nothing to stabilise at high density; gatekeeper maps one cluster to one LiveKit room by design (§3.6), so a percolated ~4095-peer cluster becomes a single room, well past the ~low-thousands single-node audio guidance — if that ever needs bounding, the mechanism is tracker-level in Pulse (§7); and the exact-distance refinement in §7 becomes the mechanism that decides whether clustering means anything at capacity. This bounds usefulness, not correctness — the pass still runs in well under a millisecond, and sparse realms (the common case, scenario 3) are unaffected.
 
 #### Worked examples
 
@@ -169,7 +169,7 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 
 **Consequences owned by gatekeeper:**
 
-- *Uncapped clusters vs room capacity* — LiveKit rooms are single-node-bound (~low thousands audio; 100 audio subscriptions per participant). Gatekeeper shipped **one cluster = one room** (`island-{clusterId}`); the planned shard layer was deliberately dropped. The capacity mitigation is unresolved — reinstate sharding in gatekeeper, or split oversized clusters in Pulse (a max size, or the §3.2 max-diameter constraint) — see §7. The percolation result above makes the risk concrete: at capacity on a full-size realm, one ~4095-peer room.
+- *One cluster = one room, verbatim* — gatekeeper maps each cluster to the LiveKit room `island-{clusterId}` with no sharding or re-partitioning, **by design**: Pulse is the single source of cluster composition. LiveKit rooms are single-node-bound (~low thousands audio; 100 audio subscriptions per participant), and the percolation result above makes the exposure concrete: at capacity on a full-size realm, one ~4095-peer room. If room size ever needs bounding, it happens in Pulse at the tracker level, never in consumers (§7).
 - *Delivery reach* — a wallet connected to Pulse but without a WS Connector session gets events nobody forwards (harmless); the reverse (WS session, no Pulse connection) gets no cluster. Expose a mismatch metric.
 
 ### 3.7 Configuration
@@ -202,7 +202,7 @@ The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — th
 | Input | NATS heartbeats (≤ 2 s stale, 60 s disconnect lag) | `SnapshotBoard` (fresh, ~5 s cleanup) |
 | Granularity | peer-pairwise single-linkage, 64/80 | union-find over 100 u cells of the realm's `SpatialGrid` (join band 0–283 u) |
 | Stability | ID survives largest fragment only; merge-order dependent | sticky IDs + dwell debounce |
-| Size cap | 100, blocks merges | none; room capacity unresolved (§7) |
+| Size cap | 100, blocks merges | none; bounding, if ever needed, is tracker-level (§7) |
 | Cost | O(pairs) per flush | O(N + C) per pass, off hot path |
 | Consistency with visibility | none | same boards as AoI |
 
@@ -257,7 +257,7 @@ Everything else archipelago does is already Pulse-native and needs no migration:
 ## 7. Open questions
 
 - **Cluster IDs are not unique beyond one process.** `{IdPrefix}{n}` is a monotonic counter from zero, so it resets on restart and collides across instances. After a Pulse restart `C1` names a different crowd, and gatekeeper would map it onto the LiveKit room the previous `C1` was using. Realm narrows this but does not fix it; scoping the ID to the instance (Pulse already has a `server_id` for handshake anti-replay) or to a boot epoch does. This is live-voice-room correctness, not cosmetics.
-- **Percolated cluster vs room capacity.** Gatekeeper maps one cluster to one LiveKit room with no sharding (§3.6), so the §3.2 capacity-density collapse would put ~4095 peers in a room whose single-node audio guidance is ~low thousands. Unresolved which side mitigates: reinstate room sharding in gatekeeper, or cap clusters in Pulse (a max size, or the §3.2 max-diameter split at the sparsest bridging cell).
+- **Bounding cluster size, if ever needed — a Pulse concern by decision.** Gatekeeper maps one cluster to one LiveKit room verbatim (§3.6); consumers never shard or re-partition. The §3.2 capacity-density collapse would put ~4095 peers in a room whose single-node audio guidance is ~low thousands, so if that exposure ever has to be bounded, the mechanism is tracker-level: a cluster size cap, a max-diameter split at the sparsest bridging cell (scenario 2), or revisiting the 100 u `CellSize` that pushed a full realm past the percolation threshold. Deferred until shadow-mode data shows the density is real.
 - Scene listeners in clusters? Proposal: no — no snapshot, naturally excluded.
 - Exact-distance refinement if cell adjacency proves too coarse. At the configured 100 u the join band is 0–283 u against archipelago's 64 u, so this is now more likely to be needed than when the proposal was written against 50 u cells — thresholds scale with `CellSize` (merge at ~`2·CellSize·√2`, split at just above `CellSize`). Deferred until shadow-mode data.
 - Regenerate the §3.2 worked examples and illustrations at 100 u, so the documented cluster counts match the shipping configuration. The image filenames still read `island-clustering-*`.

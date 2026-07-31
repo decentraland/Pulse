@@ -50,7 +50,7 @@ Off by default — omit all of these and the run behaves exactly as before.
 | `--mode=<bots\|bridge>` | `bots` | `bridge` runs the stub gatekeeper **alone** — no bots, no accounts, no Pulse connection |
 | `--bridge-mode=<synthetic\|livekit\|off>` | `synthetic` | `synthetic` needs no credentials; `livekit` mints a real token from `LIVEKIT_HOST`/`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`; `off` expects a real comms-gatekeeper on the broker |
 | `--nats-url=<url>` | `nats://127.0.0.1:4222` | Broker the bridge subscribes to |
-| `--expect-conn-string-within=<seconds>` | `15` | Deadline for a conn string to arrive (three `DwellPasses` at 1 Hz plus slack) |
+| `--expect-conn-string-within=<seconds>` | `15` | **Parsed but not yet acted on.** Reserved for the regression scenarios (three `DwellPasses` at 1 Hz plus slack); passing it today changes nothing |
 
 **Argument parsing is `--name=value` only.** `ClientOptions.FromArgs` matches on the `--name=` prefix, so a space-separated `--bridge-mode livekit` sets nothing and silently falls back to the default. `--comms-enabled` is the sole exception — bare or `=true` both work. Always emit the `=` form.
 

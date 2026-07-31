@@ -20,12 +20,6 @@ public class ClientOptions
     public string Transport { get; init; } = "enet";
 
     /// <summary>
-    ///     Entry point to run: <c>bots</c> (default) drives the simulation, <c>bridge</c> runs the stub
-    ///     gatekeeper alone.
-    /// </summary>
-    public string Mode { get; init; } = "bots";
-
-    /// <summary>
     ///     Whether each bot also opens a ws-connector session on its own wallet to observe the LiveKit
     ///     conn string. Off by default so existing runs are unchanged.
     /// </summary>
@@ -33,15 +27,6 @@ public class ClientOptions
 
     /// <summary>ws-connector WebSocket endpoint.</summary>
     public string CommsUrl { get; init; } = "ws://127.0.0.1:5000/ws";
-
-    /// <summary>Broker the stub gatekeeper bridges over. Empty disables the bridge.</summary>
-    public string NatsUrl { get; init; } = "nats://127.0.0.1:4222";
-
-    /// <summary>
-    ///     Stub gatekeeper mode: <c>synthetic</c> (default, no credentials), <c>livekit</c> (mints a real
-    ///     token from the environment), or <c>off</c> (expect a real comms-gatekeeper on the broker).
-    /// </summary>
-    public string BridgeMode { get; init; } = "synthetic";
 
     /// <summary>
     ///     Deadline for a conn string to arrive after a bot connects. Default covers three
@@ -74,11 +59,8 @@ public class ClientOptions
             BotOffset = int.Parse(Arg("bot-offset", "0")),
             TotalBotCount = int.Parse(Arg("total-bot-count", "0")),
             Transport = Arg("transport", "enet"),
-            Mode = Arg("mode", "bots"),
             CommsEnabled = Flag("comms-enabled"),
             CommsUrl = Arg("comms-url", "ws://127.0.0.1:5000/ws"),
-            NatsUrl = Arg("nats-url", "nats://127.0.0.1:4222"),
-            BridgeMode = Arg("bridge-mode", "synthetic"),
             ExpectConnStringWithinSeconds = int.Parse(Arg("expect-conn-string-within", "15")),
         };
     }

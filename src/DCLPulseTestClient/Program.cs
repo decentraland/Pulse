@@ -3,7 +3,6 @@ using Pulse.Transport;
 using Pulse.Transport.WebTransport;
 using PulseTestClient;
 using PulseTestClient.Auth;
-using PulseTestClient.Bridge;
 using PulseTestClient.Comms;
 using PulseTestClient.Inputs;
 using PulseTestClient.Networking;
@@ -12,22 +11,6 @@ using PulseTestClient.Timing;
 using System.Numerics;
 
 var options = ClientOptions.FromArgs(args);
-
-// --mode=bridge is the stub gatekeeper on its own: no bots, no accounts, no Pulse connection. Checked
-// before anything else so none of that setup runs.
-if (options.Mode.Equals("bridge", StringComparison.OrdinalIgnoreCase))
-{
-    using var bridgeCts = new CancellationTokenSource();
-
-    Console.CancelKeyPress += (_, e) =>
-    {
-        e.Cancel = true;
-        bridgeCts.Cancel();
-    };
-
-    await StubGatekeeper.RunAsync(options, bridgeCts.Token);
-    return 0;
-}
 var behaviorSettings = BotBehaviorSettings.Load();
 int botsPerProcess = BotBehaviorSettings.LoadBotsPerProcess();
 
@@ -91,7 +74,14 @@ if (!isWorker)
     {
         accountNames[i] = options.BotCount == 1 ? options.AccountPrefix : $"{options.AccountPrefix}-{i}";
         Console.WriteLine($"[{accountNames[i]}] Ensuring account exists..");
-        await MetaForge.RunCommandAsync($"account create {accountNames[i]} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+
+        // Non-zero is the normal outcome here: re-running with the same account name exits 2 with
+        // "already exists", which is exactly the state this call wants. A real failure surfaces at
+        // the next step instead, where the account is actually needed to sign.
+        await MetaForge.RunCommandAsync(
+            $"account create {accountNames[i]} --skip-update-check --skip-auto-login",
+            lifeCycleCts.Token,
+            throwOnNonZeroExit: false);
     }
 }
 else

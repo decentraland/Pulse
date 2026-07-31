@@ -1,15 +1,20 @@
 # End-to-end harness for the LiveKit conn-string path: NATS + ws-connector + Pulse.
 #
-# The test client is NOT here — it runs on the host, holding both channels on one wallet
-# (Pulse over ENet, ws-connector over WebSocket) and, by default, the stub gatekeeper that
-# bridges peer.{addr}.cluster_change -> engine.peer.{addr}.island_changed. Every host port
-# below is therefore load-bearing: the client reaches all three services from outside.
+# The test client is NOT here — it runs on the host, holding both channels on one wallet:
+# Pulse over ENet and ws-connector over WebSocket. Every host port below is therefore
+# load-bearing, since the client reaches all three services from outside.
+#
+# comms-gatekeeper is NOT here either, and that is deliberate. It is what turns
+# peer.{addr}.cluster_change into engine.peer.{addr}.island_changed, so nothing reaches the
+# client without it — but it needs Postgres, a LiveKit host/key/secret and several external
+# service URLs, and a committed compose file is the wrong place for a credentialed service.
+# Run it from its own checkout against this broker; see docs/e2e-livekit.md section 4.
 #
 # See docs/e2e-livekit.md for what the harness proves and how to read a failure.
 #
-# No credentials are needed on the default path. If you repoint the harness at a broker that
-# requires them, they travel inside E2E_NATS_URL, which is read from the host environment and
-# has no committed value beyond the local default. Nothing else here takes a secret.
+# No credentials are needed by anything in this file. If you repoint the harness at a broker
+# that requires them, they travel inside E2E_NATS_URL, which is read from the host environment
+# and has no committed value beyond the local default. Nothing else here takes a secret.
 
 name: pulse-e2e
 

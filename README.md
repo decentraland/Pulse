@@ -150,7 +150,9 @@ When `--bot-count=1`, the account name is used as-is. When `--bot-count` > 1, ac
 
 ### End-to-end conn-string harness
 
-With `--comms-enabled` each bot also opens a ws-connector session on its own wallet, so one process holds both channels and can assert that a LiveKit connection string arrives for the same identity that Pulse clustered. `docker-compose.e2e.yml` brings up the NATS + ws-connector + Pulse stack it runs against.
+With `--comms-enabled` each bot also opens a ws-connector session on its own wallet, so one process holds both channels and can assert that a LiveKit connection string arrives for the same identity that Pulse clustered. `docker-compose.e2e.yml` brings up the NATS + ws-connector + Pulse stack it runs against; comms-gatekeeper mints the conn strings and is run separately, since it needs Postgres and LiveKit credentials.
+
+The test client stays a client — it holds no broker connection and never publishes on a service's subject.
 
 `--comms-url` accepts either a plain `ws://host/ws` or a realm's raw comms adapter string (`archipelago:archipelago:wss://host/ws`), so a value copied out of `/about` works unchanged.
 

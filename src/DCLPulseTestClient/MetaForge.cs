@@ -4,7 +4,13 @@ namespace PulseTestClient;
 
 public static class MetaForge
 {
-    public static async Task<string> RunCommandAsync(string arguments, CancellationToken ct)
+    /// <param name="throwOnNonZeroExit">
+    ///     Leave set for commands whose output the caller parses. Clear it for idempotent
+    ///     "ensure this exists" calls, where MetaForge reports the already-satisfied case as a
+    ///     failure exit — <c>account create</c> returns 2 for an account that is already there,
+    ///     which is the normal path on every re-run.
+    /// </param>
+    public static async Task<string> RunCommandAsync(string arguments, CancellationToken ct, bool throwOnNonZeroExit = true)
     {
         var process = new Process
         {
@@ -39,7 +45,7 @@ public static class MetaForge
         // Without this the caller sees an empty string and fails inside a JSON parse, which points
         // at the wrong thing entirely — an outdated metaforge missing a subcommand reads as
         // malformed output rather than "rebuild metaforge".
-        if (process.ExitCode != 0)
+        if (throwOnNonZeroExit && process.ExitCode != 0)
         {
             string detail = stderr.Result.Trim();
             if (detail.Length == 0) detail = stdout.Result.Trim();

@@ -3,12 +3,15 @@
 How to run the harness that checks Pulse's cluster feed all the way to the LiveKit connection
 string a client would actually receive, on a local machine and in CI.
 
-> **Status.** The compose stack and this document describe a harness whose test-client side is
-> under construction. Everything about NATS, ws-connector, comms-gatekeeper and Pulse's
-> configuration below was read out of those sources. Everything about the test client's own
-> flags, output and exit codes is the **intended contract** from
-> [`docs/tasks/e2e-livekit-connstring.md`](tasks/e2e-livekit-connstring.md) — treat it as the
-> spec it is, not as observed behaviour. Places where the two disagree are called out inline.
+> **Status.** The client side — the ws-connector channel, the handshake, the heartbeat pump and
+> the conn-string listener — is built and compiles; its flags below are read from
+> `ClientOptions.cs`. Everything about NATS, ws-connector, comms-gatekeeper and Pulse's
+> configuration was read out of those sources. What does **not** exist yet is the scenario
+> runner: the numbered regression scenarios in
+> [`docs/tasks/e2e-livekit-connstring.md`](tasks/e2e-livekit-connstring.md) are still the
+> intended contract rather than something you can run, and no part of this has been executed
+> against a live stack end to end. Places where the spec and the sources disagree are called out
+> inline.
 
 ## 1. What the harness proves
 
@@ -51,8 +54,8 @@ them and publishes the `engine.`-prefixed subject explicitly, and it does so *wi
 its own `NATS_SUBJECT_PREFIX` — the comment in
 `comms-gatekeeper/src/logic/cluster-subscriber/component.ts` calls this out as intentional,
 because ws-connector subscribes to the literal subject. It looks like a bug from either end. It
-is not. Do not "fix" either side to match the other; the stub gatekeeper has to reproduce it
-exactly or nothing arrives.
+is not. Do not "fix" either side to match the other; the two subjects are load-bearing exactly
+as written, and a mismatch means nothing arrives.
 
 Pulse's `Nats:SubjectPrefix` does apply to what Pulse publishes, so a non-empty prefix has to be
 mirrored on whatever subscribes to `cluster_change`. It must not be mirrored on
@@ -139,23 +142,25 @@ Outbound internet is nice to have. ws-connector fetches
 `https://config.decentraland.org/denylist.json` at handshake time (cached 5 minutes) and fails
 open on error, logging it — so the harness works offline, but with an error line per cache miss.
 
-## 4. The two bridge modes
+## 4. The conn-string source
 
 Between `peer.{addr}.cluster_change` and `engine.peer.{addr}.island_changed` sits
-comms-gatekeeper. The real one needs Postgres, LiveKit credentials and a deny-list lookup before
-it will mint a token. That is three external dependencies and a secret, which is why it cannot
-gate CI. The test client therefore carries a **stub gatekeeper** that does the same subject
-translation with nothing behind it.
+comms-gatekeeper, and **the harness expects the real one**. The test client is a client: it
+speaks Pulse's protocol and ws-connector's, and it holds no broker connection of its own. It
+does not mint conn strings, does not subscribe to `cluster_change`, and cannot stand in for a
+service. Nothing arrives on the comms channel unless something else is doing the translation.
 
-| `--bridge-mode` | What runs | Credentials | Use |
-| --- | --- | --- | --- |
-| `synthetic` (default) | Stub in the test client; `conn_str` is a fixed non-routable string | None | CI, and every ordinary local run |
-| `livekit` | Stub in the test client; mints a real token from host environment credentials | LiveKit host, key, secret | Checking that a real token is well-formed, or feeding `--join-livekit` |
-| `off` | Nothing; expects a real comms-gatekeeper subscribed to the same broker | Whatever gatekeeper needs | Validating against the production implementation |
+An earlier revision carried a stub gatekeeper inside the test client behind `--mode=bridge`,
+publishing to the broker itself. That was removed: a client that publishes on a server's subject
+is not a client, and a harness whose observations come from its own writes proves less than it
+appears to. If you want that code back as a standalone tool, it is in git history at `2f9233e`
+under `src/DCLPulseTestClient/Bridge/`.
 
-The stub is not a second implementation of the contract — it is deliberately the *same* subject
-pair and the *same* room naming, so an assertion written against it keeps holding when you flip
-to `off`.
+The cost is honest and worth stating plainly: gatekeeper needs Postgres, LiveKit credentials and
+a deny-list lookup before it mints anything, so **this harness cannot gate CI without those**.
+The task spec's acceptance criterion 4 — scenarios passing "with no external credentials" — is
+not satisfiable against a real gatekeeper. Either supply a LiveKit host/key/secret to the
+harness environment, or accept that this suite runs locally and on-demand rather than per-commit.
 
 ### The room name is not the cluster id
 
@@ -167,8 +172,9 @@ The single most transferable detail. The real gatekeeper names the room
 `IslandChangedMessage.island_id`. So for cluster `C3` on an unsharded cluster the client sees
 `island-C3`, not `C3`.
 
-The stub emits `island-{clusterId}` for exactly this reason. Assertions are therefore written as
-`island_id == "island-" + cluster_id`, and they transfer to the real gatekeeper unchanged.
+Assertions are therefore written as `island_id == "island-" + cluster_id`. Worth knowing even
+though the harness now only ever talks to the real gatekeeper: it is the detail that makes
+`island_id` look wrong the first time you compare it against what Pulse published.
 
 > **Conflicts with the task spec.** D4 in
 > [`docs/tasks/e2e-livekit-connstring.md`](tasks/e2e-livekit-connstring.md) writes
@@ -176,30 +182,16 @@ The stub emits `island-{clusterId}` for exactly this reason. Assertions are ther
 > `cluster_id`". Against the gatekeeper source that is wrong by a prefix. The prefix wins; the
 > spec text is the thing to correct.
 
-Two further details the real gatekeeper has that the stub does not need to reproduce, but which
-explain the shape of `IslandChangedMessage`: `peers` is left empty by design (unity-explorer
-reads only `conn_str`), and `from_island_id` is *omitted* rather than set to `""` when there is
-no previous room. Gatekeeper also shards oversized clusters into `island:{id}:{shard}` rooms;
-the stub does not, and the harness does not exercise sharding.
+Two further details that explain the shape of `IslandChangedMessage`: `peers` is left empty by
+design (unity-explorer reads only `conn_str`), and `from_island_id` is *omitted* rather than set
+to `""` when there is no previous room.
 
-### `livekit` mode credentials
+### Running comms-gatekeeper
 
-`livekit` mode mints a real token, so it needs a LiveKit host, API key and API secret supplied
-from the host environment at run time.
-
-> **Gap, stated rather than guessed.** The exact environment variable names the test client
-> reads for this are set by the bridge implementation, which is not written at the time of
-> writing, so they are not documented here. For reference, comms-gatekeeper reads
-> `PROD_LIVEKIT_HOST` / `PROD_LIVEKIT_API_KEY` / `PROD_LIVEKIT_API_SECRET` (and a `PREVIEW_`
-> triple). Whoever lands the bridge should either match those names or record the ones chosen
-> here.
-
-None of these belong in `docker-compose.e2e.yml`: the bridge runs on the host, not in a
-container. The compose file needs no credentials at all.
-
-### `off` mode
-
-Run comms-gatekeeper yourself, pointed at the same broker, with at least:
+It is not in `docker-compose.e2e.yml`, and deliberately so: it needs Postgres, a LiveKit
+host/key/secret and several external service URLs, and putting a credentialed service into a
+committed compose file is how secrets end up in a repo. Run it from its own checkout, against
+the same broker, with at least:
 
 | Variable | Value | Note |
 | --- | --- | --- |
@@ -208,11 +200,17 @@ Run comms-gatekeeper yourself, pointed at the same broker, with at least:
 | `NATS_SUBJECT_PREFIX` | empty | Must match Pulse's `Nats:SubjectPrefix` |
 | `NATS_QUEUE_GROUP` | `comms-gatekeeper-cluster` | Default; queue-grouped so N replicas mint once, not N times |
 
+It also needs `PROD_LIVEKIT_HOST` / `PROD_LIVEKIT_API_KEY` / `PROD_LIVEKIT_API_SECRET` and its
+Postgres settings (`PG_COMPONENT_PSQL_*`); `comms-gatekeeper/docker-compose.yml` brings up a
+local Postgres and NATS, and its `.env.default` documents the rest. Supply the LiveKit triple
+from your environment — never from a committed file.
+
 It subscribes to `${prefix}peer.*.cluster_change` and publishes the unprefixed
 `engine.peer.{wallet}.island_changed`. Its ban check and deny-list lookup both fail open, so an
 unreachable Postgres degrades to "everyone allowed" rather than to silence — but a *missing*
 LiveKit credential does not: `generateCredentials` is on the path to publishing, so a
-credentials failure means no `island_changed` at all.
+credentials failure means no `island_changed` at all. That asymmetry is the first thing to check
+when clustering is clearly working and the client still sees nothing.
 
 ## 5. Running it
 
@@ -228,16 +226,19 @@ Confirm Pulse actually connected to the broker rather than falling into stats-on
 curl -s http://127.0.0.1:5100/metrics | grep dcl_pulse_nats_connected
 ```
 
-Run one bot holding both channels, default synthetic bridge:
+Start comms-gatekeeper against the same broker (§4) — without it the bots connect to
+ws-connector and then sit there receiving nothing, which looks identical to a healthy idle run.
+
+Run one bot holding both channels:
 
 ```bash
-dotnet run --project src/DCLPulseTestClient -- --account=e2e-bot --comms-enabled --nats-url=nats://127.0.0.1:4222
+dotnet run --project src/DCLPulseTestClient -- --account=e2e-bot --comms-enabled
 ```
 
 Two bots, which needs two accounts — see §6 on `KR_NEW_SESSION`:
 
 ```bash
-dotnet run --project src/DCLPulseTestClient -- --account=e2e-bot --bot-count=2 --comms-enabled --nats-url=nats://127.0.0.1:4222
+dotnet run --project src/DCLPulseTestClient -- --account=e2e-bot --bot-count=2 --comms-enabled
 ```
 
 Tear down:
@@ -259,23 +260,17 @@ Read from `src/DCLPulseTestClient/ClientOptions.cs`. Defaults are the ones in `F
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--comms-enabled` | off | Open a ws-connector session per bot on the bot's own wallet. Everything below is inert without it |
-| `--comms-url=<url>` | `ws://127.0.0.1:5000/ws` | ws-connector endpoint |
-| `--nats-url=<url>` | `nats://127.0.0.1:4222` | Broker the stub gatekeeper bridges over. Empty disables the bridge |
-| `--bridge-mode=<mode>` | `synthetic` | `synthetic`, `livekit` or `off` |
-| `--expect-conn-string-within=<s>` | `15` | Deadline for a conn string after a bot connects |
-| `--mode=<mode>` | `bots` | `bots` drives the simulation; `bridge` runs the stub gatekeeper alone |
+| `--comms-url=<url>` | `ws://127.0.0.1:5000/ws` | ws-connector endpoint. Also accepts a realm's raw adapter string (`archipelago:archipelago:wss://host/ws`), so a value copied from `/about` works unchanged |
+| `--expect-conn-string-within=<s>` | `15` | **Parsed but not yet acted on.** Reserved for the regression scenarios |
+
+There is deliberately no broker flag. The client never connects to NATS.
 
 Two parsing details that will cost you a run each:
 
 - **`--flag=value`, not `--flag value`.** `FromArgs` matches on the `--name=` prefix; a
-  space-separated value is silently ignored and the default is used. Both the task spec and
-  informal notes write `--bridge-mode synthetic`, which parses as *nothing set* and leaves you
-  on the default. It happens to be the same value, which is worse, because
-  `--bridge-mode livekit` also silently means `synthetic`.
+  space-separated value is silently ignored and the default is used — so `--comms-url ws://…`
+  leaves you pointed at the default endpoint with no warning.
 - **`--comms-enabled` is the exception**, accepted both bare and as `--comms-enabled=true`.
-
-`--mode=bridge` is useful when you want the bridge to outlive individual client runs: start it
-once in its own process, then run bots with the bridge disabled in-process.
 
 ## 6. Reading a failure
 
@@ -293,10 +288,10 @@ Four observation points, in order. The first one that is empty is your answer.
 | 1 | Pulse decided | `curl -s http://127.0.0.1:5100/metrics \| grep dcl_pulse_cluster` | Tracker not running: `Clusters:Enabled` off, or no peers with fresh snapshots |
 | 2 | Pulse published | `dcl_pulse_nats_connected`, `dcl_pulse_nats_published_total` on the same endpoint | Feed disabled (`Nats:Url` empty) or the broker was unreachable at startup |
 | 3 | On the broker | `nats sub "peer.*.cluster_change"` | Publish failed (`dcl_pulse_nats_publish_failed_total`) or was dropped (`dcl_pulse_nats_dropped_total`) |
-| 4 | Bridged | `nats sub "engine.peer.*.island_changed"` | The bridge is not running, is on a different broker, or produced the wrong subject |
+| 4 | Gatekeeper minted | `nats sub "engine.peer.*.island_changed"` | comms-gatekeeper is not running, is on a different broker, has `CLUSTER_SUBSCRIBER_ENABLED` unset, or could not mint (missing LiveKit credential) |
 
-Hop 3 present and hop 4 absent isolates the bridge. Hop 4 present and the client silent isolates
-ws-connector's registry — which is almost always an address or session problem, below.
+Hop 3 present and hop 4 absent isolates comms-gatekeeper. Hop 4 present and the client silent
+isolates ws-connector's registry — which is almost always an address or session problem, below.
 
 Watch the two subjects from the host, in two terminals. Upstream:
 
@@ -345,9 +340,9 @@ Compare the subject against the `peer_id` in the welcome.
 **The `engine.` prefix.** Publishing `peer.{addr}.island_changed` instead of
 `engine.peer.{addr}.island_changed` gives you hop 3 and hop 4 both looking populated if you are
 subscribed with a loose wildcard, and nothing at the client. Conversely, subscribing to
-`engine.peer.*.cluster_change` gets you a bridge that never fires. *Tell it apart:*
-`/subsz?subs=1` lists the literal strings; the pair should read `peer.*.cluster_change` on the
-bridge side and `engine.peer.*.island_changed` on ws-connector's. If a `Nats:SubjectPrefix` is
+`engine.peer.*.cluster_change` gets you a gatekeeper that never fires. *Tell it apart:*
+`/subsz?subs=1` lists the literal strings; the pair should read `peer.*.cluster_change` on
+gatekeeper's side and `engine.peer.*.island_changed` on ws-connector's. If a `Nats:SubjectPrefix` is
 set on Pulse, the first gains that prefix and the second must not.
 
 **Half a session.** A wallet with a Pulse session but no ws-connector session gets an
@@ -396,9 +391,9 @@ in the compose file, so that gauge is actually scrapeable.
 
 **Empty `cluster_id`.** Protobuf decodes an absent `cluster_id` as `""`, and unguarded that
 dumps every affected peer into one shared `island-` room. The real gatekeeper checks for it and
-logs `empty clusterId`. A stub that does not check will produce a run where every bot agrees on
-the same island for the wrong reason — which passes scenario 2 and fails scenario 3. *Tell it
-apart:* the `island_id` is exactly `island-`.
+logs `empty clusterId` and skips it. Were that guard ever to regress, the run would have every
+bot agreeing on the same island for the wrong reason — passing scenario 2 and failing scenario
+3. *Tell it apart:* the `island_id` is exactly `island-`.
 
 ### Logs worth tailing
 
@@ -427,15 +422,15 @@ it is what lets these scenarios run on every PR.
 - **Nothing secret in the compose file.** `docker-compose.e2e.yml` contains no credential and no
   placeholder for one. The only value that could ever carry one is `E2E_NATS_URL`, which is read
   from the host environment; its committed default is the local broker, which needs no auth.
-- **Nothing secret in source, config or fixtures.** `livekit` bridge mode takes its LiveKit host,
-  key and secret from the host environment at run time. They are never written to a fixture, a
-  committed config file, or a recorded expectation.
+- **Nothing secret in source, config or fixtures.** The LiveKit host, key and secret belong to
+  comms-gatekeeper and are supplied to it from the host environment at run time. The test client
+  never holds them. They are never written to a fixture, a committed config file, or a recorded
+  expectation.
 - **`access_token` is redacted in output.** A conn string is
   `livekit:<url>?access_token=<jwt>`, and the JWT is a live credential for the duration of its
   validity. Anything that prints a conn string — log lines, assertion failure messages, scenario
-  reports — must redact the token, not the URL. In `synthetic` mode the token is a fixed
-  non-routable placeholder and there is nothing to leak, which is exactly why `synthetic` is the
-  default rather than an option.
+  reports — must redact the token, not the URL. `ConnStringRedaction` is the single choke point,
+  and `ConnStringListener` runs every observed conn string through it before logging.
 - **Private keys stay in MetaForge.** The test client shells out to `metaforge account sign` and
   handles only the resulting auth chain. It never reads a key.
 

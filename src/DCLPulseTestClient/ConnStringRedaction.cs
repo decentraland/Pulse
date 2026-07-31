@@ -4,10 +4,13 @@ namespace PulseTestClient;
 
 /// <summary>
 ///     The one place a LiveKit token is hidden. Every conn string this process writes down goes
-///     through <see cref="Redact" /> — the ones the bridge mints and the ones the comms channel
-///     observes — synthetic ones included, so the default mode exercises the path the credentialed
-///     mode depends on instead of leaving it first used on the day a real secret is in the string.
+///     through <see cref="Redact" />.
 /// </summary>
+/// <remarks>
+///     A conn string is <c>livekit:{url}?access_token={jwt}</c>, and that JWT is a live credential
+///     for as long as it is valid. comms-gatekeeper mints a real one on every assignment, so there
+///     is no run in which printing it unredacted would be safe.
+/// </remarks>
 public static partial class ConnStringRedaction
 {
     private const string REPLACEMENT = "access_token=<redacted>";

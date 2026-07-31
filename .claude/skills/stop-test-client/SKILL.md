@@ -33,13 +33,8 @@ Gracefully stop running test bots so they disconnect cleanly from the server.
    ```
    On macOS/Linux fallback: `pkill -9 -f DCLPulseTestClient`
 
-## Bridge processes
+## Scope
 
-A process started with `--mode=bridge` (the stub gatekeeper) **does not watch the stop file** — the file watcher belongs to the bot lifecycle, which bridge mode skips entirely. It stops on Ctrl+C or a kill.
+The stop file reaches every test-client process, because the binary now only ever runs bots — there is no second entry point. A bot started with `--comms-enabled` also holds a ws-connector session; it closes with the rest of the shutdown and needs no separate step.
 
-The harness normally runs two processes from the same binary, so both match the same name. If the user wants only the bots stopped, match on the command line rather than the image name:
-
-- Windows: `Get-CimInstance Win32_Process -Filter "Name='DCLPulseTestClient.exe'" | Where-Object { $_.CommandLine -match '--mode=bridge' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
-- macOS/Linux: `pkill -f 'DCLPulseTestClient.*--mode=bridge'`
-
-Invert the match (`-notmatch` / `pgrep -f` and filter) to target the bots instead. Step 2's stop file only ever reaches the bots, so it is already bridge-safe.
+Nothing here touches comms-gatekeeper, ws-connector, NATS or Pulse. Those are separate services with their own lifecycles (`docker compose -f docker-compose.e2e.yml down` for the compose stack). Stopping the bots leaves them running, which is usually what you want between runs.

@@ -3,15 +3,39 @@
 How to run the harness that checks Pulse's cluster feed all the way to the LiveKit connection
 string a client would actually receive, on a local machine and in CI.
 
-> **Status.** The client side — the ws-connector channel, the handshake, the heartbeat pump and
-> the conn-string listener — is built and compiles; its flags below are read from
-> `ClientOptions.cs`. Everything about NATS, ws-connector, comms-gatekeeper and Pulse's
-> configuration was read out of those sources. What does **not** exist yet is the scenario
-> runner: the numbered regression scenarios in
+> **Status.** The full chain has been run end to end against a live stack — five bots on five
+> wallets, one cluster, five conn strings delivered to the client. What does **not** exist yet is
+> the scenario runner: the numbered regression scenarios in
 > [`docs/tasks/e2e-livekit-connstring.md`](tasks/e2e-livekit-connstring.md) are still the
-> intended contract rather than something you can run, and no part of this has been executed
-> against a live stack end to end. Places where the spec and the sources disagree are called out
-> inline.
+> intended contract rather than something you can run, so a baseline today means reading the
+> output yourself. Places where the spec and the sources disagree are called out inline.
+
+## 0. Verified baseline
+
+Recorded from an actual run, as the shape to compare against. Five bots, `--spawn-radius=2`,
+realm `main`:
+
+```
+CLUSTER_CHANGE peer.0xbc7c…9efc.cluster_change cluster=C3 realm=main          (x5, one per wallet)
+HEARTBEAT      peer.0x655d…bd75.heartbeat pos=(-106.1, 0.0, 3.9)              (x5, keepalive only)
+ISLAND_CHANGED engine.peer.0xbc7c…9efc.island_changed island=island-C3 from=none
+                                        conn=livekit:wss://…?access_token=<redacted>   (x5)
+[ws-connector] Island island-C3 (from none), 0 peer(s), connStr …              (x5, at the client)
+```
+
+Five of each, one `island_id` across all five, and the wallet set on `cluster_change` identical
+to the set ws-connector welcomed. `island-C3` rather than `C3` — the prefix is real (§4).
+`from=none` on a first assignment and `0 peer(s)` are both by design.
+
+Note `C3`, not `C1`: the cluster counter is monotonic per Pulse process, so a restart of the
+*bots* against a long-lived server keeps incrementing. That is the ID-reuse gap in
+[clustering-on-aoi.md §7](clustering-on-aoi.md), visible in ordinary use.
+
+**Heartbeats are not what triggers the mint.** They carry real positions and ws-connector
+republishes them to `peer.{addr}.heartbeat`, but nothing subscribes — archipelago-core, which
+used to, was removed (`archipelago-workers@ad3d007`). The mint is driven by Pulse's
+`cluster_change`. If you are reasoning from the legacy archipelago flow, this is the step that
+changed.
 
 ## 1. What the harness proves
 
@@ -156,11 +180,19 @@ is not a client, and a harness whose observations come from its own writes prove
 appears to. If you want that code back as a standalone tool, it is in git history at `2f9233e`
 under `src/DCLPulseTestClient/Bridge/`.
 
-The cost is honest and worth stating plainly: gatekeeper needs Postgres, LiveKit credentials and
-a deny-list lookup before it mints anything, so **this harness cannot gate CI without those**.
-The task spec's acceptance criterion 4 — scenarios passing "with no external credentials" — is
-not satisfiable against a real gatekeeper. Either supply a LiveKit host/key/secret to the
-harness environment, or accept that this suite runs locally and on-demand rather than per-commit.
+**No real LiveKit credentials are needed, and this surprised us.** `generateCredentials`
+(`comms-gatekeeper/src/adapters/livekit.ts`) constructs an `AccessToken` and calls `addGrant` —
+it signs a JWT offline and never contacts the LiveKit host. So gatekeeper mints and publishes a
+well-formed conn string with *any* key/secret pair. The token will not open a room, which is
+irrelevant: the assertion that matters is that a valid conn string arrived for the right wallet,
+not that LiveKit accepted it.
+
+That keeps the harness credential-free and CI-able, satisfying the task spec's acceptance
+criterion 4 through the real gatekeeper rather than a stub. Only `--join-livekit` (D6, out of
+scope) would need a real host.
+
+Postgres is still required to start, but its ban check and deny-list lookup **fail open**, so
+neither needs to be populated.
 
 ### The room name is not the cluster id
 
@@ -188,29 +220,30 @@ to `""` when there is no previous room.
 
 ### Running comms-gatekeeper
 
-It is not in `docker-compose.e2e.yml`, and deliberately so: it needs Postgres, a LiveKit
-host/key/secret and several external service URLs, and putting a credentialed service into a
-committed compose file is how secrets end up in a repo. Run it from its own checkout, against
-the same broker, with at least:
+It is not in `docker-compose.e2e.yml` — it lives in its own repo, and its config surface is
+large enough that duplicating it here would rot. Bring up its Postgres first
+(`comms-gatekeeper/docker-compose.yml`, which also starts a NATS this harness can share), then
+run it from its own checkout against the same broker.
+
+Everything else it needs is already in its committed `.env.default`; only these have to be
+overridden, and process environment beats `.env.default`:
 
 | Variable | Value | Note |
 | --- | --- | --- |
-| `CLUSTER_SUBSCRIBER_ENABLED` | `true` | Compared against the literal string `"true"`; anything else means the subscriber starts and does nothing |
-| `NATS_URL` | `nats://127.0.0.1:4222` | Or the container address if you put it on the compose network |
+| `CLUSTER_SUBSCRIBER_ENABLED` | `true` | Compared against the literal string `"true"`; anything else means it starts and does nothing |
+| `NATS_URL` | `nats://127.0.0.1:4222` | The same broker Pulse publishes to |
 | `NATS_SUBJECT_PREFIX` | empty | Must match Pulse's `Nats:SubjectPrefix` |
-| `NATS_QUEUE_GROUP` | `comms-gatekeeper-cluster` | Default; queue-grouped so N replicas mint once, not N times |
+| `COMMS_GATEKEEPER_AUTH_TOKEN` | any placeholder | Required at startup; only guards its inbound HTTP API, which this harness never calls |
+| `PROD_LIVEKIT_HOST` / `_API_KEY` / `_API_SECRET` | any placeholder | Minting is offline JWT signing — see above. `PREVIEW_` triple must also be set |
 
-It also needs `PROD_LIVEKIT_HOST` / `PROD_LIVEKIT_API_KEY` / `PROD_LIVEKIT_API_SECRET` and its
-Postgres settings (`PG_COMPONENT_PSQL_*`); `comms-gatekeeper/docker-compose.yml` brings up a
-local Postgres and NATS, and its `.env.default` documents the rest. Supply the LiveKit triple
-from your environment — never from a committed file.
+This is the exact set that was verified working; anything missing fails fast at startup naming
+the variable, so there is nothing to guess.
 
 It subscribes to `${prefix}peer.*.cluster_change` and publishes the unprefixed
 `engine.peer.{wallet}.island_changed`. Its ban check and deny-list lookup both fail open, so an
-unreachable Postgres degrades to "everyone allowed" rather than to silence — but a *missing*
-LiveKit credential does not: `generateCredentials` is on the path to publishing, so a
-credentials failure means no `island_changed` at all. That asymmetry is the first thing to check
-when clustering is clearly working and the client still sees nothing.
+unreachable Postgres degrades to "everyone allowed" rather than to silence. Wait for
+`Cluster subscriber started` in its log before running bots — the HTTP server logs `Listening`
+about a second earlier, and that line does **not** mean the subscription is up.
 
 ## 5. Running it
 
@@ -219,6 +252,13 @@ Bring the stack up and wait for all three healthchecks:
 ```bash
 docker compose -f docker-compose.e2e.yml up --wait
 ```
+
+> **If you run Pulse on the host instead of in compose**, its health server takes port **5000**,
+> which is the port ws-connector defaults to and the port `--comms-url` points at. ws-connector
+> then dies with `Failed to listen on 0.0.0.0:5000`. Give it another port and match `--comms-url`
+> to it — `HTTP_SERVER_PORT=5010` and `--comms-url=ws://127.0.0.1:5010/ws`. Compose sidesteps this
+> by publishing Pulse's HTTP on 5100. Note also that a host-run Pulse answers `/metrics` only on
+> `localhost`; `127.0.0.1` returns HTTP 400.
 
 Confirm Pulse actually connected to the broker rather than falling into stats-only mode:
 

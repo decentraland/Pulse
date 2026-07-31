@@ -53,6 +53,14 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
 
     // Cluster derivation and feed totals — recorded once per pass on the tracker thread.
     private int clusterCount;
+    private int clusterPeers;
+    private int clusterSizeMax;
+
+    // Cluster-size histogram: non-cumulative per-bucket counts plus the sum/count pair. The formatter
+    // turns the counts into the cumulative form Prometheus expects.
+    private readonly long[] clusterSizeBuckets = new long[ClusterSizeHistogram.BUCKET_COUNT];
+    private long clusterSizeSum;
+    private long clusterSizeCount;
     private long clusterPasses;
     private long clusterPassDurationUs;
     private long clusterReassignments;
@@ -140,6 +148,11 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             Clusters = new MetricsSnapshot.ClustersSnapshot
             {
                 ClusterCount = Volatile.Read(ref clusterCount),
+                ClusterPeers = Volatile.Read(ref clusterPeers),
+                ClusterSizeMax = Volatile.Read(ref clusterSizeMax),
+                ClusterSizeBuckets = ReadClusterSizeBuckets(),
+                ClusterSizeSum = Interlocked.Read(ref clusterSizeSum),
+                ClusterSizeCount = Interlocked.Read(ref clusterSizeCount),
                 TotalPasses = Interlocked.Read(ref clusterPasses),
                 TotalPassDurationUs = Interlocked.Read(ref clusterPassDurationUs),
                 TotalReassignments = Interlocked.Read(ref clusterReassignments),
@@ -153,6 +166,20 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
         };
+    }
+
+    /// <summary>
+    ///     Copies the histogram buckets so a reader sees one consistent set rather than slots that may
+    ///     advance mid-read.
+    /// </summary>
+    private long[] ReadClusterSizeBuckets()
+    {
+        var buckets = new long[clusterSizeBuckets.Length];
+
+        for (var i = 0; i < buckets.Length; i++)
+            buckets[i] = Interlocked.Read(ref clusterSizeBuckets[i]);
+
+        return buckets;
     }
 
     private void OnLongMeasurement(
@@ -261,6 +288,17 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.clusters.count":
                 Interlocked.Add(ref clusterCount, value);
+                break;
+            case "pulse.clusters.peers":
+                Interlocked.Add(ref clusterPeers, value);
+                break;
+            case "pulse.clusters.size":
+                Interlocked.Increment(ref clusterSizeBuckets[ClusterSizeHistogram.IndexOf(value)]);
+                Interlocked.Add(ref clusterSizeSum, value);
+                Interlocked.Increment(ref clusterSizeCount);
+                break;
+            case "pulse.clusters.size_max":
+                Interlocked.Add(ref clusterSizeMax, value);
                 break;
             case "pulse.nats.connected":
                 Interlocked.Add(ref natsConnected, value);

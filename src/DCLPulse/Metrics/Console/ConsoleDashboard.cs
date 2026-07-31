@@ -115,6 +115,8 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
 
     private readonly GaugeTracker clusterCountTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker clusterSizeMeanTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker clusterSizeMaxTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker clusterPassDurationTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker clusterReassignmentsTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsPublishedTracker = new (SPARKLINE_MAX_SAMPLES);
@@ -155,6 +157,8 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView corruptedPacket = new ();
 
     private readonly RateStatsView clusterCount = new ();
+    private readonly RateStatsView clusterSizeMean = new ();
+    private readonly RateStatsView clusterSizeMax = new ();
     private readonly RateStatsView clusterPassDuration = new ();
     private readonly RateStatsView clusterReassignments = new ();
     private readonly RateStatsView natsPublished = new ();
@@ -185,6 +189,8 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private readonly Sparkline clusterCountSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline clusterSizeMeanSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline clusterSizeMaxSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline clusterPassDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline clusterReassignmentsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsPublishedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -348,7 +354,16 @@ public sealed class ConsoleDashboard(
 
         double meanPassUs = passDelta > 0 ? (double)durationDelta / passDelta : 0;
 
+        // The mean is derived here rather than exported pre-averaged, so Prometheus keeps the
+        // aggregatable peers/count pair. P50/P95/P99 are Prometheus-only: they are already percentiles,
+        // and running them through a percentile tracker would read as a percentile of a percentile.
+        double meanClusterSize = snap.Clusters.ClusterCount > 0
+            ? (double)snap.Clusters.ClusterPeers / snap.Clusters.ClusterCount
+            : 0;
+
         RateStats clusterCountStats = clusterCountTracker.Record(snap.Clusters.ClusterCount);
+        RateStats clusterSizeMeanStats = clusterSizeMeanTracker.Record(meanClusterSize);
+        RateStats clusterSizeMaxStats = clusterSizeMaxTracker.Record(snap.Clusters.ClusterSizeMax);
         RateStats passDurationStats = clusterPassDurationTracker.Record(meanPassUs);
         RateStats reassignmentsRate = clusterReassignmentsTracker.Update(snap.Clusters.TotalReassignments, elapsed);
         RateStats publishedRate = natsPublishedTracker.Update(snap.Clusters.TotalNatsPublished, elapsed);
@@ -359,6 +374,8 @@ public sealed class ConsoleDashboard(
         RateStats connectedStats = natsConnectedTracker.Record(snap.Clusters.NatsConnected);
 
         clusterCount.Apply(clusterCountStats, v => v.ToString("N0"));
+        clusterSizeMean.Apply(clusterSizeMeanStats, v => v.ToString("N1"));
+        clusterSizeMax.Apply(clusterSizeMaxStats, v => v.ToString("N0"));
         clusterPassDuration.Apply(passDurationStats, v => v.ToString("N0"));
         clusterReassignments.Apply(reassignmentsRate, v => v.ToString("N0"));
         natsPublished.Apply(publishedRate, v => v.ToString("N0"));
@@ -369,6 +386,8 @@ public sealed class ConsoleDashboard(
         natsConnected.Apply(connectedStats, v => v.ToString("N0"));
 
         ShiftSample(clusterCountSparkline.Values, snap.Clusters.ClusterCount);
+        ShiftSample(clusterSizeMeanSparkline.Values, meanClusterSize);
+        ShiftSample(clusterSizeMaxSparkline.Values, snap.Clusters.ClusterSizeMax);
         ShiftSample(clusterPassDurationSparkline.Values, meanPassUs);
         ShiftSample(clusterReassignmentsSparkline.Values, reassignmentsRate.PerSec);
         ShiftSample(natsPublishedSparkline.Values, publishedRate.PerSec);
@@ -420,6 +439,8 @@ public sealed class ConsoleDashboard(
             TableHeaders(),
             [
                 RateStatsRow("Clusters", clusterCount, clusterCountSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Cluster Size (mean)", clusterSizeMean, clusterSizeMeanSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Cluster Size (max)", clusterSizeMax, clusterSizeMaxSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Pass Duration (µs)", clusterPassDuration, clusterPassDurationSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Reassignments", clusterReassignments, clusterReassignmentsSparkline.Style(STYLE_PEERS)),
                 RateStatsRow("NATS Published", natsPublished, natsPublishedSparkline.Style(STYLE_OUTBOUND)),

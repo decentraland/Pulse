@@ -32,6 +32,31 @@ public static partial class PulseMetrics
         /// </summary>
         public static readonly Counter<long> REASSIGNMENTS =
             METER.CreateCounter<long>("pulse.clusters.reassignments");
+
+        /// <summary>
+        ///     Peers placed in a cluster this pass, recorded as a delta against the previous pass.
+        ///     Paired with <see cref="COUNT" /> rather than pre-averaged, so the mean cluster size is
+        ///     <c>peers / count</c> and stays aggregatable across instances.
+        /// </summary>
+        public static readonly UpDownCounter<int> PEERS =
+            METER.CreateUpDownCounter<int>("pulse.clusters.peers");
+
+        /// <summary>
+        ///     One observation per cluster per pass, bucketed by <see cref="ClusterSizeHistogram" /> so
+        ///     quantiles are computed at query time. A pre-computed quantile could not be aggregated —
+        ///     the mean of medians is not the median of the union, and no window but the pass itself
+        ///     could be asked about.
+        /// </summary>
+        public static readonly Histogram<int> SIZE =
+            METER.CreateHistogram<int>("pulse.clusters.size");
+
+        /// <summary>
+        ///     The largest cluster of this pass, as a delta against the previous one like
+        ///     <see cref="COUNT" />. Kept as its own gauge because <see cref="SIZE" /> cannot recover it:
+        ///     the top bucket only reports that something exceeded its bound.
+        /// </summary>
+        public static readonly UpDownCounter<int> SIZE_MAX =
+            METER.CreateUpDownCounter<int>("pulse.clusters.size_max");
     }
 
     /// <summary>

@@ -279,6 +279,35 @@ Gauge of the clusters currently derived. `dcl_pulse_clusters`.
 | Oscillating each pass | Peers straddling a cell boundary; if it persists, raise `Clusters:DwellPasses` |
 | One cluster per peer | Peers are spread beyond one cell of each other — expected in a sparse realm |
 
+### Cluster Size
+
+The size distribution of the clusters each pass derives, as a Prometheus histogram plus two gauges:
+
+| Series | Shape | Reading it |
+|---|---|---|
+| `dcl_pulse_cluster_size_bucket{le}` / `_sum` / `_count` | histogram, one observation per cluster per pass | `histogram_quantile(0.95, sum by (le) (rate(dcl_pulse_cluster_size_bucket[5m])))` |
+| `dcl_pulse_cluster_peers`, `dcl_pulse_clusters` | gauges | mean cluster size is `peers / clusters`; both sum across instances, so `sum(peers) / sum(clusters)` is a true fleet mean |
+| `dcl_pulse_cluster_size_max` | gauge | the largest cluster of the last pass |
+
+Quantiles are computed at query time rather than exported pre-computed, which is what makes them aggregatable — a pre-computed median cannot be averaged across instances or re-quantiled over a window, because the mean of medians is not the median of the union. The cost is bucket-width approximation: bounds are exponential (`1, 2, 4, … 4096`), fine where nearly every cluster lands and coarse at the top where only a collapsed partition reaches.
+
+Two things the histogram cannot answer, hence the gauges:
+
+- **The largest cluster.** `histogram_quantile(1.0, …)` returns the top bucket's upper bound, or `+Inf`. `size_max` is exact, and `max()` over instances is still a true max.
+- **How many peers are clustered right now.** The histogram is cumulative since process start, so it only answers questions through `rate()`. `peers` is instantaneous, and the difference from the connected peer count is peers with no realm yet or no wallet in `IdentityBoard` — neither can be clustered.
+
+Observations weight each cluster equally, not each peer: a realm with one crowd of 500 and forty singletons puts forty observations in `le="1"` and one in `le="512"`, so the median cluster is 1. That is correct, but it means no quantile describes what a typical *player* sees — `size_max` against the mean is the signal for that.
+
+| Signal | Meaning |
+|---|---|
+| `size_max` close to the mean | Healthy — crowds are comparable in size |
+| `size_max` ≫ mean, and near the connected peer count | The partition has collapsed into one giant cluster. Expected past the percolation threshold at high density — see the percolation limit in [clustering-on-aoi.md](clustering-on-aoi.md) — and the point at which downstream room sharding becomes load-bearing |
+| p50 = 1 with a large `size_max` | A crowd plus a long tail of isolated peers; normal in a sparse realm with one gathering |
+| Anything in the `+Inf` bucket | A cluster exceeded the top bound, so `Transport.MaxPeers` was raised past it — extend `ClusterSizeHistogram.BOUNDS` |
+| Mean climbing while cluster count falls | Crowds are merging; watch `size_max` for the collapse case above |
+
+The console dashboard shows the mean and the max only. Quantiles need a range query, which a terminal gauge cannot express.
+
 ### Pass Duration
 
 Cumulative pass wall time in microseconds, paired with a pass count so the mean is `duration_total / passes_total`. `dcl_pulse_cluster_pass_duration_us_total`, `dcl_pulse_cluster_passes_total`. The dashboard shows the mean over passes since the last snapshot rather than the lifetime mean, so a recent slowdown is visible.

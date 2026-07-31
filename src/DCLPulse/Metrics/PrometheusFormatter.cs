@@ -66,6 +66,9 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
 
         WriteGauge(writer, "dcl_pulse_clusters", "Clusters currently derived by the clustering pass", snap.Clusters.ClusterCount);
+        WriteGauge(writer, "dcl_pulse_cluster_peers", "Peers placed in a cluster by the last pass. Divide by dcl_pulse_clusters for the mean cluster size.", snap.Clusters.ClusterPeers);
+        WriteHistogram(writer, "dcl_pulse_cluster_size", "Cluster sizes observed, one measurement per cluster per pass. Quantiles are query-time: histogram_quantile(0.95, sum by (le) (rate(dcl_pulse_cluster_size_bucket[5m]))).", snap.Clusters.ClusterSizeBuckets, snap.Clusters.ClusterSizeSum, snap.Clusters.ClusterSizeCount);
+        WriteGauge(writer, "dcl_pulse_cluster_size_max", "Largest cluster in the last pass. Far above the mean means the partition has collapsed; see the percolation limit in docs/clustering-on-aoi.md.", snap.Clusters.ClusterSizeMax);
         WriteCounter(writer, "dcl_pulse_cluster_passes_total", "Clustering passes completed", snap.Clusters.TotalPasses);
         WriteCounter(writer, "dcl_pulse_cluster_pass_duration_us_total", "Cumulative clustering pass wall time in microseconds. Divide by dcl_pulse_cluster_passes_total for the mean.", snap.Clusters.TotalPassDurationUs);
         WriteCounter(writer, "dcl_pulse_cluster_reassignments_total", "Published cluster assignment changes, counted after the dwell debounce", snap.Clusters.TotalReassignments);
@@ -158,6 +161,56 @@ internal static class PrometheusFormatter
         writer.Write(' ');
         writer.WriteLine(value);
     }
+
+    /// <summary>
+    ///     Emits a histogram: one cumulative <c>_bucket</c> series per bound laid out by
+    ///     <see cref="ClusterSizeHistogram" />, the required <c>+Inf</c> bucket, then <c>_sum</c> and
+    ///     <c>_count</c>. <paramref name="buckets" /> arrives non-cumulative and is accumulated here,
+    ///     since Prometheus defines <c>le</c> as "at most this bound".
+    /// </summary>
+    private static void WriteHistogram(
+        StreamWriter writer, string name, string help, long[]? buckets, long sum, long count)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.WriteLine(" histogram");
+
+        long cumulative = 0;
+
+        for (var i = 0; i < ClusterSizeHistogram.BOUNDS.Length; i++)
+        {
+            cumulative += BucketAt(buckets, i);
+
+            writer.Write(name);
+            writer.Write("_bucket{le=\"");
+            writer.Write(ClusterSizeHistogram.BOUNDS[i]);
+            writer.Write("\"} ");
+            writer.WriteLine(cumulative);
+        }
+
+        // The overflow slot completes the cumulative total, which must equal _count.
+        writer.Write(name);
+        writer.Write("_bucket{le=\"+Inf\"} ");
+        writer.WriteLine(count);
+
+        writer.Write(name);
+        writer.Write("_sum ");
+        writer.WriteLine(sum);
+        writer.Write(name);
+        writer.Write("_count ");
+        writer.WriteLine(count);
+    }
+
+    /// <summary>
+    ///     One bucket's count, treating an absent or short array as unobserved — a snapshot without
+    ///     histogram data still has to expose the series, or a scrape reads as though it vanished.
+    /// </summary>
+    private static long BucketAt(long[]? buckets, int index) =>
+        buckets is not null && index < buckets.Length ? buckets[index] : 0;
 
     private static void WriteTransportCounter(
         StreamWriter writer, string name, string help,

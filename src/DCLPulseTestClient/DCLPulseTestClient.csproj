@@ -23,6 +23,9 @@
 
     <ItemGroup>
       <PackageReference Include="Decentraland.RustWebTransport" Version="$(RustWebTransportVersion)" />
+      <!-- Same client and version the server publishes with, so the harness and the code under test
+           agree on wire behaviour. Used here to subscribe, not publish. -->
+      <PackageReference Include="NATS.Client.Core" Version="3.0.1" />
     </ItemGroup>
 
     <ItemGroup>

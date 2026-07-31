@@ -49,13 +49,13 @@ No cap: a connected crowd is one cluster, deterministically.
 
 **Limits.** Hard ceiling: instance capacity (`Transport.MaxPeers`, 4095 — fixed arrays, no cross-instance clustering), further confined per realm. The algorithm adds none: O(N + C), C = occupied cells. Measured **~395 µs/pass at the 4095 ceiling** — Genesis City-sized world, cold working set, `ClusterTrackerBenchmarks` scenario `CeilingUniform` (~321 µs warm; ~230 KB of gen0 per pass, almost all of it the immutable `ClusterPass` the readers hold). The documented scenarios cost far less: ~8 µs for the 100-peer sparse case, ~31–35 µs for the 1 000-peer ones.
 
-That is 0.04% of one core at the 1 Hz cadence, so the pass is not a scaling concern below a capacity change; an earlier estimate of "well under 1 ms at 10k peers" was optimistic, since 10k is not reachable on one instance anyway. The practical bound is density and belongs to AoI: clusters don't affect fan-out, so spread clusters can reach instance capacity while dense crowds hit per-observer AoI fan-out (~n² within `MaxRadius`) first. Downstream, LiveKit room mapping shards past ~low thousands (§3.6).
+That is 0.04% of one core at the 1 Hz cadence, so the pass is not a scaling concern below a capacity change; an earlier estimate of "well under 1 ms at 10k peers" was optimistic, since 10k is not reachable on one instance anyway. The practical bound is density and belongs to AoI: clusters don't affect fan-out, so spread clusters can reach instance capacity while dense crowds hit per-observer AoI fan-out (~n² within `MaxRadius`) first. Downstream, one cluster maps to one LiveKit room, whose single-node capacity is ~low thousands (§3.6).
 
 "Cold" throughout is `Pass + churn` minus `Churn only` — a difference of means, so its error is the sum of both rows'. Quote it rather than the warm figure: `Pass` repeats over an unchanging grid and keeps its working set in cache, which a second of production tick and packet traffic does not.
 
 **Percolation limit — at capacity on a full-size realm, the partition collapses.** Cell-adjacency clustering is site percolation on the grid: once the occupied fraction passes the 8-neighbour (Moore) threshold of ≈ 0.407, the occupied cells form one giant connected component and every peer lands in one cluster. Genesis City (4800 u) at 100 u cells is 48 × 48 = 2304 cells, so `MaxPeers` 4095 spread uniformly gives λ ≈ 1.78 peers/cell and an occupied fraction of `1 − e^−λ` ≈ **0.83** — roughly twice the threshold. Measured (`ClusterTrackerBenchmarks`, `CeilingUniform`): 1904 occupied cells, **2 clusters, the larger holding 4091 of 4095 peers**.
 
-At 50 u the same population occupies ≈ 0.36 of 9216 cells, just *below* threshold — which is why the design's worked examples partitioned sensibly. Doubling the cell size moved the shipping configuration from one side of the percolation transition to the other. Consequences: sticky IDs and the dwell debounce have nothing to stabilise at high density; downstream LiveKit room sharding is load-bearing rather than an overflow path (§3.6); and the exact-distance refinement in §7 becomes the mechanism that decides whether clustering means anything at capacity. This bounds usefulness, not correctness — the pass still runs in well under a millisecond, and sparse realms (the common case, scenario 3) are unaffected.
+At 50 u the same population occupies ≈ 0.36 of 9216 cells, just *below* threshold — which is why the design's worked examples partitioned sensibly. Doubling the cell size moved the shipping configuration from one side of the percolation transition to the other. Consequences: sticky IDs and the dwell debounce have nothing to stabilise at high density; gatekeeper maps one cluster to one LiveKit room — sharding was not implemented (§3.6) — so a percolated ~4095-peer cluster becomes a single room, well past the ~low-thousands single-node audio guidance, an accepted open risk (§7); and the exact-distance refinement in §7 becomes the mechanism that decides whether clustering means anything at capacity. This bounds usefulness, not correctness — the pass still runs in well under a millisecond, and sparse realms (the common case, scenario 3) are unaffected.
 
 #### Worked examples
 
@@ -123,7 +123,7 @@ Surface: `GET /islands`, `/islands/{id}`, `/peers`, `/parcels` on the existing `
 
 Pulse publishes per-peer assignment changes **directly to NATS**: `peer.{addr}.cluster_change`, carrying `decentraland.pulse.PeerClusterChange { cluster_id, realm }` from `decentraland/pulse/pulse_clusters.proto`, emitted whenever a peer's *published* (post-debounce) assignment changes. The wallet is lower-cased so one wallet always maps to one subject regardless of the checksum casing the auth chain carried.
 
-Comms-gatekeeper subscribes, mints the LiveKit conn-string (ban check is authority-local — its own store), and publishes the existing `engine.peer.{addr}.island_changed` `IslandChangedMessage`. WS Connector and clients are untouched; archipelago-core is removed rather than bridged. (An earlier revision proposed core polling `GET /islands` over HTTP; dropped in favor of direct NATS once core's removal moved into iteration 1.)
+Comms-gatekeeper subscribes, mints the LiveKit conn-string (ban check is authority-local — its own store), and publishes the existing `engine.peer.{addr}.island_changed` `IslandChangedMessage`. In the shipped message `islandId` is the room name `island-{clusterId}` — not the bare `C{n}` id that `engine.islands` carries — `fromIslandId` is the previous room name when known (per-wallet LRU, 1 h TTL), and `peers` is always empty; unity-explorer was verified to read only `connStr`. WS Connector and clients are untouched; archipelago-core is removed rather than bridged. (An earlier revision proposed core polling `GET /islands` over HTTP; dropped in favor of direct NATS once core's removal moved into iteration 1.)
 
 `PeerClusterChange` is deliberately **not** archipelago's `IslandChangedMessage`. That message carries `conn_str` — a LiveKit host plus a signed 5-minute JWT — and its producer also runs a per-user ban check to decide who is admitted to the room. Both are token-issuer concerns that stay with gatekeeper, so Pulse publishes only what Pulse knows.
 
@@ -146,7 +146,7 @@ Iteration-1 output is three subjects:
 
 A single shared FIFO with oldest-first eviction — the original design — would have been wrong for the second case: it could discard peer A's assignment to make room for peer B's, leaving A addressed by a stale cluster until its next reassignment, which may never come if A stops moving. Genuine loss is now confined to sustained overload with more than `Nats:ChannelCapacity` distinct peers pending at once, and is counted separately (`dropped`) from benign superseding (`superseded`).
 
-**Ordering: topology first.** Within a pass the snapshot is emitted before the per-peer events that reference it, so a consumer resolving a cluster id — gatekeeper sizing a room for sharding — sees a topology that already contains it rather than joining against the previous pass. This is best-effort, not a guarantee: NATS preserves order per connection to a given subscriber, and gatekeeper and stats are separate subscribers on separate subjects. Consumers must tolerate an unknown cluster id. The one guarantee that does hold is the one that matters most: for a single peer, its own `cluster_change` events are strictly ordered.
+**Ordering: topology first.** Within a pass the snapshot is emitted before the per-peer events that reference it, so a consumer resolving a cluster id against the topology sees one that already contains it rather than joining against the previous pass. (Shipped gatekeeper does not subscribe to `engine.islands`; stats is the topology consumer.) This is best-effort, not a guarantee: NATS preserves order per connection to a given subscriber, and gatekeeper and stats are separate subscribers on separate subjects. Consumers must tolerate an unknown cluster id. The one guarantee that does hold is the one that matters most: for a single peer, its own `cluster_change` events are strictly ordered.
 
 `engine.discovery` bypasses the outbox and publishes straight to the connection — a heartbeat delayed behind a backlog defeats its own purpose. It can therefore overtake queued island data; harmless, since archipelago-stats consumes health and user count independently of topology.
 
@@ -169,14 +169,14 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 
 **Consequences owned by gatekeeper:**
 
-- *Uncapped clusters vs room capacity* — LiveKit rooms are single-node-bound (~low thousands audio; 100 audio subscriptions per participant). Past that, gatekeeper shards rooms (`island:{id}:{shard}`) — a token-issuer concern, decoupled from clustering. Note the percolation result above: at capacity on a full-size realm this is load-bearing, not an overflow path.
+- *Uncapped clusters vs room capacity* — LiveKit rooms are single-node-bound (~low thousands audio; 100 audio subscriptions per participant). Gatekeeper shipped **one cluster = one room** (`island-{clusterId}`); the planned shard layer was deliberately dropped. The capacity mitigation is unresolved — reinstate sharding in gatekeeper, or split oversized clusters in Pulse (a max size, or the §3.2 max-diameter constraint) — see §7. The percolation result above makes the risk concrete: at capacity on a full-size realm, one ~4095-peer room.
 - *Delivery reach* — a wallet connected to Pulse but without a WS Connector session gets events nobody forwards (harmless); the reverse (WS session, no Pulse connection) gets no cluster. Expose a mismatch metric.
 
 ### 3.7 Configuration
 
 | Option (`Clusters`) | Default | Meaning |
 | --- | --- | --- |
-| `Enabled` | true | Feature flag (set in both `appsettings.json` and `appsettings.Development.json`) |
+| `Enabled` | false | Feature flag (set in both `appsettings.json` and `appsettings.Development.json`) |
 | `PassIntervalMs` | 1000 | Tracker pass cadence |
 | `DwellPasses` | 3 | Passes before a reassignment publishes |
 | `IdPrefix` | `C` | Cluster ID prefix (replaces archipelago `ROOM_PREFIX`) |
@@ -202,7 +202,7 @@ The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — th
 | Input | NATS heartbeats (≤ 2 s stale, 60 s disconnect lag) | `SnapshotBoard` (fresh, ~5 s cleanup) |
 | Granularity | peer-pairwise single-linkage, 64/80 | union-find over 100 u cells of the realm's `SpatialGrid` (join band 0–283 u) |
 | Stability | ID survives largest fragment only; merge-order dependent | sticky IDs + dwell debounce |
-| Size cap | 100, blocks merges | none; sharding downstream |
+| Size cap | 100, blocks merges | none; room capacity unresolved (§7) |
 | Cost | O(pairs) per flush | O(N + C) per pass, off hot path |
 | Consistency with visibility | none | same boards as AoI |
 
@@ -248,7 +248,7 @@ Not part of iterations 1–2; recorded as direction.
 
 | Proposal | Before | After | Implementation glimpse |
 | --- | --- | --- | --- |
-| **WS Connector retirement** | Clients hold a WS session whose only unique function is delivering the LiveKit conn-string; auth and ban kicks duplicate Pulse | No WS Connector, no cluster NATS subjects; clients get cluster ID from Pulse and exchange it for a token | Minimal `ClusterChanged { cluster_id, realm }` on ch0 (the per-worker announce path omitted from iteration 1); token exchange at comms-gatekeeper (it already mints and owns sharding after iteration 1) — push becomes pull, gatekeeper's NATS subscription retires. Preconditions: clients on a Pulse transport (WebTransport for browsers), `realm-provider`/`lamb2` advertise the Pulse endpoint |
+| **WS Connector retirement** | Clients hold a WS session whose only unique function is delivering the LiveKit conn-string; auth and ban kicks duplicate Pulse | No WS Connector, no cluster NATS subjects; clients get cluster ID from Pulse and exchange it for a token | Minimal `ClusterChanged { cluster_id, realm }` on ch0 (the per-worker announce path omitted from iteration 1); token exchange at comms-gatekeeper (it already mints after iteration 1) — push becomes pull, gatekeeper's NATS subscription retires. Preconditions: clients on a Pulse transport (WebTransport for browsers), `realm-provider`/`lamb2` advertise the Pulse endpoint |
 | **Ban enforcement consolidation** | After iteration 1, three enforcement points remain: Pulse (poll + handshake reject + mid-session kick), WS Connector (per-handshake check + 30 s sweep), client status screen (core's token-mint check already became gatekeeper-local in iteration 1) | Pulse is the single comms-level enforcement point + gatekeeper checks its own store at minting; client status screen unchanged | WS Connector's two checks vanish with its retirement; Pulse's existing `BansPollingHttpService`/`BanEnforcer` needs no change. Ban **origination** stays in comms-gatekeeper throughout (its internals not analyzed — repo out of scope) |
 | **WS Connector `/status` + realm advertisement** | `realm-provider`/`lamb2` poll WS Connector `/status` and advertise `archipelago:wss://…/ws`; one archipelago deployment = one realm | Pulse public status endpoint; adapter string names the Pulse endpoint; one Pulse instance hosts many realms | Status is a subset of Pulse's stats surface. Advertisement change is a `realm-provider`/`lamb2` config/format change. New concern to plan: per-instance capacity (`MaxPeers` 4095) now bounds the *sum* of hosted realms — multi-instance sharding is an open question |
 
@@ -257,6 +257,7 @@ Everything else archipelago does is already Pulse-native and needs no migration:
 ## 7. Open questions
 
 - **Cluster IDs are not unique beyond one process.** `{IdPrefix}{n}` is a monotonic counter from zero, so it resets on restart and collides across instances. After a Pulse restart `C1` names a different crowd, and gatekeeper would map it onto the LiveKit room the previous `C1` was using. Realm narrows this but does not fix it; scoping the ID to the instance (Pulse already has a `server_id` for handshake anti-replay) or to a boot epoch does. This is live-voice-room correctness, not cosmetics.
+- **Percolated cluster vs room capacity.** Gatekeeper maps one cluster to one LiveKit room with no sharding (§3.6), so the §3.2 capacity-density collapse would put ~4095 peers in a room whose single-node audio guidance is ~low thousands. Unresolved which side mitigates: reinstate room sharding in gatekeeper, or cap clusters in Pulse (a max size, or the §3.2 max-diameter split at the sparsest bridging cell).
 - Scene listeners in clusters? Proposal: no — no snapshot, naturally excluded.
 - Exact-distance refinement if cell adjacency proves too coarse. At the configured 100 u the join band is 0–283 u against archipelago's 64 u, so this is now more likely to be needed than when the proposal was written against 50 u cells — thresholds scale with `CellSize` (merge at ~`2·CellSize·√2`, split at just above `CellSize`). Deferred until shadow-mode data.
 - Regenerate the §3.2 worked examples and illustrations at 100 u, so the documented cluster counts match the shipping configuration. The image filenames still read `island-clustering-*`.

@@ -184,11 +184,22 @@ guarantee above.
   metaforge account sign --help
   ```
 
-  If that fails, rebuild and reinstall MetaForge. The failure mode with a stale binary is worth
-  recognising: the test client surfaces the CLI's non-zero exit and its stderr, so it reads as
-  *"unknown command"*, not as a rejected signature. `metaforge account chain` is the older,
-  different thing — it builds the signed-fetch shape (`method:path:timestamp:metadata`) and
-  cannot sign a `dcl-<hex>` challenge verbatim.
+  **As of this writing that command is unreleased**, so an installed MetaForge does not have it —
+  it exits 127 with `Unknown command 'sign'`. Until it ships, build the CLI and put its output
+  first on PATH:
+
+  ```bash
+  dotnet build ../MetaForge/MetaForgeCLI/MetaForgeCLI.csproj
+  ```
+
+  then prefix runs with `PATH="../MetaForge/MetaForgeCLI/bin/Debug/net10.0/<rid>:$PATH"`.
+
+  The failure mode with a stale binary is worth recognising: the test client surfaces the CLI's
+  non-zero exit and its stderr, so it reads as *"unknown command"*, not as a rejected signature.
+  The e2e fixture probes for it in `OneTimeSetUp` and fails before opening a socket, because
+  otherwise the run dies mid-handshake against a real server and looks like a protocol fault.
+  `metaforge account chain` is the older, different thing — it builds the signed-fetch shape
+  (`method:path:timestamp:metadata`) and cannot sign a `dcl-<hex>` challenge verbatim.
 - **`Clusters:Enabled` must be on.** It ships `true` in `appsettings.json`, and the compose file
   pins `Clusters__Enabled=true` anyway so the harness does not depend on that default holding.
   With it off, the tracker never runs and nothing is ever published — silently.

@@ -63,6 +63,33 @@ public class ConnStringE2ETests
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 
+    /// <summary>
+    ///     Fails before any socket is opened if <c>metaforge</c> cannot sign an arbitrary payload.
+    /// </summary>
+    /// <remarks>
+    ///     Without this the run gets as far as a real challenge from a real ws-connector and dies
+    ///     there, which reads like a protocol fault. It is a stale binary: <c>account sign</c> is
+    ///     newer than the released build, so a machine that has only ever installed MetaForge will
+    ///     not have it.
+    /// </remarks>
+    [OneTimeSetUp]
+    public async Task RequireAMetaForgeThatCanSign()
+    {
+        try
+        {
+            // --help exits 0 when the subcommand exists and 127 when it does not, so this probes the
+            // surface without touching an account or producing a signature.
+            await MetaForge.RunCommandAsync("account sign --help --skip-update-check", CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            Assert.Fail(
+                "This fixture needs a 'metaforge' that supports 'account sign', which the released " +
+                "build does not yet have. Build MetaForgeCLI and put its output directory first on " +
+                $"PATH, then re-run.{Environment.NewLine}Probe failed with: {e.Message}");
+        }
+    }
+
     [Test]
     public async Task SingleBot_ReceivesAConnStringForItsOwnWallet()
     {

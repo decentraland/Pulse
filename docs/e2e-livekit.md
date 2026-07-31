@@ -31,11 +31,45 @@ Note `C3`, not `C1`: the cluster counter is monotonic per Pulse process, so a re
 *bots* against a long-lived server keeps incrementing. That is the ID-reuse gap in
 [clustering-on-aoi.md §7](clustering-on-aoi.md), visible in ordinary use.
 
-**Heartbeats are not what triggers the mint.** They carry real positions and ws-connector
-republishes them to `peer.{addr}.heartbeat`, but nothing subscribes — archipelago-core, which
-used to, was removed (`archipelago-workers@ad3d007`). The mint is driven by Pulse's
-`cluster_change`. If you are reasoning from the legacy archipelago flow, this is the step that
-changed.
+**Heartbeats are not what triggers the mint here.** They carry real positions and ws-connector
+republishes them to `peer.{addr}.heartbeat`, but in *this* stack nothing subscribes —
+archipelago-core was removed from the repo (`archipelago-workers@ad3d007`). The mint is driven
+by Pulse's `cluster_change`. That is the step that changed, and it is not yet true of what is
+deployed.
+
+### 0.1 The same client against deployed zone
+
+The client is agnostic about which service answers: it sends heartbeats and reads
+`islandChanged`, both over the one WebSocket. Pointing it at the **current, un-migrated** zone
+infrastructure — zone Pulse for the game protocol, the deployed archipelago for comms —
+works with no code changes and no local services:
+
+```bash
+dotnet run --project src/DCLPulseTestClient -- --account=loadtest --bot-count=5 \
+  --ip=pulse-server.decentraland.zone --port=7777 --comms-enabled \
+  --comms-url=archipelago:archipelago:wss://peer.decentraland.zone/archipelago/ws
+```
+
+The `--comms-url` is the realm's `comms.adapter` from `https://peer.decentraland.zone/about`,
+pasted verbatim; `AdapterAddress` reduces it to `wss://peer.decentraland.zone/archipelago/ws`.
+
+Observed: 5/5 welcomed, 5/5 islands delivered, real tokens against `wss://dcl.livekit.cloud`,
+nothing unredacted in the log. **In this path the mint *is* heartbeat-driven** — there is no
+`cluster_change` involved at all.
+
+**The two producers do not agree on shape, and assertions must not assume they do:**
+
+| | Deployed archipelago (today) | comms-gatekeeper (after migration) |
+| --- | --- | --- |
+| `island_id` | `peer-zone1` — no prefix | `island-C3` — `island-` prefix, cluster id |
+| `peers` | populated (5 peers seen) | empty by design |
+| Trigger | heartbeat position over WS | Pulse `peer.{addr}.cluster_change` |
+| Reassignment | islands *merge* — `from=peer-zone5`, `…4`, `…3`, `…2` all converging on `peer-zone1` | new cluster id per assignment |
+
+So an assertion written as `island_id == "island-" + cluster_id` is **gatekeeper-specific** and
+fails against current infra. Scenario assertions that must hold across the migration should key
+on *relationships* — same island vs different island, count and order of reassignments — never
+on the id's spelling.
 
 ## 1. What the harness proves
 

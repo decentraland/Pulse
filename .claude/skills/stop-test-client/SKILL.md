@@ -32,3 +32,14 @@ Gracefully stop running test bots so they disconnect cleanly from the server.
    tasklist | grep -i DCLPulseTestClient && taskkill //F //IM DCLPulseTestClient.exe 2>/dev/null || echo "Bots stopped gracefully."
    ```
    On macOS/Linux fallback: `pkill -9 -f DCLPulseTestClient`
+
+## Bridge processes
+
+A process started with `--mode=bridge` (the stub gatekeeper) **does not watch the stop file** — the file watcher belongs to the bot lifecycle, which bridge mode skips entirely. It stops on Ctrl+C or a kill.
+
+The harness normally runs two processes from the same binary, so both match the same name. If the user wants only the bots stopped, match on the command line rather than the image name:
+
+- Windows: `Get-CimInstance Win32_Process -Filter "Name='DCLPulseTestClient.exe'" | Where-Object { $_.CommandLine -match '--mode=bridge' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
+- macOS/Linux: `pkill -f 'DCLPulseTestClient.*--mode=bridge'`
+
+Invert the match (`-notmatch` / `pgrep -f` and filter) to target the bots instead. Step 2's stop file only ever reaches the bots, so it is already bridge-safe.

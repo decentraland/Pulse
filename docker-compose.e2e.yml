@@ -1,0 +1,115 @@
+# End-to-end harness for the LiveKit conn-string path: NATS + ws-connector + Pulse.
+#
+# The test client is NOT here — it runs on the host, holding both channels on one wallet
+# (Pulse over ENet, ws-connector over WebSocket) and, by default, the stub gatekeeper that
+# bridges peer.{addr}.cluster_change -> engine.peer.{addr}.island_changed. Every host port
+# below is therefore load-bearing: the client reaches all three services from outside.
+#
+# See docs/e2e-livekit.md for what the harness proves and how to read a failure.
+#
+# No credentials are needed on the default path. If you repoint the harness at a broker that
+# requires them, they travel inside E2E_NATS_URL, which is read from the host environment and
+# has no committed value beyond the local default. Nothing else here takes a secret.
+
+name: pulse-e2e
+
+services:
+  # Core NATS. No JetStream: the cluster feed is plain publish/subscribe, at-most-once by
+  # design (docs/clustering-on-aoi.md §3.6). -m 8222 turns on the monitoring endpoints, which
+  # are both the healthcheck target and the fastest way to confirm who actually subscribed
+  # to what (/subsz, /connz).
+  nats:
+    image: nats:2-alpine
+    container_name: pulse-e2e-nats
+    command: ["-m", "8222"]
+    ports:
+      - "${E2E_NATS_PORT:-4222}:4222"
+      - "${E2E_NATS_MONITOR_PORT:-8222}:8222"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8222/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # Built from the archipelago-workers monorepo checkout next to this one. There is no
+  # published image reference here on purpose: the harness has to track whatever ws-connector
+  # you have locally, and the deployed image (quay.io/decentraland/archipelago-workers) is not
+  # something a local run should silently pin to.
+  #
+  # The monorepo has one Dockerfile at its root serving both workspaces, and its CMD is
+  # `node dist/index.js` relative to the working directory — so selecting ws-connector over
+  # stats is done by setting working_dir, not by overriding the command.
+  ws-connector:
+    build:
+      context: ${E2E_ARCHIPELAGO_WORKERS_PATH:-../archipelago-workers}
+      dockerfile: Dockerfile
+    container_name: pulse-e2e-ws-connector
+    working_dir: /app/ws-connector
+    environment:
+      # Process environment wins over the .env.default files the service loads, so these are
+      # the effective values. Stated explicitly because the two .env.default files in that
+      # repo disagree about the port: the monorepo root says 5000, ws-connector/ says 5001.
+      HTTP_SERVER_PORT: 5000
+      HTTP_SERVER_HOST: 0.0.0.0
+      NATS_URL: ${E2E_NATS_URL:-nats://nats:4222}
+      # Empty on purpose. The handshake ban check fails OPEN when this is unset, which is what
+      # a local harness wants — the real value points at comms-gatekeeper, which is not here.
+      COMMS_GATEKEEPER_URL: ""
+    ports:
+      - "${E2E_WS_CONNECTOR_PORT:-5000}:5000"
+    # node is guaranteed present in this image; curl and wget are not assumed.
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "fetch('http://127.0.0.1:5000/health/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  # Dockerfile.debug rather than the Release src/DCLPulse/Dockerfile: it is the image this
+  # repo already pairs with compose, it rebuilds from source on every `up` (which is what you
+  # want while iterating), and it installs curl — the Release image is a runtime-only base
+  # with no HTTP client, so it cannot carry a container healthcheck.
+  pulse:
+    build:
+      context: .
+      dockerfile: Dockerfile.debug
+    container_name: pulse-e2e-pulse
+    environment:
+      # Already the default in appsettings.json; pinned here so the harness does not depend on
+      # that staying true.
+      Clusters__Enabled: "true"
+      # Canonical spelling. Pulse also accepts the flat NATS_URL as an alias, but Nats__Url
+      # wins when both are set, so only one is used here.
+      Nats__Url: ${E2E_NATS_URL:-nats://nats:4222}
+      # Console metrics would render the dashboard into the container log and bury the startup
+      # lines you need for triage. Prometheus keeps the log readable and puts
+      # dcl_pulse_nats_connected on /metrics.
+      Metrics__Type: Prometheus
+      # Base appsettings floors Pulse's own categories at Warning, which hides the NATS
+      # publisher's startup line. NATS.Client.Core stays at its Warning floor from
+      # appsettings.json — below that it re-dumps server info on every reconnect.
+      Logging__LogLevel__Default: Information
+    ports:
+      - "${E2E_PULSE_ENET_PORT:-7777}:7777/udp"
+      # Container 5000 is Pulse's /health, /about and /metrics. Published on 5100 by default
+      # because ws-connector already owns host 5000.
+      - "${E2E_PULSE_HTTP_PORT:-5100}:5000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:5000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      # First `up` restores and builds inside the container; a short start_period would mark
+      # it unhealthy long before it has a chance to listen.
+      start_period: 240s
+    depends_on:
+      nats:
+        condition: service_healthy

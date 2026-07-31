@@ -148,6 +148,14 @@ dotnet run --project src/DCLPulseTestClient -- --account=loadtest --bot-count=10
 
 When `--bot-count=1`, the account name is used as-is. When `--bot-count` > 1, accounts are named `<account>-0`, `<account>-1`, ..., `<account>-N-1` and bots spawn in a circle around the initial position.
 
+### End-to-end conn-string harness
+
+With `--comms-enabled` each bot also opens a ws-connector session on its own wallet, so one process holds both channels and can assert that a LiveKit connection string arrives for the same identity that Pulse clustered. `docker-compose.e2e.yml` brings up the NATS + ws-connector + Pulse stack it runs against.
+
+`--comms-url` accepts either a plain `ws://host/ws` or a realm's raw comms adapter string (`archipelago:archipelago:wss://host/ws`), so a value copied out of `/about` works unchanged.
+
+See [docs/e2e-livekit.md](docs/e2e-livekit.md) for prerequisites, the bridge modes, and how to read a failure.
+
 ### What the bot does
 
 On startup each bot authenticates via MetaForge, connects over ENet, completes the handshake, announces its profile, then enters a 30 fps simulation loop.

@@ -3,6 +3,8 @@ using Pulse.Transport;
 using Pulse.Transport.WebTransport;
 using PulseTestClient;
 using PulseTestClient.Auth;
+using PulseTestClient.Bridge;
+using PulseTestClient.Comms;
 using PulseTestClient.Inputs;
 using PulseTestClient.Networking;
 using PulseTestClient.Profiles;
@@ -10,6 +12,22 @@ using PulseTestClient.Timing;
 using System.Numerics;
 
 var options = ClientOptions.FromArgs(args);
+
+// --mode=bridge is the stub gatekeeper on its own: no bots, no accounts, no Pulse connection. Checked
+// before anything else so none of that setup runs.
+if (options.Mode.Equals("bridge", StringComparison.OrdinalIgnoreCase))
+{
+    using var bridgeCts = new CancellationTokenSource();
+
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        bridgeCts.Cancel();
+    };
+
+    await StubGatekeeper.RunAsync(options, bridgeCts.Token);
+    return 0;
+}
 var behaviorSettings = BotBehaviorSettings.Load();
 int botsPerProcess = BotBehaviorSettings.LoadBotsPerProcess();
 
@@ -147,6 +165,7 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     var session = new BotSession
     {
         AccountName = accountName,
+        WalletAddress = login.WalletAddress.ToLowerInvariant(),
         Profile = profile,
         Pipe = pipe,
         Service = service,
@@ -160,6 +179,25 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     await service.ConnectAsync(options.ServerIp, options.ServerPort, login.AuthChainJson, lifeCycleCts.Token);
 
     _ = ServerEventHandler.ProcessAll(session, lifeCycleCts.Token);
+
+    // Started only after Pulse auth succeeds, and on the same account — the shared identity is what
+    // makes cluster_change and island_changed a verifiable correspondence rather than two unrelated
+    // observations. Deliberately not awaited: the channel runs for the life of the bot, and it must
+    // not be able to hold up or fail the Pulse session.
+    if (options.CommsEnabled)
+    {
+        var comms = new CommsChannel(options, authenticator, accountName, session.WalletAddress, () => session.Position);
+
+        comms.IslandChanged += change =>
+        {
+            lock (session.Assignments)
+                session.Assignments.Add(new ObservedAssignment(
+                    change.IslandId, change.ConnStr, change.FromIslandId, DateTimeOffset.UtcNow));
+        };
+
+        session.Comms = comms;
+        _ = comms.RunAsync(lifeCycleCts.Token);
+    }
 
     int spawnParcelIndex = parcelEncoder.EncodeGlobalPosition(position, out Vector3 spawnRelativePosition);
 

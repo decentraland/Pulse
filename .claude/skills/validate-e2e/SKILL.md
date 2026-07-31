@@ -3,7 +3,7 @@ name: validate-e2e
 description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
 user-invocable: true
 allowed-tools: Bash, PowerShell, Grep, Read
-argument-hint: [--transport=enet|webtransport] [--account=prefix]
+argument-hint: [--transport=enet|webtransport] [--account=prefix] [--comms-enabled]
 ---
 
 # Validate the e2e networking flow
@@ -25,6 +25,14 @@ Run **two** bots that connect, authenticate, move, and observe each other, then 
 | Per-transport metrics | — | every counter tagged `transport="enet"` / `"webtransport"` |
 
 A `Seq gap → resync` line is **expected, not a failure**: unreliable datagrams drop/reorder, the client detects the gap and asks for a `STATE_FULL`. Seeing it means the datagram path *and* the reliable resync path both work (the "client drives resync" model — see CLAUDE.md).
+
+## Scope: this skill does not cover the conn-string path
+
+What is validated here is the Pulse protocol over ENet/WebTransport. The LiveKit **conn-string** path — Pulse clustering → NATS `peer.{addr}.cluster_change` → gatekeeper → NATS `engine.peer.{addr}.island_changed` → ws-connector → client — is a **separate channel with its own harness**, and none of the success criteria below exercise it.
+
+To bring it into a run, add `--comms-enabled` to the bot command and start a conn-string source alongside the server (`--mode=bridge` in a second process, or a real comms-gatekeeper). Each bot then also opens a ws-connector session on its own wallet and logs `[ws-connector] Island …` lines; failures on that channel report on the `[comms]` prefix and are deliberately **non-fatal** to the Pulse session, so a passing run here says nothing about the conn-string path either way.
+
+That harness has its own prerequisites (NATS, ws-connector, a `metaforge` new enough to have `account sign`), its own compose file (`docker-compose.e2e.yml`), and its own failure taxonomy — silent no-delivery rather than the visible errors this skill deals in. **See [docs/e2e-livekit.md](../../../docs/e2e-livekit.md).** Do not fold its assertions into the criteria below; the two validations have different prerequisites and should fail independently.
 
 ## Prerequisites
 

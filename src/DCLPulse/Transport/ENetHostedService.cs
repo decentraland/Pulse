@@ -21,11 +21,12 @@ public sealed partial class ENetHostedService(
     PreAuthAdmission preAuthAdmission,
     CorruptedPacketLimiter corruptedPacketLimiter,
     ContinentResolver continentResolver
-) : BackgroundService,
-    // TODO: we could add a new class that implements this transport, but currently it is enough to keep it as the BackgroundService
-    ITransport
+) : BackgroundService
 {
     private const int RTT_SAMPLE_INTERVAL_MS = 5000;
+
+    // The transport dimension attached to every transport counter this service records.
+    private static readonly KeyValuePair<string, object?> TRANSPORT_TAG = PulseMetrics.Transport.Tag(TransportId.ENet);
 
     private readonly ENetTransportOptions options = options.Value;
 
@@ -70,15 +71,15 @@ public sealed partial class ENetHostedService(
         using var host = new Host();
 
         var address = new Address();
-        address.SetIP("::");
+        address.SetIP(options.BindHost);
         address.Port = options.Port;
 
         int concurrentCap = options.EffectiveMaxConcurrentConnections;
         host.Create(address, concurrentCap, channelLimit: ENetChannel.COUNT);
 
         logger.LogInformation(
-            "ENet host listening on 0.0.0.0:{Port} (concurrentCap={Cap}, peerIndexPool={Pool}).",
-            options.Port, concurrentCap, options.MaxPeers);
+            "ENet host listening on {BindHost}:{Port} (concurrentCap={Cap}, peerIndexPool={Pool}).",
+            options.BindHost, options.Port, concurrentCap, options.MaxPeers);
 
         long lastRttSampleTimestamp = Stopwatch.GetTimestamp();
 
@@ -165,8 +166,8 @@ public sealed partial class ENetHostedService(
         string? walletId = identityBoard.GetWalletIdByPeerIndex(peerIndex);
         messagePipe.OnPeerDisconnected(peerIndex);
 
-        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1);
-        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1);
+        PulseMetrics.Transport.PEERS_DISCONNECTED.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.ACTIVE_PEERS.Add(-1, TRANSPORT_TAG);
 
         logger.LogDebug("Peer teardown ({Context}): slot={Slot} peerIndex={PeerIndex} wallet={Wallet}.",
             contextForLog, slotId, peerIndex, walletId ?? "<none>");
@@ -256,10 +257,10 @@ public sealed partial class ENetHostedService(
         int result = peer.Send(channel.ChannelId, ref packet);
 
         if (result < 0)
-            PulseMetrics.Transport.SEND_FAILURES.Add(1);
+            PulseMetrics.Transport.SEND_FAILURES.Add(1, TRANSPORT_TAG);
 
-        PulseMetrics.Transport.PACKETS_SENT.Add(1);
-        PulseMetrics.Transport.BYTES_SENT.Add(size);
+        PulseMetrics.Transport.PACKETS_SENT.Add(1, TRANSPORT_TAG);
+        PulseMetrics.Transport.BYTES_SENT.Add(size, TRANSPORT_TAG);
     }
 
     private void HandleEvent(ref Event netEvent)
@@ -270,7 +271,9 @@ public sealed partial class ENetHostedService(
         {
             case EventType.Connect:
             {
-                if (!peerIndexAllocator.TryAllocate(out PeerIndex peerIndex))
+                // Allocate a slot stamped as ENet-owned; the stamp rides on the PeerIndex through every
+                // store it lands in (slotToPeerIndex, connectedPeers, the worker's peerStates, IdentityBoard).
+                if (!peerIndexAllocator.TryAllocate(TransportId.ENet, out PeerIndex peerIndex))
                 {
                     // Pool exhausted — refuse the connection. This can happen if the pool is the
                     // same size as ENet's max peers and every pending-recycle slot is still in grace.
@@ -290,8 +293,8 @@ public sealed partial class ENetHostedService(
 
                 messagePipe.OnPeerConnected(peerIndex);
 
-                PulseMetrics.Transport.PEERS_CONNECTED.Add(1);
-                PulseMetrics.Transport.ACTIVE_PEERS.Add(1);
+                PulseMetrics.Transport.PEERS_CONNECTED.Add(1, TRANSPORT_TAG);
+                PulseMetrics.Transport.ACTIVE_PEERS.Add(1, TRANSPORT_TAG);
 
                 logger.LogDebug("Peer connected: {IP}:{Port} (slot={Slot}, peerIndex={PeerIndex}).",
                     netEvent.Peer.IP, netEvent.Peer.Port, slotId, peerIndex);
@@ -329,8 +332,8 @@ public sealed partial class ENetHostedService(
 
                 netEvent.Packet.CopyTo(receiveBuffer);
 
-                PulseMetrics.Transport.PACKETS_RECEIVED.Add(1);
-                PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength);
+                PulseMetrics.Transport.PACKETS_RECEIVED.Add(1, TRANSPORT_TAG);
+                PulseMetrics.Transport.BYTES_RECEIVED.Add(packetLength, TRANSPORT_TAG);
 
                 if (!messagePipe.OnDataReceived(new MessagePacket(new ReadOnlySpan<byte>(receiveBuffer, 0, packetLength), peerIndex)))
                     RecordCorruption(ref netEvent, peerIndex);
@@ -347,13 +350,4 @@ public sealed partial class ENetHostedService(
         logger.LogInformation("ENet deinitialized.");
     }
 
-    /// <summary>
-    ///     Safe to call from any thread. The actual <c>enet_peer_disconnect</c> runs on the
-    ///     ENet thread via <see cref="FlushOutgoing" /> — the native ENet API is not
-    ///     thread-safe (see <c>CLAUDE.md</c>), and <see cref="connectedPeers" /> is only mutated
-    ///     by the ENet thread, so both concerns are resolved by routing through
-    ///     <see cref="MessagePipe" />.
-    /// </summary>
-    public void Disconnect(PeerIndex pi, DisconnectReason reason) =>
-        messagePipe.SendDisconnect(pi, reason);
 }

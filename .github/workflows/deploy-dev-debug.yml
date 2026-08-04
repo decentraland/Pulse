@@ -10,6 +10,9 @@ jobs:
       service-name: pulse-server
       image-name: pulse-server-debug
       docker-tag: debug
-      dockerfile-url: https://raw.githubusercontent.com/decentraland/Pulse/main/src/DCLPulse/Dockerfile.dev-debug
+      # Use the Dockerfile from the ref being deployed (not main): this is a workflow_dispatch that
+      # deploys a branch, and the branch's Dockerfile may add pre-restore COPY lines (e.g. the
+      # rust-web-transport fetch script) that main's Dockerfile doesn't have yet.
+      dockerfile-url: https://raw.githubusercontent.com/decentraland/Pulse/${{ github.ref_name }}/src/DCLPulse/Dockerfile.dev-debug
       deployment-environment: dev
     secrets: inherit

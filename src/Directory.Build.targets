@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <_RustEthereumNupkg>$(MSBuildThisFileDirectory)..\packages\Decentraland.RustEthereum.$(RustEthereumVersion).nupkg</_RustEthereumNupkg>
+    <_RustWebTransportNupkg>$(MSBuildThisFileDirectory)..\packages\Decentraland.RustWebTransport.$(RustWebTransportVersion).nupkg</_RustWebTransportNupkg>
   </PropertyGroup>
 
   <Target Name="FetchRustEthereumNupkg"
@@ -10,6 +11,16 @@
     <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../tools/fetch-rust-eth.sh&quot;"
           Condition="'$(OS)' != 'Windows_NT'" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\tools\fetch-rust-eth.ps1&quot;"
+          Condition="'$(OS)' == 'Windows_NT'" />
+  </Target>
+
+  <Target Name="FetchRustWebTransportNupkg"
+          BeforeTargets="Restore;CollectPackageReferences"
+          Condition="'$(RustWebTransportVersion)' != '' and !Exists('$(_RustWebTransportNupkg)')">
+    <Message Importance="high" Text="Fetching Decentraland.RustWebTransport $(RustWebTransportVersion) from GitHub Release..." />
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../tools/fetch-rust-webtransport.sh&quot;"
+          Condition="'$(OS)' != 'Windows_NT'" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\tools\fetch-rust-webtransport.ps1&quot;"
           Condition="'$(OS)' == 'Windows_NT'" />
   </Target>
 </Project>

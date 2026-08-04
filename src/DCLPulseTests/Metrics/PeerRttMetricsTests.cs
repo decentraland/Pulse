@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.Messaging;
 using Pulse.Metrics;
+using Pulse.Transport;
 using Pulse.Transport.Geo;
 using System.Diagnostics.Metrics;
 using System.Text;
@@ -38,6 +39,7 @@ public class PeerRttMetricsTests
             OutgoingMessages = new ServerMessageCounters(10),
             Transport = new MetricsSnapshot.TransportSnapshot
             {
+                ByTransport = new MetricsSnapshot.PerTransportCounters[Enum.GetValues<TransportId>().Length],
                 PeerRttMs =
                 [
                     default, default,
@@ -72,6 +74,10 @@ public class PeerRttMetricsTests
         {
             IncomingMessages = new ClientMessageCounters(8),
             OutgoingMessages = new ServerMessageCounters(10),
+            Transport = new MetricsSnapshot.TransportSnapshot
+            {
+                ByTransport = new MetricsSnapshot.PerTransportCounters[Enum.GetValues<TransportId>().Length],
+            },
         };
 
         using var stream = new MemoryStream();

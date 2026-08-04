@@ -3,12 +3,33 @@ namespace Pulse.Metrics;
 public readonly record struct MetricsSnapshot
 {
     public TransportSnapshot Transport { get; init; }
+    public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
     public SimulationSnapshot Simulation { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
     public readonly record struct TransportSnapshot
+    {
+        /// <summary>Per-transport counters, indexed by <c>(int)TransportId</c>.</summary>
+        public PerTransportCounters[] ByTransport { get; init; }
+
+        // Shared pipeline queues — a single incoming channel and an aggregate outgoing depth across
+        // both transports, so they are not attributable to one transport.
+        public int IncomingQueueDepth { get; init; }
+        public int OutgoingQueueDepth { get; init; }
+
+        /// <summary>ENet outbound drain-cycle duration (µs), non-empty cycles only.</summary>
+        public HistogramSnapshot OutgoingDrainCycleUs { get; init; }
+
+        /// <summary>
+        ///     Peer RTT histograms indexed by (int)Continent — see Continents.LABELS.
+        ///     Sampled from ENet peers (ENet maintains RTT via reliable-channel ACKs).
+        /// </summary>
+        public HistogramSnapshot[]? PeerRttMs { get; init; }
+    }
+
+    public readonly record struct PerTransportCounters
     {
         public long TotalPeersConnected { get; init; }
         public long TotalPeersDisconnected { get; init; }
@@ -19,12 +40,12 @@ public readonly record struct MetricsSnapshot
         public long TotalPacketsSent { get; init; }
         public long TotalUnauthMessagesSkipped { get; init; }
         public long TotalSendFailures { get; init; }
-        public int IncomingQueueDepth { get; init; }
-        public int OutgoingQueueDepth { get; init; }
-        public HistogramSnapshot OutgoingDrainCycleUs { get; init; }
+    }
 
-        /// <summary>Peer RTT histograms indexed by (int)Continent — see Continents.LABELS.</summary>
-        public HistogramSnapshot[]? PeerRttMs { get; init; }
+    public readonly record struct WebTransportSnapshot
+    {
+        public long TotalDatagramsDroppedStale { get; init; }
+        public long TotalDatagramsDroppedOversize { get; init; }
     }
 
     public readonly record struct HardeningSnapshot

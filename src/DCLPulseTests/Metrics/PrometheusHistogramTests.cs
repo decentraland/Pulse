@@ -1,4 +1,5 @@
 using Pulse.Metrics;
+using Pulse.Transport;
 using System.Text;
 
 namespace DCLPulseTests.Metrics;
@@ -19,9 +20,14 @@ public class PrometheusHistogramTests
     private static MetricsSnapshot SnapshotWith(MetricsSnapshot.SimulationSnapshot simulation) =>
         new ()
         {
-            // Write() iterates the enum counters unconditionally — they must be non-null.
+            // Write() iterates the enum counters and the per-transport array unconditionally —
+            // they must be non-null.
             IncomingMessages = new ClientMessageCounters(10),
             OutgoingMessages = new ServerMessageCounters(10),
+            Transport = new MetricsSnapshot.TransportSnapshot
+            {
+                ByTransport = new MetricsSnapshot.PerTransportCounters[Enum.GetValues<TransportId>().Length],
+            },
             Simulation = simulation,
         };
 

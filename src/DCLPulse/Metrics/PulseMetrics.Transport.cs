@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Pulse.Transport;
 using Pulse.Transport.Geo;
 
 namespace Pulse.Metrics;
@@ -7,6 +8,14 @@ public static partial class PulseMetrics
 {
     public static class Transport
     {
+        /// <summary>Tag key for the <c>transport</c> dimension carried on the counters below.</summary>
+        public const string TRANSPORT_TAG_KEY = "transport";
+
+        // Cached per-transport tag, indexed by (int)TransportId, so the transport dimension can be
+        // attached to a counter Add() without allocating on the hot path. The boxed TransportId value
+        // is unboxed by MeterListenerMetricsCollector to bucket the measurement.
+        private static readonly KeyValuePair<string, object?>[] TRANSPORT_TAGS = BuildTransportTags();
+
         public static readonly Counter<long> PEERS_CONNECTED =
             METER.CreateCounter<long>("pulse.transport.peers_connected");
 
@@ -49,6 +58,10 @@ public static partial class PulseMetrics
         /// </summary>
         public static readonly Histogram<long>[] PEER_RTT_MS = CreatePeerRttInstruments();
 
+        /// <summary>The cached <c>transport</c> tag for <paramref name="transport" />, passed to a counter's <c>Add()</c>.</summary>
+        public static KeyValuePair<string, object?> Tag(TransportId transport) =>
+            TRANSPORT_TAGS[(int)transport];
+
         private static Histogram<long>[] CreatePeerRttInstruments()
         {
             var instruments = new Histogram<long>[Continents.COUNT];
@@ -57,6 +70,17 @@ public static partial class PulseMetrics
                 instruments[i] = METER.CreateHistogram<long>($"pulse.transport.peer_rtt_{Continents.LABELS[i]}_ms");
 
             return instruments;
+        }
+
+        private static KeyValuePair<string, object?>[] BuildTransportTags()
+        {
+            TransportId[] values = Enum.GetValues<TransportId>();
+            var tags = new KeyValuePair<string, object?>[values.Length];
+
+            foreach (TransportId transport in values)
+                tags[(int)transport] = new KeyValuePair<string, object?>(TRANSPORT_TAG_KEY, transport);
+
+            return tags;
         }
     }
 }

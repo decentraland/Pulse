@@ -3,6 +3,6 @@
 ###############################################################################
 * text=auto
 
-# Shell scripts are executed inside Linux Docker images — they must check out
-# with LF even on Windows (CRLF makes bash fail with "invalid option name").
+# Shell scripts run in Linux containers (Docker build) — keep them LF regardless of
+# core.autocrlf, or CRLF corrupts the shebang / `set -euo pipefail` line.
 *.sh text eol=lf

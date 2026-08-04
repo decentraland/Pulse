@@ -1,0 +1,28 @@
+name: Slack canvas deploy status
+description: Renders deployment status for dev and prd from the GitHub Deployments API and sends it to a Slack workflow webhook that replaces the Pulse channel canvas.
+
+inputs:
+  webhook-url:
+    description: Slack Workflow Builder webhook URL (a secret — anyone holding it can write the canvas).
+    required: true
+  github-token:
+    description: Token with read access to this repository's deployments.
+    required: true
+  repo:
+    description: Repository in owner/name form whose deployments are rendered.
+    required: true
+  repo-url:
+    description: Repository web URL used for commit links.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Update canvas
+      shell: bash
+      env:
+        SLACK_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ inputs.repo }}
+        REPO_URL: ${{ inputs.repo-url }}
+      run: bash "${GITHUB_ACTION_PATH}/update-canvas.sh"

@@ -57,6 +57,13 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     // echoing a string that may hold credentials.
     private const string UNPARSED_BROKER_URL = "(unparsed broker url)";
 
+    // Named "island", not "cluster", on purpose: engine.islands is archipelago's topology subject
+    // carrying archipelago's IslandStatusMessage, and Pulse re-publishes that shape verbatim. The
+    // island vocabulary survives only where it is archipelago's contract.
+    private const string ISLANDS_SUBJECT = "engine.islands";
+
+    private const string DISCOVERY_SUBJECT = "engine.discovery";
+
     /// <summary>
     ///     Wait before rebuilding a faulted pipeline. Not a reconnect delay — the client handles
     ///     broker loss itself — only a guard against a reproducing fault spinning the loop.
@@ -106,14 +113,6 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     // Wake signal, not a queue: capacity 1 with DropWrite so repeated signals coalesce into one.
     private readonly Channel<byte>? wakeup;
 
-    private readonly string clusterChangeSubjectPrefix;
-
-    // Named "island", not "cluster", on purpose: engine.islands is archipelago's topology subject
-    // carrying archipelago's IslandStatusMessage, and Pulse re-publishes that shape verbatim. The
-    // island vocabulary survives only where it is archipelago's contract.
-    private readonly string islandsSubject;
-
-    private readonly string discoverySubject;
     private readonly string commitHash;
 
     // Topology scratch, reached from FillIslandStatus alone and so covered by no lock of its own: it
@@ -153,10 +152,6 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         this.options = options.Value;
         this.snapshotBoard = snapshotBoard;
 
-        string prefix = this.options.SubjectPrefix;
-        clusterChangeSubjectPrefix = $"{prefix}peer.";
-        islandsSubject = $"{prefix}engine.islands";
-        discoverySubject = $"{prefix}engine.discovery";
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
 
@@ -272,7 +267,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
             // chain carried. The subject is also the coalescing key, so per-subject latest-wins is
             // exactly per-peer latest-wins.
-            var subject = $"{clusterChangeSubjectPrefix}{wallet.ToLowerInvariant()}.cluster_change";
+            var subject = $"peer.{wallet.ToLowerInvariant()}.cluster_change";
 
             PeerClusterChange change = rented;
             rented = null;
@@ -441,7 +436,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             if (pendingTopology is { } pending)
             {
-                subject = islandsSubject;
+                subject = ISLANDS_SUBJECT;
                 message = pending;
                 pendingTopology = null;
 
@@ -508,9 +503,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         if (!heartbeatEnabled)
             logger.LogWarning("NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)");
 
-        logger.LogInformation("NATS publisher started — {Broker}, subject prefix {SubjectPrefix}",
-            SanitizeBrokerUrl(options.Url),
-            string.IsNullOrEmpty(options.SubjectPrefix) ? "(none)" : options.SubjectPrefix);
+        logger.LogInformation("NATS publisher started — {Broker}", SanitizeBrokerUrl(options.Url));
 
         // Supervision loop. Losing the broker is handled inside the client — it retries forever with
         // its own backoff — so reaching the end of one iteration means the pipeline itself faulted,
@@ -719,7 +712,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 try
                 {
                     await connection.PublishAsync(
-                        discoverySubject, discovery, serializer: SERIALIZER, cancellationToken: token);
+                        DISCOVERY_SUBJECT, discovery, serializer: SERIALIZER, cancellationToken: token);
 
                     CountPublished();
                 }

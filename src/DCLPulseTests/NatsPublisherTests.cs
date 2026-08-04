@@ -580,26 +580,6 @@ public class NatsPublisherTests
     }
 
     [Test]
-    public void SubjectPrefix_PrefixesTheClusterChangeSubject()
-    {
-        NatsPublisher publisher = CreatePublisher(url: BROKER_URL, subjectPrefix: "pulse-dev.");
-
-        publisher.PublishClusterChange("0xwallet0", "C1", REALM);
-
-        Assert.That(DequeueSubject(publisher), Is.EqualTo("pulse-dev.peer.0xwallet0.cluster_change"));
-    }
-
-    [Test]
-    public void SubjectPrefix_PrefixesTheTopologySubject()
-    {
-        NatsPublisher publisher = CreatePublisher(url: BROKER_URL, subjectPrefix: "pulse-dev.");
-
-        publisher.PublishTopology(MakePass());
-
-        Assert.That(DequeueSubject(publisher), Is.EqualTo("pulse-dev.engine.islands"));
-    }
-
-    [Test]
     public async Task FirstConnectionOpen_IsNotCountedAsAReconnect()
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
@@ -885,7 +865,6 @@ public class NatsPublisherTests
     private NatsPublisher CreatePublisher(
         string url,
         int channelCapacity = 1024,
-        string subjectPrefix = "",
         int discoveryIntervalMs = 10_000,
         ILogger<NatsPublisher>? logger = null)
     {
@@ -894,7 +873,6 @@ public class NatsPublisherTests
         options.Value.Returns(new NatsOptions
         {
             Url = url,
-            SubjectPrefix = subjectPrefix,
             ServerName = "pulse-test",
             DiscoveryIntervalMs = discoveryIntervalMs,
             ChannelCapacity = channelCapacity,
@@ -1027,12 +1005,6 @@ public class NatsPublisherTests
 
         return (subject, pending);
     }
-
-    /// <summary>
-    ///     Takes the next message's subject, returning its instance the way the drain loop would.
-    /// </summary>
-    private static string DequeueSubject(NatsPublisher publisher) =>
-        DequeueNext(publisher).Subject;
 
     /// <summary>
     ///     Encodes a message through the publisher's own serializer and parses the bytes back, so the

@@ -25,13 +25,6 @@ public sealed class NatsOptions
     public string Url { get; set; } = string.Empty;
 
     /// <summary>
-    ///     Prepended to every published subject, so a deployment can namespace its feed away from a
-    ///     broker shared with another environment. Empty by default, yielding archipelago's subjects
-    ///     verbatim.
-    /// </summary>
-    public string SubjectPrefix { get; set; } = string.Empty;
-
-    /// <summary>
     ///     Reported as <c>server_name</c> on <c>engine.discovery</c>. Free-form — nothing keys off it.
     /// </summary>
     public string ServerName { get; set; } = "pulse";

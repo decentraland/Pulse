@@ -115,10 +115,9 @@ because ws-connector subscribes to the literal subject. It looks like a bug from
 is not. Do not "fix" either side to match the other; the two subjects are load-bearing exactly
 as written, and a mismatch means nothing arrives.
 
-Pulse's `Nats:SubjectPrefix` does apply to what Pulse publishes, so a non-empty prefix has to be
-mirrored on whatever subscribes to `cluster_change`. It must not be mirrored on
-`island_changed`. See [clustering-on-aoi.md §3.6](clustering-on-aoi.md) for the full feed
-description and the three subjects Pulse emits.
+Pulse publishes its subjects literally — it has no prefix knob. See
+[clustering-on-aoi.md §3.6](clustering-on-aoi.md) for the full feed description and the three
+subjects Pulse emits.
 
 ## 2. The stack
 
@@ -277,7 +276,7 @@ overridden, and process environment beats `.env.default`:
 | --- | --- | --- |
 | `CLUSTER_SUBSCRIBER_ENABLED` | `true` | Compared against the literal string `"true"`; anything else means it starts and does nothing |
 | `NATS_URL` | `nats://127.0.0.1:4222` | The same broker Pulse publishes to |
-| `NATS_SUBJECT_PREFIX` | empty | Must match Pulse's `Nats:SubjectPrefix` |
+| `NATS_SUBJECT_PREFIX` | empty | Pulse publishes literal subjects, so the subscription must be unprefixed |
 | `COMMS_GATEKEEPER_AUTH_TOKEN` | any placeholder | Required at startup; only guards its inbound HTTP API, which this harness never calls |
 | `PROD_LIVEKIT_HOST` / `_API_KEY` / `_API_SECRET` | any placeholder | Minting is offline JWT signing — see above. `PREVIEW_` triple must also be set |
 
@@ -427,8 +426,7 @@ Compare the subject against the `peer_id` in the welcome.
 subscribed with a loose wildcard, and nothing at the client. Conversely, subscribing to
 `engine.peer.*.cluster_change` gets you a gatekeeper that never fires. *Tell it apart:*
 `/subsz?subs=1` lists the literal strings; the pair should read `peer.*.cluster_change` on
-gatekeeper's side and `engine.peer.*.island_changed` on ws-connector's. If a `Nats:SubjectPrefix` is
-set on Pulse, the first gains that prefix and the second must not.
+gatekeeper's side and `engine.peer.*.island_changed` on ws-connector's.
 
 **Half a session.** A wallet with a Pulse session but no ws-connector session gets an
 `island_changed` that nobody forwards — harmless, invisible. A wallet with a ws-connector

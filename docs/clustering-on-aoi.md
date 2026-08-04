@@ -184,7 +184,6 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 | Option (`Nats`) | Default | Meaning |
 | --- | --- | --- |
 | `Url` | — | Broker URL; unset = feed disabled (stats-only mode) |
-| `SubjectPrefix` | `""` | Prepended to every subject, to namespace a shared broker |
 | `ServerName` | `pulse` | Reported as `server_name` on `engine.discovery` |
 | `DiscoveryIntervalMs` | 10000 | Heartbeat cadence; must stay well under archipelago-stats' 90 s health window |
 | `ChannelCapacity` | 1024 | Max distinct peers with an undelivered assignment |

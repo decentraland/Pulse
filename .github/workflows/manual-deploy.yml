@@ -39,3 +39,5 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           Peers__ResyncWithDelta: ${{ inputs.resync-with-delta }}
+          # Per-connect peer-IP diagnostic (IPs are personal data) — enabled on dev only.
+          Logging__LogLevel__Pulse.Diagnostics: ${{ inputs.deployment-environment == 'dev' && 'Information' || 'None' }}

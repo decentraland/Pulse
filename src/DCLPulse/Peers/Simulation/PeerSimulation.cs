@@ -2,6 +2,7 @@ using Decentraland.Common;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Transport;
 using static Pulse.Messaging.MessagePipe;
 
@@ -687,12 +688,30 @@ public sealed class PeerSimulation : IPeerSimulation
         if (baseline.Seq == target.Seq)
             return;
 
+        if (!fromResync)
+            RecordDeltaStaleness(in target, tier);
+
         PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(subjectId, baseline, target, tier);
 
         SendTracked(observerId, ref view, target.Seq, new ServerMessage
         {
             PlayerStateDelta = delta,
         }, packetMode, fromResync: fromResync);
+    }
+
+    /// <summary>
+    ///     KR1.1 measurement: publish→fan-out staleness of the delta target, per AoI tier.
+    ///     Unsigned subtraction is wrap-safe across the ~49.7-day uint clock rollover — do not
+    ///     cast to signed before subtracting. Resync-path deltas are excluded by the caller:
+    ///     their target can be arbitrarily old when the subject idled after the client lost
+    ///     packets, which would pollute the histogram. The steady-state path only reaches here
+    ///     when the seq advanced, i.e. the target is a genuinely fresh publish.
+    /// </summary>
+    private void RecordDeltaStaleness(in PeerSnapshot target, PeerViewSimulationTier tier)
+    {
+        uint stalenessMs = timeProvider.MonotonicTime - target.ServerTick;
+        int tierIndex = Math.Min(tier.Value, PulseMetrics.Simulation.DELTA_STALENESS_MS.Length - 1);
+        PulseMetrics.Simulation.DELTA_STALENESS_MS[tierIndex].Record(stalenessMs);
     }
 
     private void TryAnnounceProfile(PeerIndex observerId, PeerIndex subjectId, ref PeerToPeerView view)

@@ -5,6 +5,7 @@ using Pulse.Metrics;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
+using System.Diagnostics;
 using System.Threading.Channels;
 using static Pulse.Messaging.MessagePipe;
 
@@ -282,6 +283,8 @@ public sealed class PeersManager : BackgroundService
         long now,
         int workerIndex)
     {
+        long tickStart = Stopwatch.GetTimestamp();
+
         try { simulation.SimulateTick(peers, tickCounter); }
         catch (Exception ex)
         {
@@ -289,9 +292,25 @@ public sealed class PeersManager : BackgroundService
                 tickCounter, workerIndex);
         }
 
+        RecordTickDuration(tickStart, simulation.BaseTickMs);
+
         tickCounter++;
         long nextTickTime = now + simulation.BaseTickMs;
         return nextTickTime;
+    }
+
+    /// <summary>
+    ///     KR1.2 measurement: simulation tick wall time (µs) plus an overrun counter when
+    ///     the tick exceeded its budget. Internal static so the timing math is testable
+    ///     without spinning up a worker loop.
+    /// </summary>
+    internal static void RecordTickDuration(long startTimestamp, uint baseTickMs)
+    {
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        PulseMetrics.Simulation.TICK_DURATION_US.Record((long)elapsed.TotalMicroseconds);
+
+        if (elapsed.TotalMilliseconds > baseTickMs)
+            PulseMetrics.Simulation.TICK_OVERRUNS.Add(1);
     }
 
     public override void Dispose()

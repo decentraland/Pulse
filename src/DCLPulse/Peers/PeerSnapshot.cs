@@ -34,7 +34,21 @@ public static class PeerSnapshotExtensions
 }
 
 /// <summary>
+///     A point-at target (absolute world hit position) stored as the raw quantized wire codes,
+///     so it diffs and relays without a decode/re-encode round-trip. See <see cref="PeerSnapshot" />.
+/// </summary>
+public readonly record struct QuantizedPointAt(uint X, uint Y, uint Z);
+
+/// <summary>
 ///     Contains positional and animation state for at a given moment of time.
+///     <para />
+///     Positional/animation fields hold the <b>raw quantized wire codes</b> — the same uint32 the
+///     client sent and the server relays — not decoded floats. Diffing compares these codes
+///     exactly: comparing decoded floats would let a sub-<c>TOLERANCE</c> one-code change slip
+///     through (divergence between what the observer holds and what the server thinks it sent),
+///     and would force a wasteful decode-on-receive / re-encode-on-send round-trip. The only
+///     decoded value kept is <see cref="GlobalPosition" />, which the server itself consumes for
+///     interest management; it is computed once at publish time.
 ///     <para />
 ///     <see cref="Realm" /> is the AoI partition the peer belongs to. Carried forward by
 ///     <see cref="Simulation.SnapshotBoard.Publish" /> onto every snapshot, same as
@@ -49,20 +63,27 @@ public record struct PeerSnapshot(
     uint Seq,
     uint ServerTick,
 
-    // Positional
+    // Positional — raw quantized wire codes
     int Parcel,
-    Vector3 LocalPosition,
-    Vector3 GlobalPosition,
-    Vector3 Velocity,
-    float RotationY,
+    uint PositionX,
+    uint PositionY,
+    uint PositionZ,
+    uint VelocityX,
+    uint VelocityY,
+    uint VelocityZ,
 
-    // Animation-related
+    // Decoded world position — the only decoded value the server itself consumes (AoI / SpatialGrid)
+    Vector3 GlobalPosition,
+
+    uint RotationY,
+
+    // Animation-related — raw quantized wire codes (JumpCount is a plain count, not quantized)
     int JumpCount,
-    float MovementBlend,
-    float SlideBlend,
-    float? HeadYaw,
-    float? HeadPitch,
-    Vector3? PointAt,
+    uint MovementBlend,
+    uint SlideBlend,
+    uint? HeadYaw,
+    uint? HeadPitch,
+    QuantizedPointAt? PointAt,
     PlayerAnimationFlags AnimationFlags,
     GlideState GlideState,
 

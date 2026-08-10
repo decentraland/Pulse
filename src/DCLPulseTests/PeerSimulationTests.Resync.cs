@@ -99,7 +99,7 @@ public partial class PeerSimulationTests
         Assert.That(msg.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateFull));
         Assert.That(msg.Message.PlayerStateFull.Sequence, Is.EqualTo(3u));
-        Assert.That(msg.Message.PlayerStateFull.State.Position.X, Is.EqualTo(5f));
+        Assert.That(msg.Message.PlayerStateFull.State.PositionXQuantized, Is.EqualTo(5f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]
@@ -125,8 +125,8 @@ public partial class PeerSimulationTests
         OutgoingMessage msg = DrainSingleMessage();
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateFull));
         Assert.That(msg.Message.PlayerStateFull.Sequence, Is.EqualTo(3u));
-        Assert.That(msg.Message.PlayerStateFull.State.Position.X, Is.EqualTo(10f));
-        Assert.That(msg.Message.PlayerStateFull.State.Position.Y, Is.EqualTo(5f));
+        Assert.That(msg.Message.PlayerStateFull.State.PositionXQuantized, Is.EqualTo(10f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(msg.Message.PlayerStateFull.State.PositionYQuantized, Is.EqualTo(5f).Within(PlayerState.PositionYQuantizedStep));
     }
 
     [Test]
@@ -152,7 +152,7 @@ public partial class PeerSimulationTests
 
         // Only Y changed from seq 2 to seq 3
         Assert.That(msg.Message.PlayerStateDelta.HasPositionX, Is.False);
-        Assert.That(msg.Message.PlayerStateDelta.PositionYQuantized, Is.EqualTo(2f));
+        Assert.That(msg.Message.PlayerStateDelta.PositionYQuantized, Is.EqualTo(2f).Within(PlayerState.PositionYQuantizedStep));
     }
 
     [Test]
@@ -210,7 +210,7 @@ public partial class PeerSimulationTests
 
         OutgoingMessage msg = DrainSingleMessage();
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateFull));
-        Assert.That(msg.Message.PlayerStateFull.State.Position.X, Is.EqualTo(2f));
+        Assert.That(msg.Message.PlayerStateFull.State.PositionXQuantized, Is.EqualTo(2f).Within(PlayerState.PositionXQuantizedStep));
     }
 
     [Test]

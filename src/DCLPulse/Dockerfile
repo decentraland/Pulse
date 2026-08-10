@@ -1,17 +1,21 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
+# The image fetches its own fresh geo CSVs via ADD in the final stage; disable the
+# csproj's local predownload so the build/publish steps never hit the network for them.
+ENV FetchGeoDb=false
 WORKDIR /build
 COPY ["src/DCLPulse/DCLPulse.csproj", "src/DCLPulse/"]
 COPY ["src/DCLPulse/global.json", "src/DCLPulse/"]
 COPY ["src/DCLAuth/DCLAuth.csproj", "src/DCLAuth/"]
 COPY ["src/Protocol/Protocol.csproj", "src/Protocol/"]
 COPY ["src/Protocol/Directory.Build.props", "src/Protocol/"]
-# RustEthereum auto-fetch needs the version, the MSBuild target, the local
-# feed config, and the fetch script — all referenced during `dotnet restore`.
+# Rust-native auto-fetch (RustEthereum + RustWebTransport) needs the versions, the MSBuild
+# targets, the local feed config, and the fetch scripts — all run during `dotnet restore`.
 COPY ["src/Directory.Build.props", "src/"]
 COPY ["src/Directory.Build.targets", "src/"]
 COPY ["src/NuGet.config", "src/"]
 COPY ["tools/fetch-rust-eth.sh", "tools/"]
+COPY ["tools/fetch-rust-webtransport.sh", "tools/"]
 RUN dotnet restore "src/DCLPulse/DCLPulse.csproj"
 COPY src/ src/
 WORKDIR "/build/src/DCLPulse"
@@ -26,5 +30,14 @@ ARG COMMIT_HASH=unknown
 ENV COMMIT_HASH=$COMMIT_HASH
 WORKDIR /app
 COPY --from=publish /app/publish .
+# Geo database — single fetch at image build; the app never downloads at runtime. Refreshes
+# with every image build. IP-range CSVs: geo-whois-asn-country (CC0,
+# https://github.com/sapics/ip-location-db). Country → continent mapping: GeoNames
+# countryInfo.txt (CC-BY 4.0, https://www.geonames.org).
+ADD https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv4-num.csv \
+    https://cdn.jsdelivr.net/npm/@ip-location-db/geo-whois-asn-country/geo-whois-asn-country-ipv6-num.csv \
+    https://download.geonames.org/export/dump/countryInfo.txt \
+    /app/geodb/
 EXPOSE 7777/udp
+EXPOSE 7743/udp
 ENTRYPOINT ["dotnet", "DCLPulse.dll"]

@@ -2,6 +2,7 @@ using Decentraland.Common;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Transport;
 using static Pulse.Messaging.MessagePipe;
 
@@ -144,9 +145,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
             collector.Clear();
             areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
-
-            if (selfMirrorEnabled)
-                collector.Add(observerId, selfMirrorTier);
+            AddSelfMirror(observerId, in observerSnapshot);
 
             string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
@@ -170,6 +169,23 @@ public sealed class PeerSimulation : IPeerSimulation
     public void RemoveObserver(PeerIndex observerId)
     {
         observerViews.Remove(observerId);
+    }
+
+    /// <summary>
+    ///     Inject the observer as its own subject so it receives its own state under
+    ///     <see cref="SELF_MIRROR_WALLET_ID" /> (a client-side animation-testing aid).
+    ///     <para />
+    ///     This bypasses the AoI, so it must re-apply the AoI's realm invariant itself: a peer
+    ///     with no realm yet (legacy connect, before its first teleport) is invisible to every
+    ///     observer — itself included — so it is not mirrored until a realm is set. Without this
+    ///     guard the self-mirror would emit a <c>PlayerJoined</c> carrying a realm-less snapshot.
+    /// </summary>
+    private void AddSelfMirror(PeerIndex observerId, in PeerSnapshot observerSnapshot)
+    {
+        if (!selfMirrorEnabled || observerSnapshot.Realm == null)
+            return;
+
+        collector.Add(observerId, selfMirrorTier);
     }
 
     // ── Per-subject orchestration ───────────────────────────────────
@@ -308,6 +324,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 UserId = userId,
                 ProfileVersion = profileVersion,
                 State = CreateFullState(subjectId, latestSnapshot),
+                Realm = latestSnapshot.Realm ?? string.Empty,
             },
         }, PacketMode.RELIABLE));
 
@@ -613,6 +630,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 Sequence = snapshot.Seq,
                 ServerTick = snapshot.ServerTick,
                 State = CreatePlayerState(snapshot),
+                Realm = snapshot.Realm ?? string.Empty,
             },
         }, PacketMode.RELIABLE);
 
@@ -670,12 +688,30 @@ public sealed class PeerSimulation : IPeerSimulation
         if (baseline.Seq == target.Seq)
             return;
 
+        if (!fromResync)
+            RecordDeltaStaleness(in target, tier);
+
         PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(subjectId, baseline, target, tier);
 
         SendTracked(observerId, ref view, target.Seq, new ServerMessage
         {
             PlayerStateDelta = delta,
         }, packetMode, fromResync: fromResync);
+    }
+
+    /// <summary>
+    ///     KR1.1 measurement: publish→fan-out staleness of the delta target, per AoI tier.
+    ///     Unsigned subtraction is wrap-safe across the ~49.7-day uint clock rollover — do not
+    ///     cast to signed before subtracting. Resync-path deltas are excluded by the caller:
+    ///     their target can be arbitrarily old when the subject idled after the client lost
+    ///     packets, which would pollute the histogram. The steady-state path only reaches here
+    ///     when the seq advanced, i.e. the target is a genuinely fresh publish.
+    /// </summary>
+    private void RecordDeltaStaleness(in PeerSnapshot target, PeerViewSimulationTier tier)
+    {
+        uint stalenessMs = timeProvider.MonotonicTime - target.ServerTick;
+        int tierIndex = Math.Min(tier.Value, PulseMetrics.Simulation.DELTA_STALENESS_MS.Length - 1);
+        PulseMetrics.Simulation.DELTA_STALENESS_MS[tierIndex].Record(stalenessMs);
     }
 
     private void TryAnnounceProfile(PeerIndex observerId, PeerIndex subjectId, ref PeerToPeerView view)
@@ -762,16 +798,23 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private static PlayerState CreatePlayerState(PeerSnapshot snapshot)
     {
+        // Snapshot already holds the raw quantized codes — copy them straight onto the outgoing
+        // message, no re-encode.
         var state = new PlayerState
         {
             ParcelIndex = snapshot.Parcel,
-            Position = new Vector3 { X = snapshot.LocalPosition.X, Y = snapshot.LocalPosition.Y, Z = snapshot.LocalPosition.Z },
-            Velocity = new Vector3 { X = snapshot.Velocity.X, Y = snapshot.Velocity.Y, Z = snapshot.Velocity.Z },
+            PositionX = snapshot.PositionX,
+            PositionY = snapshot.PositionY,
+            PositionZ = snapshot.PositionZ,
+            VelocityX = snapshot.VelocityX,
+            VelocityY = snapshot.VelocityY,
+            VelocityZ = snapshot.VelocityZ,
             RotationY = snapshot.RotationY,
             MovementBlend = snapshot.MovementBlend,
             SlideBlend = snapshot.SlideBlend,
             StateFlags = (uint)snapshot.AnimationFlags,
             GlideState = snapshot.GlideState,
+            JumpCount = snapshot.JumpCount,
         };
 
         if (snapshot.HeadYaw.HasValue)
@@ -781,7 +824,12 @@ public sealed class PeerSimulation : IPeerSimulation
             state.HeadPitch = snapshot.HeadPitch.Value;
 
         if (snapshot.PointAt.HasValue)
-            state.PointAt = new Vector3 { X = snapshot.PointAt.Value.X, Y = snapshot.PointAt.Value.Y, Z = snapshot.PointAt.Value.Z };
+        {
+            QuantizedPointAt pointAt = snapshot.PointAt.Value;
+            state.PointAtX = pointAt.X;
+            state.PointAtY = pointAt.Y;
+            state.PointAtZ = pointAt.Z;
+        }
 
         return state;
     }

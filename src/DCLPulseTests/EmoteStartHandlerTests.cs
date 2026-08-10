@@ -116,10 +116,13 @@ public class EmoteStartHandlerTests
         handler.Handle(peers, peer, message);
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.LocalPosition, Is.EqualTo(new Vector3(3f, 1f, 7f)));
-        Assert.That(snapshot.RotationY, Is.EqualTo(1.5f));
-        Assert.That(snapshot.MovementBlend, Is.EqualTo(0.8f));
-        Assert.That(snapshot.SlideBlend, Is.EqualTo(0.2f));
+        Vector3 position = snapshot.DecodePosition();
+        Assert.That(position.X, Is.EqualTo(3f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(position.Y, Is.EqualTo(1f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(position.Z, Is.EqualTo(7f).Within(PlayerState.PositionZQuantizedStep));
+        Assert.That(snapshot.DecodeRotationY(), Is.EqualTo(1.5f).Within(PlayerState.RotationYQuantizedStep));
+        Assert.That(snapshot.DecodeMovementBlend(), Is.EqualTo(0.8f).Within(PlayerState.MovementBlendQuantizedStep));
+        Assert.That(snapshot.DecodeSlideBlend(), Is.EqualTo(0.2f).Within(PlayerState.SlideBlendQuantizedStep));
         Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
         Assert.That(snapshot.ServerTick, Is.EqualTo(MONOTONIC_TIME));
     }
@@ -131,8 +134,7 @@ public class EmoteStartHandlerTests
         peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peer);
 
-        snapshotBoard.Publish(peer, new PeerSnapshot(Seq: 5, ServerTick: 4000, Parcel: 0,
-            default, default, default, 0f, 0, 0f, 0f, null, null, null, default, default));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(seq: 5, serverTick: 4000, parcel: 0));
 
         handler.Handle(peers, peer, CreateEmoteMessage("wave", durationMs: 3000));
 
@@ -185,11 +187,15 @@ public class EmoteStartHandlerTests
             PlayerState = new PlayerState
             {
                 ParcelIndex = parcelIndex,
-                Position = new Decentraland.Common.Vector3 { X = pos.X, Y = pos.Y, Z = pos.Z },
-                Velocity = new Decentraland.Common.Vector3 { X = vel.X, Y = vel.Y, Z = vel.Z },
-                RotationY = rotationY,
-                MovementBlend = movementBlend,
-                SlideBlend = slideBlend,
+                PositionXQuantized = pos.X,
+                PositionYQuantized = pos.Y,
+                PositionZQuantized = pos.Z,
+                VelocityXQuantized = vel.X,
+                VelocityYQuantized = vel.Y,
+                VelocityZQuantized = vel.Z,
+                RotationYQuantized = rotationY,
+                MovementBlendQuantized = movementBlend,
+                SlideBlendQuantized = slideBlend,
                 StateFlags = stateFlags,
             },
         };

@@ -119,9 +119,15 @@ public class HandshakeHandlerTests
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.Seq, Is.EqualTo(0u));
         Assert.That(snapshot.Parcel, Is.EqualTo(5));
-        Assert.That(snapshot.LocalPosition, Is.EqualTo(new Vector3(2f, 3f, 4f)));
-        Assert.That(snapshot.Velocity, Is.EqualTo(new Vector3(0.5f, 0f, 0.5f)));
-        Assert.That(snapshot.RotationY, Is.EqualTo(90f));
+        Vector3 position = snapshot.DecodePosition();
+        Assert.That(position.X, Is.EqualTo(2f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(position.Y, Is.EqualTo(3f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(position.Z, Is.EqualTo(4f).Within(PlayerState.PositionZQuantizedStep));
+        Vector3 velocity = snapshot.DecodeVelocity();
+        Assert.That(velocity.X, Is.EqualTo(0.5f).Within(PlayerState.VelocityXQuantizedStep));
+        Assert.That(velocity.Y, Is.EqualTo(0f).Within(PlayerState.VelocityYQuantizedStep));
+        Assert.That(velocity.Z, Is.EqualTo(0.5f).Within(PlayerState.VelocityZQuantizedStep));
+        Assert.That(snapshot.DecodeRotationY(), Is.EqualTo(90f).Within(PlayerState.RotationYQuantizedStep));
         Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
         Assert.That(snapshot.IsTeleport, Is.False);
 
@@ -224,18 +230,6 @@ public class HandshakeHandlerTests
     }
 
     [Test]
-    public void Handle_NonFinitePosition_RejectsHandshake()
-    {
-        PlayerInitialState initial = CreateInitialState(parcelIndex: 0,
-            position: new Vector3(float.NaN, 0f, 0f));
-
-        handler.Handle(peers, peer, BuildHandshake(initial));
-
-        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
-        transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-    }
-
-    [Test]
     public void Handle_NullStateInsideInitialState_RejectsHandshake()
     {
         // Wire-level guard: client could ship PlayerInitialState with no PlayerState.
@@ -297,9 +291,13 @@ public class HandshakeHandlerTests
             State = new PlayerState
             {
                 ParcelIndex = parcelIndex,
-                Position = new Decentraland.Common.Vector3 { X = pos.X, Y = pos.Y, Z = pos.Z },
-                Velocity = new Decentraland.Common.Vector3 { X = vel.X, Y = vel.Y, Z = vel.Z },
-                RotationY = rotationY,
+                PositionXQuantized = pos.X,
+                PositionYQuantized = pos.Y,
+                PositionZQuantized = pos.Z,
+                VelocityXQuantized = vel.X,
+                VelocityYQuantized = vel.Y,
+                VelocityZQuantized = vel.Z,
+                RotationYQuantized = rotationY,
                 StateFlags = stateFlags,
             },
             Realm = realm,

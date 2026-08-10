@@ -5,9 +5,9 @@ namespace Pulse.Transport.Hardening;
 
 /// <summary>
 ///     Per-peer token bucket that tolerates a small rate of corrupt packets before terminating
-///     the session. Counts oversized packets (caught in the ENet receive handler before
-///     <c>CopyTo</c>), protobuf parse failures (caught in <c>MessagePipe.OnDataReceived</c>),
-///     and Receive events that arrive on an ENet slot we don't recognise.
+///     the session. Counts oversized packets (caught in the transport receive handler before
+///     copy-out), protobuf parse failures (caught in <c>MessagePipe.OnDataReceived</c>), and
+///     Receive events that arrive on a transport slot we don't recognise.
 ///     <para />
 ///     Two key spaces are tracked independently:
 ///     <list type="bullet">
@@ -24,14 +24,15 @@ namespace Pulse.Transport.Hardening;
 ///             </description>
 ///         </item>
 ///     </list>
-///     Threading: every call site runs on the single ENet thread, so both dictionaries are
-///     plain (no locking). Release counterparts are invoked from the ENet thread's Disconnect
-///     handler.
+///     Threading: shared by both transport threads (ENet and WebTransport), so a single lock guards
+///     both dictionaries. Contention is bounded by the corruption/disconnect rate, not the packet
+///     rate — a well-behaved peer never touches the lock.
 /// </summary>
 public sealed class CorruptedPacketLimiter
 {
     private readonly Dictionary<PeerIndex, Bucket> peerBuckets = new ();
     private readonly Dictionary<uint, Bucket> slotBuckets = new ();
+    private readonly Lock syncRoot = new ();
     private readonly byte burstCapacity;
     private readonly uint refillIntervalMs;
     private readonly ITimeProvider timeProvider;
@@ -64,43 +65,52 @@ public sealed class CorruptedPacketLimiter
         DebitOne(slotBuckets, slotId);
 
     /// <summary>Drops the peer's bucket on disconnect to bound the dictionary. Idempotent.</summary>
-    public void Release(PeerIndex peerIndex) => peerBuckets.Remove(peerIndex);
+    public void Release(PeerIndex peerIndex)
+    {
+        lock (syncRoot) peerBuckets.Remove(peerIndex);
+    }
 
     /// <summary>Drops the slot's bucket on Disconnect/Timeout. Idempotent.</summary>
-    public void ReleaseSlot(uint slotId) => slotBuckets.Remove(slotId);
+    public void ReleaseSlot(uint slotId)
+    {
+        lock (syncRoot) slotBuckets.Remove(slotId);
+    }
 
     private bool DebitOne<TKey>(Dictionary<TKey, Bucket> map, TKey key) where TKey : notnull
     {
         if (!IsEnabled) return false;
 
-        uint now = timeProvider.MonotonicTime;
-
-        if (!map.TryGetValue(key, out Bucket bucket) || bucket.LastRefillMs == 0)
+        lock (syncRoot)
         {
-            // First corruption for this key — start with a full bucket. Clamp 0 to 1 so the
-            // sentinel doesn't collide with an actual MonotonicTime reading of 0.
-            bucket = new Bucket(burstCapacity, now == 0 ? 1u : now);
-        }
-        else
-        {
-            uint refills = (now - bucket.LastRefillMs) / refillIntervalMs;
+            uint now = timeProvider.MonotonicTime;
 
-            if (refills > 0)
+            if (!map.TryGetValue(key, out Bucket bucket) || bucket.LastRefillMs == 0)
             {
-                byte refilled = (byte)Math.Min(burstCapacity, bucket.Tokens + refills);
-                // Preserve sub-interval remainder so the long-run rate stays accurate.
-                bucket = new Bucket(refilled, bucket.LastRefillMs + (refills * refillIntervalMs));
+                // First corruption for this key — start with a full bucket. Clamp 0 to 1 so the
+                // sentinel doesn't collide with an actual MonotonicTime reading of 0.
+                bucket = new Bucket(burstCapacity, now == 0 ? 1u : now);
             }
-        }
+            else
+            {
+                uint refills = (now - bucket.LastRefillMs) / refillIntervalMs;
 
-        if (bucket.Tokens == 0)
-        {
-            map[key] = bucket;
-            return true;
-        }
+                if (refills > 0)
+                {
+                    byte refilled = (byte)Math.Min(burstCapacity, bucket.Tokens + refills);
+                    // Preserve sub-interval remainder so the long-run rate stays accurate.
+                    bucket = new Bucket(refilled, bucket.LastRefillMs + (refills * refillIntervalMs));
+                }
+            }
 
-        map[key] = new Bucket((byte)(bucket.Tokens - 1), bucket.LastRefillMs);
-        return false;
+            if (bucket.Tokens == 0)
+            {
+                map[key] = bucket;
+                return true;
+            }
+
+            map[key] = new Bucket((byte)(bucket.Tokens - 1), bucket.LastRefillMs);
+            return false;
+        }
     }
 
     private readonly record struct Bucket(byte Tokens, uint LastRefillMs);

@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Google.Protobuf;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
@@ -45,7 +46,11 @@ public class PeerSnapshotPublisherTests
         Assert.That(snapshot.Seq, Is.EqualTo(0u));
         Assert.That(snapshot.ServerTick, Is.EqualTo(NOW));
         Assert.That(snapshot.Parcel, Is.EqualTo(5));
-        Assert.That(snapshot.LocalPosition, Is.EqualTo(new Vector3(1f, 2f, 3f)));
+
+        Vector3 decoded = snapshot.DecodePosition();
+        Assert.That(decoded.X, Is.EqualTo(1f).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(decoded.Y, Is.EqualTo(2f).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(decoded.Z, Is.EqualTo(3f).Within(PlayerState.PositionZQuantizedStep));
     }
 
     [Test]
@@ -62,13 +67,7 @@ public class PeerSnapshotPublisherTests
     [Test]
     public void PublishFromPlayerState_StampsEmoteStartSeqWithSnapshotSeq()
     {
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: 41, ServerTick: 0, Parcel: 0,
-            LocalPosition: default(Vector3), GlobalPosition: default(Vector3), Velocity: default(Vector3), RotationY: 0,
-            JumpCount: 0, MovementBlend: 0, SlideBlend: 0,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: default(PlayerAnimationFlags), GlideState: default(GlideState)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(seq: 41));
 
         // EmoteInput exposes only the fields the caller owns — StartSeq is bookkeeping that the
         // publisher fills in to match the new snapshot's Seq.
@@ -148,16 +147,16 @@ public class PeerSnapshotPublisherTests
     [Test]
     public void PublishTeleport_WithoutPriorSnapshot_DefaultsRotationAndHeadIKAndPointAt()
     {
-        publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(1f, 0f, 1f), realm: "realm-a");
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(1f, 0f, 1f), "realm-a"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.IsTeleport, Is.True);
         Assert.That(snapshot.Realm, Is.EqualTo("realm-a"));
-        Assert.That(snapshot.RotationY, Is.EqualTo(0f));
+        Assert.That(snapshot.DecodeRotationY(), Is.EqualTo(0f));
         Assert.That(snapshot.HeadYaw, Is.Null);
         Assert.That(snapshot.HeadPitch, Is.Null);
         Assert.That(snapshot.PointAt, Is.Null);
-        Assert.That(snapshot.Velocity, Is.EqualTo(Vector3.Zero));
+        Assert.That(snapshot.DecodeVelocity(), Is.EqualTo(Vector3.Zero));
         Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
         Assert.That(snapshot.GlideState, Is.EqualTo(GlideState.PropClosed));
     }
@@ -165,33 +164,45 @@ public class PeerSnapshotPublisherTests
     [Test]
     public void PublishTeleport_WithPriorSnapshot_InheritsRotationAndHeadIKAndPointAt()
     {
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: 0, ServerTick: NOW, Parcel: 0,
-            LocalPosition: default(Vector3), GlobalPosition: default(Vector3), Velocity: default(Vector3),
-            RotationY: 1.5f,
-            JumpCount: 0, MovementBlend: 0, SlideBlend: 0,
-            HeadYaw: 0.4f, HeadPitch: -0.2f,
-            PointAt: new Vector3(7f, 8f, 9f),
-            AnimationFlags: default(PlayerAnimationFlags), GlideState: default(GlideState),
-            Realm: "realm-prior"));
+        PeerSnapshot prior = TestSnapshots.Make(
+            seq: 0, serverTick: NOW,
+            rotationY: 90f, headYaw: 45f, headPitch: 30f,
+            pointAt: new Vector3(7f, 8f, 9f), realm: "realm-prior");
+        snapshotBoard.Publish(peer, prior);
 
-        publisher.PublishTeleport(peer, parcelIndex: 0, localPosition: new Vector3(1f, 0f, 1f), realm: "realm-b");
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(1f, 0f, 1f), "realm-b"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.RotationY, Is.EqualTo(1.5f));
-        Assert.That(snapshot.HeadYaw, Is.EqualTo(0.4f));
-        Assert.That(snapshot.HeadPitch, Is.EqualTo(-0.2f));
-        Assert.That(snapshot.PointAt, Is.EqualTo(new Vector3(7f, 8f, 9f)));
+        // Rotation / head-IK / point-at are inherited from the prior snapshot verbatim as raw codes.
+        Assert.That(snapshot.RotationY, Is.EqualTo(prior.RotationY));
+        Assert.That(snapshot.HeadYaw, Is.EqualTo(prior.HeadYaw));
+        Assert.That(snapshot.HeadPitch, Is.EqualTo(prior.HeadPitch));
+        Assert.That(snapshot.PointAt, Is.EqualTo(prior.PointAt));
 
         Assert.That(snapshot.Realm, Is.EqualTo("realm-b"),
             "Realm is set from the teleport request — never inherited.");
     }
 
     [Test]
+    public void PublishTeleport_GlobalPositionAgreesWithBroadcastCodes_WhenPositionExceedsQuantizationRange()
+    {
+        // The quantized setters clamp the stored codes to [0,16]x[0,200]x[0,16]; GlobalPosition
+        // (AoI placement) must be derived from those same codes, or the server indexes the peer
+        // where no observer renders it. ValidateTeleport does not range-check position, so an
+        // out-of-range position reaches the publisher.
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(20f, 250f, -3f), "realm-a"));
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Vector3 expected = parcelEncoder.DecodeToGlobalPosition(0, snapshot.DecodePosition());
+        Assert.That(snapshot.GlobalPosition, Is.EqualTo(expected),
+            "GlobalPosition must match what observers decode from the broadcast position codes.");
+    }
+
+    [Test]
     public void PublishTeleport_RefreshesSpatialGridAtNewGlobalPosition()
     {
         int parcelIndex = parcelEncoder.Encode(9, 14);
-        publisher.PublishTeleport(peer, parcelIndex, localPosition: new Vector3(3f, 0f, 5f), realm: "realm-a");
+        publisher.PublishTeleport(peer, Teleport(parcelIndex, new Vector3(3f, 0f, 5f), "realm-a"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
         Assert.That(spatialGrid.GetPeers(snapshot.GlobalPosition), Does.Contain(peer));
@@ -203,7 +214,9 @@ public class PeerSnapshotPublisherTests
         // point_at is "only meaningful when POINTING_AT is set in state_flags" per the proto.
         // A client that sends a vector without the flag must be treated as not pointing.
         PlayerState state = MakeState();
-        state.PointAt = new Decentraland.Common.Vector3 { X = 5f, Y = 6f, Z = 7f };
+        state.PointAtXQuantized = 5f;
+        state.PointAtYQuantized = 6f;
+        state.PointAtZQuantized = 7f;
 
         publisher.PublishFromPlayerState(peer, state);
 
@@ -215,13 +228,19 @@ public class PeerSnapshotPublisherTests
     public void PublishFromPlayerState_PointAtWithPointingAtFlag_IsLifted()
     {
         PlayerState state = MakeState();
-        state.PointAt = new Decentraland.Common.Vector3 { X = 5f, Y = 6f, Z = 7f };
+        state.PointAtXQuantized = 5f;
+        state.PointAtYQuantized = 6f;
+        state.PointAtZQuantized = 7f;
         state.StateFlags = (uint)PlayerAnimationFlags.PointingAt;
 
         publisher.PublishFromPlayerState(peer, state);
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.PointAt, Is.EqualTo(new Vector3(5f, 6f, 7f)));
+        Vector3? pointAt = snapshot.DecodePointAt();
+        Assert.That(pointAt.HasValue, Is.True);
+        Assert.That(pointAt!.Value.X, Is.EqualTo(5f).Within(PlayerState.PointAtXQuantizedStep));
+        Assert.That(pointAt.Value.Y, Is.EqualTo(6f).Within(PlayerState.PointAtYQuantizedStep));
+        Assert.That(pointAt.Value.Z, Is.EqualTo(7f).Within(PlayerState.PointAtZQuantizedStep));
     }
 
     private static PlayerState MakeState(int parcelIndex = 0, Vector3? position = null, Vector3? velocity = null)
@@ -232,8 +251,24 @@ public class PeerSnapshotPublisherTests
         return new PlayerState
         {
             ParcelIndex = parcelIndex,
-            Position = new Decentraland.Common.Vector3 { X = pos.X, Y = pos.Y, Z = pos.Z },
-            Velocity = new Decentraland.Common.Vector3 { X = vel.X, Y = vel.Y, Z = vel.Z },
+            PositionXQuantized = pos.X,
+            PositionYQuantized = pos.Y,
+            PositionZQuantized = pos.Z,
+            VelocityXQuantized = vel.X,
+            VelocityYQuantized = vel.Y,
+            VelocityZQuantized = vel.Z,
         };
     }
+
+    // Round-trip through the wire so reads decode the stored (clamped) codes like a real deserialized
+    // request would — not the setter's cached, pre-clamp float. Mirrors what the server sees.
+    private static TeleportRequest Teleport(int parcelIndex, Vector3 localPosition, string realm) =>
+        TeleportRequest.Parser.ParseFrom(new TeleportRequest
+        {
+            ParcelIndex = parcelIndex,
+            PositionXQuantized = localPosition.X,
+            PositionYQuantized = localPosition.Y,
+            PositionZQuantized = localPosition.Z,
+            Realm = realm,
+        }.ToByteArray());
 }

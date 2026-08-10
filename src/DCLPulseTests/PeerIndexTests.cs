@@ -1,4 +1,5 @@
 using Pulse.Peers;
+using Pulse.Transport;
 
 namespace DCLPulseTests;
 
@@ -118,5 +119,41 @@ public class PeerIndexTests
 
         Assert.That(zero, Is.EqualTo(@default));
         Assert.That(zero.Value, Is.EqualTo(0u));
+    }
+
+    [Test]
+    public void DefaultTransport_IsEnet()
+    {
+        // The single-arg constructor and default(PeerIndex) both stamp ENet (value 0), so untagged
+        // indexes route to the ENet channel — this is what keeps the legacy/test path unchanged.
+        Assert.That(new PeerIndex(5).Transport, Is.EqualTo(TransportId.ENet));
+        Assert.That(default(PeerIndex).Transport, Is.EqualTo(TransportId.ENet));
+    }
+
+    [Test]
+    public void TransportStamp_IsAppliedButDoesNotAffectIdentity()
+    {
+        var enet = new PeerIndex(5);
+        var wt = new PeerIndex(5, TransportId.WebTransport);
+
+        Assert.That(wt.Transport, Is.EqualTo(TransportId.WebTransport), "the stamp is applied");
+        Assert.That(wt.Value, Is.EqualTo(5u), "the logical slot is unchanged");
+
+        // The transport is a routing tag, NOT part of identity: equality, hashcode and the uint
+        // conversion must ignore it, or dictionary keys and worker sharding would break.
+        Assert.That(wt, Is.EqualTo(enet));
+        Assert.That(wt == enet, Is.True);
+        Assert.That(wt.GetHashCode(), Is.EqualTo(enet.GetHashCode()));
+        Assert.That((uint)wt, Is.EqualTo((uint)enet));
+    }
+
+    [Test]
+    public void TransportStamp_DoesNotAffectDictionaryLookup()
+    {
+        var dict = new Dictionary<PeerIndex, string> { [new PeerIndex(9, TransportId.ENet)] = "peer" };
+
+        Assert.That(dict.ContainsKey(new PeerIndex(9, TransportId.WebTransport)), Is.True,
+            "lookup is by value; the transport stamp must not change the key");
+        Assert.That(dict[new PeerIndex(9)], Is.EqualTo("peer"));
     }
 }

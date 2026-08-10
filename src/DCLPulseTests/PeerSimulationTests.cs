@@ -102,17 +102,7 @@ public partial class PeerSimulationTests
     private void PublishSnapshot(PeerIndex peer, uint seq, Vector3? position = null)
     {
         snapshotBoard.SetActive(peer);
-
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: seq * 10,
-            Parcel: 0,
-            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
-            GlobalPosition: position ?? Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(seq: seq, serverTick: seq * 10, position: position ?? Vector3.Zero));
     }
 
     private void PublishEmoteSnapshot(PeerIndex peer, uint seq, string emoteId = "wave",
@@ -124,17 +114,9 @@ public partial class PeerSimulationTests
         uint tick = startTick ?? seq * 10;
         snapshotBoard.SetActive(peer);
 
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: tick,
-            Parcel: 0,
-            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
-            GlobalPosition: position ?? Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: seq, serverTick: tick, position: position ?? Vector3.Zero,
+            emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
     }
 
     private void PublishEmoteStopSnapshot(PeerIndex peer, uint seq, uint emoteStartTick = 0, uint emoteStartSeq = 0,
@@ -142,17 +124,9 @@ public partial class PeerSimulationTests
     {
         snapshotBoard.SetActive(peer);
 
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: seq * 10,
-            Parcel: 0,
-            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
-            GlobalPosition: position ?? Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Emote: new EmoteState(null, StartSeq: emoteStartSeq, StartTick: emoteStartTick, StopReason: reason)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: seq, serverTick: seq * 10, position: position ?? Vector3.Zero,
+            emote: new EmoteState(null, StartSeq: emoteStartSeq, StartTick: emoteStartTick, StopReason: reason)));
     }
 
     private void AddResyncRequest(PeerIndex observerPeer, PeerIndex subjectPeer, uint knownSeq)

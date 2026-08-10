@@ -80,9 +80,11 @@ If `InitialState.emote_id` is set the seeded snapshot also carries an `EmoteStat
 ### Peer State Machine
 
 ```
-CONNECTING → PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
+PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
 ```
 
+- States live in `PeerConnectionState` (`src/DCLPulse/Peers/PeerConnectionState.cs`); `NONE` is the enum default, never assigned.
+- Server-initiated disconnects (handshake reject, `PeerDefense` kick) pass through `PENDING_DISCONNECT` first — `transport.Disconnect` called but ENet's disconnect event not yet emitted; inbound packets from the peer are skipped in that window — then `DISCONNECTING` when the event lands.
 - `PENDING_AUTH` deadline: **30 seconds**. Non-HANDSHAKE packets silently dropped.
 - Validation failure: send `HANDSHAKE_REJECT { reason }`, call `enet_peer_disconnect_later` (flushes reject before drop).
 - Deadline exceeded: `enet_peer_disconnect` immediately, no message.
@@ -93,17 +95,18 @@ CONNECTING → PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
 
 ## Serialization
 
-**Custom protoc plugin** generating bitwise-packed serializers from `.proto` files.
+**Custom protoc plugin** (`protoc-gen-bitwise`) generating quantized-accessor partials from `.proto` files.
 
-`.proto` is the single source of truth. Custom `QuantizedFloatOptions` field extension annotates float fields with `bits`, `min`, `max`. Plugin generates:
+`.proto` is the single source of truth (hosted in the sibling `@dcl/protocol` repo). Custom `QuantizedFloatOptions` field extension annotates fields with `bits`, `min`, `max`. Quantized values live in plain `uint32` proto fields — ordinary protobuf varints on the wire, not a hand-rolled bit stream. The plugin generates partial classes (`*.Bitwise.cs`) with float `{Field}Quantized` accessors backed by the static `Quantize` helpers (`src/Protocol/Generated/Quantize.cs`):
 
-**BitWriter / BitReader** implement quantization directly:
 ```
 encoded = round((clamp(value, min, max) - min) / (max - min) * (2^bits - 1))
 decoded = (encoded / (2^bits - 1)) * (max - min) + min
 ```
 
-Standard protobuf `optional` fields map to a plugin-generated field_mask on the wire — the schema stays clean, the wire encoding is compact.
+Velocity-style fields use the power-law variant (`Quantize.EncodePower` / `DecodePower`), which concentrates resolution near zero. Each accessor comes with a `{Field}QuantizedStep` constant — the coarsest grid step, safe as an equality tolerance.
+
+Standard protobuf `optional` fields provide per-field presence natively — unchanged fields are simply omitted from deltas; no custom field mask is generated.
 
 ---
 
@@ -155,14 +158,18 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 ### Server → Client
 
+**PLAYER_JOINED** (ch0, reliable, broadcast to interest set)
+- Sent when a subject first enters the observer's interest set
+- Carries `user_id`, `profile_version`, full `PlayerState`, and the subject's `realm` (its AoI partition)
+
 **STATE_FULL** (ch0, reliable)
 - Full snapshot of a subject's state
 - Sent on zone entry or in response to RESYNC_REQUEST
 
 **STATE_DELTA** (ch1, unreliable sequenced, per server tick)
 - Diff from last_sent_snapshot for each observer/subject pair
-- field_mask (from optional field presence) suppresses unchanged continuous fields
-- state_flags always present regardless of mask
+- optional-field presence suppresses unchanged continuous fields
+- state_flags always present regardless of field presence
 - Quantized floats, same ranges as MovementInput
 
 **EMOTE_STARTED** (ch0, reliable, broadcast to interest set)
@@ -178,6 +185,7 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **TELEPORT** (ch0, reliable, broadcast to interest set)
 - Server-authoritative teleport position with server_tick
+- Carries the subject's `realm` (a teleport may move the peer to a different realm)
 - Receiver clears interpolation buffer and snaps to position
 
 ---
@@ -202,9 +210,9 @@ Standard protobuf `optional` fields map to a plugin-generated field_mask on the 
 
 **Simulation loop: scan → broadcast → stop → delta.** Each tick, the simulation scans intermediate snapshots and collects the last teleport, emote start, and emote stop. Only the final event of each type is broadcast — intermediate positions or superseded emotes are discarded. An emote that started and stopped in the same batch is invisible to the observer. Discrete events (teleport, emote start) suppress the unreliable delta for that tick to prevent baseline races. Emote stop does not suppress delta — the client needs the position update on resume.
 
-**Protobuf optional fields = field_mask on wire.** The schema expresses intent with `optional`. The plugin generates a compact bitmask for the wire. These are the same concept at different layers — the plugin bridges them.
+**Protobuf `optional` fields carry delta presence.** The schema expresses intent with `optional`; standard protobuf field presence keeps unchanged fields off the wire. No plugin-generated mask is involved — the plugin only adds the quantized accessors and their step constants.
 
-**Snapshot publishing goes through `PeerSnapshotPublisher`.** Every handler that mutates peer state (`PlayerStateInputHandler`, `EmoteStartHandler`, `TeleportHandler`, the handshake initial-state seed) calls one of two methods on the publisher: `PublishFromPlayerState(from, state, EmoteInput?)` for `PlayerState`-shaped events, or `PublishTeleport(from, parcelIndex, localPosition, realm)` for teleports. The publisher owns Seq numbering (`LastSeq + 1`), parcel→global decoding, head-IK lifting from `PlayerState`, the `SnapshotBoard.Publish` + `SpatialGrid.Set` pair, and emote-ledger bookkeeping (`StartSeq` is stamped to the new snapshot's `Seq`, `StartTick` defaults to `ServerTick` when caller leaves it null). Don't reconstruct a `PeerSnapshot` inline in a handler — add it to the publisher.
+**Snapshot publishing goes through `PeerSnapshotPublisher`.** Every handler that mutates peer state (`PlayerStateInputHandler`, `EmoteStartHandler`, `TeleportHandler`, the handshake initial-state seed) calls one of two methods on the publisher: `PublishFromPlayerState(from, state, EmoteInput?)` for `PlayerState`-shaped events, or `PublishTeleport(from, teleportRequest)` for teleports (reading the quantized position codes off the request). The publisher owns Seq numbering (`LastSeq + 1`), parcel→global decoding, head-IK lifting from `PlayerState`, the `SnapshotBoard.Publish` + `SpatialGrid.Set` pair, and emote-ledger bookkeeping (`StartSeq` is stamped to the new snapshot's `Seq`, `StartTick` defaults to `ServerTick` when caller leaves it null). Don't reconstruct a `PeerSnapshot` inline in a handler — add it to the publisher.
 
 `EmoteInput(EmoteId, DurationMs?, StartTick?)` is the caller-facing emote-start descriptor. Callers pass only what's semantically theirs (the emote identity, its duration, optionally a backdated start tick for reconnect resume); ledger fields like `StartSeq` are not part of the API. `EmoteStart` callers omit `StartTick` (defaults to "started right now"); the handshake reconnect path passes a backdated `StartTick` so observers scrub forward by the elapsed-since-real-start delta.
 
@@ -235,6 +243,58 @@ When in doubt, check 1–2 nearby files in the same directory.
 
 - Use NSubstitute instead of Fake/Null implementations
 - Don't mention line numbers in comments as they can change any time
+- Name fixtures `{Feature}Tests`; name methods for the behavior under test (`Method_Condition_Expectation`, or a `Should…`/`When…` phrase) with a clear arrange/act/assert structure. High coverage for new code.
+
+## Code Design Rules
+
+Inherited from `decentraland/unity-explorer`'s code standards and adapted for this server. The Unity/ECS-specific rules there (`BaseUnityLoopSystem`, `World.Query`, `AssetPromise`, MVC/presenters, `ObjectProxy`, `#if UNITY_EDITOR`, `ReportHub`) **do not apply** here — this is a .NET Generic Host, not Unity. Naming lives in **Code Convention** above; the rules below cover design discipline, memory, async, nullability, comments, and member ordering.
+
+**Hot path** here means the per-tick simulation fan-out (`PeerSimulation`) and per-packet parse/serialize (`MessagePipe`, the generated bit-packed serializers, `BitWriter`/`BitReader`). "Cold path" = startup, DI composition, config, metrics console.
+
+### Design discipline — don't add structure until it pays for itself
+
+Splits, interfaces, and indirections must buy polymorphism, reuse, or a test seam — not exist "for SRP" alone. These are the smells reviewers most often flag in AI-authored code:
+
+- **No bridge/wrapper on the same abstraction layer.** If class `B` exists only to forward to `A` — one caller, no polymorphism, no test seam — inline it. A one-use helper is not a helper.
+- **Pass the object, not per-field delegates.** Don't pass `Func<Config>` or wrap each property in its own `Func<T>`; pass the object. To capture one changing value, store it as a field on the consumer, not a closure threaded through constructors.
+- **Merge over extract.** If `X` does nothing useful without `Y` and has no second consumer, merge them.
+- **One-implementation interfaces only when justified.** Keep an interface only if it buys polymorphism *or* a mock/test seam. NSubstitute mocking counts: `ITransport`, `IPeerIndexAllocator`, `IAreaOfInterest`, `IPeerSimulation` earn their interfaces as DI + test seams. An interface with a single impl that is never mocked and will never have a second impl is dead weight — delete it; the concrete class is the contract.
+- **Trust non-null annotations.** If a declared type is `T` (not `T?`), don't null-check it — a redundant guard lies to the reader about what can happen. If a value can be null, type it `T?`; if it can't, delete the guard.
+- **No debug/mock branches on the hot path.** A runtime `bool` like `DebugRandomize…` still executes every call in Release. Guard debug-only logic behind `#if DEBUG` or a config-gated cold path, never a bare runtime flag on the per-tick/per-packet path.
+- **Retry / resync / sweep loops need a termination predicate.** A loop that re-queues unresolved work spins forever when the source stays empty. Always have a give-up condition (max attempts, a sentinel, a timeout, or a single bounded pass).
+- **Reuse existing primitives.** Before hand-rolling, reach for the existing mechanism: snapshot/state bookkeeping → `SnapshotBoard` + `PeerSnapshotPublisher`; bit packing/quantization → `BitWriter`/`BitReader`; new per-peer shared state → a nullable `PeerSnapshot` ledger column with carry-forward, **not** a new parallel board (see the SnapshotBoard-ledger rule above).
+- **Don't invert the dependency graph.** The Generic Host composition root (`Program.cs`) constructs services top-down; a component reads its injected dependencies and never reaches back to mutate the container or another worker's state. This is the same principle as **Worker-shard isolation** below — cross-worker coordination goes only through the incoming-event pipeline.
+
+### Memory & GC (hot path)
+
+- The per-tick / per-packet path must be **allocation-free**. Backlog is an observable signal, not licence to allocate.
+- **No LINQ on the hot path** (`.Select`/`.Where`/`.Any`/`ToList`/`ToArray` allocate iterators and closures) — write loops. LINQ is tolerated only in cold paths.
+- Prefer `IReadOnlyList<T>` / `IReadOnlyCollection<T>` in signatures over `List<T>`/arrays; avoid `ToList()`/`ToArray()`.
+- Use `Span<T>` / `ReadOnlySpan<T>` / `stackalloc` for slices; avoid intermediate copies.
+- Avoid boxing — don't pass a `struct` as `object` or box it into an interface on the hot path. `PeerIndex`, `PeerSnapshot`, `EmoteState`, framing structs stay value types passed by value or `in`/`ref`.
+- `StringBuilder` (or interpolation, off the hot path) for concatenation; no per-tick string building.
+- Mark hot lambdas / local functions `static` to prevent accidental captures.
+- Pooling: every rent has a matching release in the same lifecycle scope (`using`/`finally`/`Dispose`). Dropping a rented buffer is a silent leak. Honor `IDisposable` (`using` or explicit `Dispose()`).
+
+### Async & cancellation
+
+- Detached / background loops (`BackgroundService.ExecuteAsync`, channel drains, `Task.Run`) must not let exceptions escape silently: catch, treat `OperationCanceledException` as normal shutdown, and log the rest via the injected `ILogger`.
+- In hot loops prefer the cheap `ct.IsCancellationRequested` check over `ThrowIfCancellationRequested()`; reserve throwing for awaited flows that already handle exceptions.
+- Suffix awaitable methods `…Async`. Dispose every `CancellationTokenSource` you own.
+
+### Nullable reference types
+
+NRT is `enable`d in every project. Type nullable params/returns/fields as `T?`. Never use the null-forgiving `!` to silence a warning — fix the root cause; the only acceptable `!` is on an NSubstitute proxy in tests. Never add `#nullable disable`.
+
+### Comments
+
+- XML `/// <summary>` on public types and non-obvious public members.
+- A comment states only what the annotated code itself does or guarantees — **never what a caller or another layer will do with the result.** External behavior can change without this code changing, silently turning the comment into a lie.
+- Sentence case, end with a period. No commented-out code. No `/* */` block comments.
+
+### Member ordering
+
+Within a type: enums/delegates → fields → properties → events → methods → nested types. Within each group, order by visibility public → internal → protected → private. Fields: `const`/`static readonly` → `static` → `readonly` → public → private. Methods: constructor → `Dispose` → public API → private helpers, each private helper placed **after** the method that calls it.
 
 ## Worker-shard isolation rule
 
@@ -260,18 +320,26 @@ Three Dockerfiles:
 
 Deploy pipeline: `main` push builds `Dockerfile` → dev. Manual **Deploy Dev (Debug)** action builds `Dockerfile.dev-debug` → dev. Release tag builds `Dockerfile` → prod.
 
+Every deployment also updates the Pulse Slack channel canvas (per-environment "running" /
+"last deploy" lines, rendered statelessly from the GitHub Deployments API) via
+`.github/workflows/slack-canvas.yml`. Delivery is a webhook-triggered Slack Workflow
+Builder workflow — no Slack app; the canvas is CI-owned (replaced wholesale on every
+deploy). Setup and troubleshooting live in [docs/slack-canvas.md](docs/slack-canvas.md).
+
 For full debugging workflows (local + remote Fargate, Rider setup, logpoints, ports), see [docs/debugging.md](docs/debugging.md). Bastion/tunnel specifics are in the `decentraland/playbooks` repo (internal access only).
 
 ---
 
 ## Files / Components Expected
 
-- `decentraland/common/options.proto` — defines `QuantizedFloatOptions` and `BitPackedOptions` as protobuf field extensions
+Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/Protocol/Directory.Build.props`); only the generated C# under `src/Protocol/Generated/` is committed here.
+
+- `decentraland/common/options.proto` — defines `QuantizedFloatOptions`, `QuantizedPowerFloatOptions`, and `BitPackedOptions` as protobuf field extensions
 - `decentraland/pulse/pulse_client.proto` — client→server messages and the `ClientMessage` envelope
-- `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and the only quantized message (`PlayerStateDeltaTier0`)
+- `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and its only quantized message (`PlayerStateDeltaTier0`)
 - `decentraland/pulse/pulse_shared.proto` — types referenced by both directions (`PlayerState`, `GlideState`, `PlayerAnimationFlags`); imported by both client and server protos
-- `protoc-gen-bitwise` — Python plugin, reads `CodeGeneratorRequest`, emits C# serializers
-- `BitWriter` / `BitReader` (C#) — bit packing + quantization (`WriteQuantizedFloat` / `ReadQuantizedFloat`), used by generated C# serializers
+- `protoc-gen-bitwise` — Node/JS plugin in the protocol repo (wrappers in `tools/protoc-gen-bitwise/`), reads `CodeGeneratorRequest`, emits the `*.Bitwise.cs` quantized-accessor partials
+- `Quantize` (C#, `src/Protocol/Generated/Quantize.cs`) — static quantization helpers (`Encode` / `Decode`, power-law `EncodePower` / `DecodePower`) backing the generated `{Field}Quantized` accessors
 
 ## MetaForge — Test Account & Identity Toolkit
 

@@ -1,4 +1,5 @@
 using Pulse.Peers;
+using Pulse.Transport;
 
 namespace DCLPulseTests;
 
@@ -24,7 +25,7 @@ public class PeerIndexAllocatorTests
 
         for (var i = 0; i < MAX_PEERS; i++)
         {
-            Assert.That(allocator.TryAllocate(out PeerIndex pi), Is.True);
+            Assert.That(allocator.TryAllocate(TransportId.ENet, out PeerIndex pi), Is.True);
             Assert.That(seen.Add(pi), Is.True, $"allocation #{i} returned a duplicate PeerIndex {pi}");
         }
 
@@ -36,7 +37,7 @@ public class PeerIndexAllocatorTests
     {
         for (var i = 0; i < MAX_PEERS; i++)
         {
-            Assert.That(allocator.TryAllocate(out PeerIndex pi), Is.True);
+            Assert.That(allocator.TryAllocate(TransportId.ENet, out PeerIndex pi), Is.True);
             Assert.That(pi.Value, Is.LessThan((uint)MAX_PEERS),
                 "allocator must not issue a PeerIndex beyond maxPeers — array-backed boards would OOB");
         }
@@ -46,9 +47,9 @@ public class PeerIndexAllocatorTests
     public void TryAllocate_WhenPoolExhausted_ReturnsFalse()
     {
         for (var i = 0; i < MAX_PEERS; i++)
-            Assert.That(allocator.TryAllocate(out _), Is.True);
+            Assert.That(allocator.TryAllocate(TransportId.ENet, out _), Is.True);
 
-        Assert.That(allocator.TryAllocate(out _), Is.False);
+        Assert.That(allocator.TryAllocate(TransportId.ENet, out _), Is.False);
     }
 
     // ── Pending / Release lockstep ──────────────────────────────────────
@@ -61,13 +62,13 @@ public class PeerIndexAllocatorTests
 
         for (var i = 0; i < MAX_PEERS; i++)
         {
-            allocator.TryAllocate(out PeerIndex pi);
+            allocator.TryAllocate(TransportId.ENet, out PeerIndex pi);
             slots.Add(pi);
         }
 
         allocator.MarkPending(slots[0]);
 
-        Assert.That(allocator.TryAllocate(out _), Is.False,
+        Assert.That(allocator.TryAllocate(TransportId.ENet, out _), Is.False,
             "MarkPending must not put the slot back in the free-list — it stays parked until Release");
         Assert.That(allocator.PendingCount, Is.EqualTo(1));
     }
@@ -79,14 +80,14 @@ public class PeerIndexAllocatorTests
 
         for (var i = 0; i < MAX_PEERS; i++)
         {
-            allocator.TryAllocate(out PeerIndex pi);
+            allocator.TryAllocate(TransportId.ENet, out PeerIndex pi);
             slots.Add(pi);
         }
 
         allocator.MarkPending(slots[0]);
         allocator.Release(slots[0]);
 
-        Assert.That(allocator.TryAllocate(out PeerIndex reissued), Is.True);
+        Assert.That(allocator.TryAllocate(TransportId.ENet, out PeerIndex reissued), Is.True);
         Assert.That(reissued, Is.EqualTo(slots[0]),
             "Release must return the pending slot to the free-list so it can be reissued");
         Assert.That(allocator.PendingCount, Is.EqualTo(0));
@@ -96,7 +97,7 @@ public class PeerIndexAllocatorTests
     public void Release_WithoutPriorMarkPending_IsNoOp()
     {
         // The slot was allocated and never Marked. Release must not double-enqueue it.
-        allocator.TryAllocate(out PeerIndex pi);
+        allocator.TryAllocate(TransportId.ENet, out PeerIndex pi);
 
         allocator.Release(pi);
         allocator.Release(pi);
@@ -106,7 +107,7 @@ public class PeerIndexAllocatorTests
 
         // Allocate everything that's free; none of them should equal `pi`.
         var allocated = new HashSet<PeerIndex>();
-        while (allocator.TryAllocate(out PeerIndex next)) allocated.Add(next);
+        while (allocator.TryAllocate(TransportId.ENet, out PeerIndex next)) allocated.Add(next);
 
         Assert.That(allocated, Does.Not.Contain(pi),
             "Release without prior MarkPending must not return the slot to the free-list");
@@ -116,7 +117,7 @@ public class PeerIndexAllocatorTests
     [Test]
     public void MarkPending_Idempotent()
     {
-        allocator.TryAllocate(out PeerIndex pi);
+        allocator.TryAllocate(TransportId.ENet, out PeerIndex pi);
 
         allocator.MarkPending(pi);
         allocator.MarkPending(pi);
@@ -136,7 +137,7 @@ public class PeerIndexAllocatorTests
         var slots = new List<PeerIndex>();
         for (var i = 0; i < MAX_PEERS; i++)
         {
-            allocator.TryAllocate(out PeerIndex pi);
+            allocator.TryAllocate(TransportId.ENet, out PeerIndex pi);
             slots.Add(pi);
         }
 
@@ -150,9 +151,41 @@ public class PeerIndexAllocatorTests
             "releasing one pending slot must not free the others");
 
         // Only the released slot is reissuable.
-        Assert.That(allocator.TryAllocate(out PeerIndex reissued), Is.True);
+        Assert.That(allocator.TryAllocate(TransportId.ENet, out PeerIndex reissued), Is.True);
         Assert.That(reissued, Is.EqualTo(slots[1]));
-        Assert.That(allocator.TryAllocate(out _), Is.False,
+        Assert.That(allocator.TryAllocate(TransportId.ENet, out _), Is.False,
             "remaining pending slots must stay parked until their own Release");
+    }
+
+    // ── Transport stamping ──────────────────────────────────────────────
+
+    [Test]
+    public void TryAllocate_StampsRequestedTransport()
+    {
+        Assert.That(allocator.TryAllocate(TransportId.WebTransport, out PeerIndex pi), Is.True);
+        Assert.That(pi.Transport, Is.EqualTo(TransportId.WebTransport),
+            "the slot must be stamped with the transport requested at allocation");
+    }
+
+    [Test]
+    public void TryAllocate_ReissuedSlot_IsReStampedWithNewOwner()
+    {
+        // A slot last owned by WebTransport, once released, must come back stamped with whoever
+        // allocates it next — never carrying the previous owner's transport. This is what makes a
+        // cross-transport slot recycle unable to misroute.
+        var slots = new List<PeerIndex>();
+        for (var i = 0; i < MAX_PEERS; i++)
+        {
+            allocator.TryAllocate(TransportId.WebTransport, out PeerIndex pi);
+            slots.Add(pi);
+        }
+
+        allocator.MarkPending(slots[0]);
+        allocator.Release(slots[0]);
+
+        Assert.That(allocator.TryAllocate(TransportId.ENet, out PeerIndex reissued), Is.True);
+        Assert.That(reissued.Value, Is.EqualTo(slots[0].Value), "the same slot value is reissued");
+        Assert.That(reissued.Transport, Is.EqualTo(TransportId.ENet),
+            "the reissued slot is re-stamped with the new owner, not the previous WebTransport owner");
     }
 }

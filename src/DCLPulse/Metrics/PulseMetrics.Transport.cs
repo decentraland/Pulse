@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using Pulse.Transport;
+using Pulse.Transport.Geo;
 
 namespace Pulse.Metrics;
 
@@ -6,6 +8,14 @@ public static partial class PulseMetrics
 {
     public static class Transport
     {
+        /// <summary>Tag key for the <c>transport</c> dimension carried on the counters below.</summary>
+        public const string TRANSPORT_TAG_KEY = "transport";
+
+        // Cached per-transport tag, indexed by (int)TransportId, so the transport dimension can be
+        // attached to a counter Add() without allocating on the hot path. The boxed TransportId value
+        // is unboxed by MeterListenerMetricsCollector to bucket the measurement.
+        private static readonly KeyValuePair<string, object?>[] TRANSPORT_TAGS = BuildTransportTags();
+
         public static readonly Counter<long> PEERS_CONNECTED =
             METER.CreateCounter<long>("pulse.transport.peers_connected");
 
@@ -32,5 +42,45 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> SEND_FAILURES =
             METER.CreateCounter<long>("pulse.transport.send_failures");
+
+        public static readonly Histogram<long> OUTGOING_DRAIN_CYCLE_US =
+            METER.CreateHistogram<long>("pulse.transport.outgoing_drain_cycle_us");
+
+        /// <summary>
+        ///     Bucket upper bounds (ms) for peer RTT — spans LAN to intercontinental.
+        /// </summary>
+        public static readonly long[] RTT_BUCKETS_MS = [15, 30, 50, 75, 100, 150, 200, 300, 500, 1000];
+
+        /// <summary>
+        ///     ENet smoothed RoundTripTime sampled per connected peer every few seconds,
+        ///     split by the peer's continent (resolved from its IP at connect).
+        ///     Indexed by (int)Continent; labels in Continents.LABELS.
+        /// </summary>
+        public static readonly Histogram<long>[] PEER_RTT_MS = CreatePeerRttInstruments();
+
+        /// <summary>The cached <c>transport</c> tag for <paramref name="transport" />, passed to a counter's <c>Add()</c>.</summary>
+        public static KeyValuePair<string, object?> Tag(TransportId transport) =>
+            TRANSPORT_TAGS[(int)transport];
+
+        private static Histogram<long>[] CreatePeerRttInstruments()
+        {
+            var instruments = new Histogram<long>[Continents.COUNT];
+
+            for (var i = 0; i < instruments.Length; i++)
+                instruments[i] = METER.CreateHistogram<long>($"pulse.transport.peer_rtt_{Continents.LABELS[i]}_ms");
+
+            return instruments;
+        }
+
+        private static KeyValuePair<string, object?>[] BuildTransportTags()
+        {
+            TransportId[] values = Enum.GetValues<TransportId>();
+            var tags = new KeyValuePair<string, object?>[values.Length];
+
+            foreach (TransportId transport in values)
+                tags[(int)transport] = new KeyValuePair<string, object?>(TRANSPORT_TAG_KEY, transport);
+
+            return tags;
+        }
     }
 }

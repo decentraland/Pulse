@@ -2,3 +2,7 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+
+# Shell scripts run in Linux containers (Docker build) — keep them LF regardless of
+# core.autocrlf, or CRLF corrupts the shebang / `set -euo pipefail` line.
+*.sh text eol=lf

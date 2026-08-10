@@ -357,33 +357,14 @@ public class SpatialHashAreaOfInterestTests
 
     private void PublishSnapshot(PeerIndex peer, Vector3 position, string? realm = REALM)
     {
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: snapshotBoard.LastSeq(peer) + 1,
-            ServerTick: 0,
-            Parcel: 0,
-            LocalPosition: position,
-            GlobalPosition: position,
-            Velocity: Vector3.Zero,
-            RotationY: 0f,
-            MovementBlend: 0f,
-            JumpCount: 0,
-            SlideBlend: 0f,
-            HeadYaw: null,
-            HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Realm: realm));
+        // AoI reads only GlobalPosition, so pass the world position there (kept exact); the
+        // parcel-local position codes are irrelevant here and left at their defaults.
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: snapshotBoard.LastSeq(peer) + 1,
+            globalPosition: position,
+            realm: realm));
     }
 
     private static PeerSnapshot MakeSnapshot(Vector3 position, string? realm = REALM) =>
-        new (Seq: 1, ServerTick: 0, Parcel: 0,
-            LocalPosition: position, Velocity: Vector3.Zero,
-            GlobalPosition: position,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Realm: realm);
+        TestSnapshots.Make(seq: 1, globalPosition: position, realm: realm);
 }

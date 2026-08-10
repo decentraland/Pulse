@@ -4,6 +4,13 @@ public sealed class ENetTransportOptions
 {
     public const string SECTION_NAME = "Transport";
 
+    /// <summary>
+    ///     Host to bind the ENet/UDP socket to. Defaults to the IPv4 wildcard <c>0.0.0.0</c> for
+    ///     behavior uniform with WebTransport across Windows and Linux. Set to <c>::</c> for the
+    ///     IPv6 wildcard; ENet enables dual-stack, so <c>::</c> then also accepts IPv4.
+    /// </summary>
+    public string BindHost { get; set; } = "0.0.0.0";
+
     public ushort Port { get; set; } = 7777;
 
     /// <summary>
@@ -27,6 +34,14 @@ public sealed class ENetTransportOptions
     public int BufferSize { get; set; } = 4096;
 
     public uint PeerTimeoutMs { get; set; } = 30000;
+
+    /// <summary>
+    ///     Directory containing the geo-whois-asn-country "-num" CSVs used to resolve peer
+    ///     IP → continent for RTT metrics. Relative paths resolve against the app base
+    ///     directory. Missing files are tolerated: peers report under region="unknown".
+    ///     The Docker images fetch the CSVs into this directory at build time.
+    /// </summary>
+    public string GeoDbDirectory { get; set; } = "geodb";
 
     public int EffectiveMaxConcurrentConnections =>
         MaxConcurrentConnections > 0 ? MaxConcurrentConnections : MaxPeers;

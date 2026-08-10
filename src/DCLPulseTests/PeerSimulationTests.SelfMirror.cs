@@ -84,16 +84,10 @@ public class SelfMirrorTests
     {
         snapshotBoard.SetActive(peer);
 
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: seq * 10,
-            Parcel: 0,
-            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
-            GlobalPosition: position ?? Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed));
+        // A realm is required for the self-mirror (and AoI) to surface the peer — the peer sets
+        // one at handshake or via its first teleport. Carried forward onto later snapshots.
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: seq, serverTick: seq * 10, position: position ?? Vector3.Zero, realm: "genesis"));
     }
 
     private void PublishEmoteSnapshot(PeerIndex peer, uint seq, string emoteId = "wave",
@@ -102,17 +96,9 @@ public class SelfMirrorTests
         uint tick = startTick ?? seq * 10;
         snapshotBoard.SetActive(peer);
 
-        snapshotBoard.Publish(peer, new PeerSnapshot(
-            Seq: seq, ServerTick: tick,
-            Parcel: 0,
-            LocalPosition: position ?? Vector3.Zero, Velocity: Vector3.Zero,
-            GlobalPosition: position ?? Vector3.Zero,
-            RotationY: 0f, MovementBlend: 0f, JumpCount: 0, SlideBlend: 0f,
-            HeadYaw: null, HeadPitch: null,
-            PointAt: null,
-            AnimationFlags: PlayerAnimationFlags.None,
-            GlideState: GlideState.PropClosed,
-            Emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
+        snapshotBoard.Publish(peer, TestSnapshots.Make(
+            seq: seq, serverTick: tick, position: position ?? Vector3.Zero,
+            emote: new EmoteState(emoteId, StartSeq: seq, StartTick: tick, DurationMs: durationMs)));
     }
 
     private void SetVisibleSubjects(params (PeerIndex Subject, PeerViewSimulationTier Tier)[] entries)
@@ -233,6 +219,22 @@ public class SelfMirrorTests
 
         Assert.That(profileMsg.To, Is.EqualTo(observer));
         Assert.That(profileMsg.Message.PlayerProfileVersionAnnounced.Version, Is.EqualTo(42));
+    }
+
+    [Test]
+    public void SelfMirror_NotSentWhenObserverHasNoRealm()
+    {
+        // Legacy connect flow: the peer authenticates without an initial realm and hasn't
+        // teleported yet, so its latest snapshot has Realm == null. Such a peer is invisible
+        // to everyone in the AoI — the self-mirror must honour the same invariant.
+        snapshotBoard.ClearActive(observer);
+        snapshotBoard.SetActive(observer);
+        snapshotBoard.Publish(observer, TestSnapshots.Make(seq: 1, realm: null));
+
+        SetVisibleSubjects();
+        simulation.SimulateTick(peers, tickCounter: 0);
+
+        Assert.That(messagePipe.TryReadOutgoingMessage(out _), Is.False);
     }
 
     [Test]

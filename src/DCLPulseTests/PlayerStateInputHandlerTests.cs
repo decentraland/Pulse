@@ -128,9 +128,9 @@ public class PlayerStateInputHandlerTests
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.RotationY, Is.EqualTo(1.5f));
-        Assert.That(snapshot.MovementBlend, Is.EqualTo(0.7f));
-        Assert.That(snapshot.SlideBlend, Is.EqualTo(0.3f));
+        Assert.That(snapshot.DecodeRotationY(), Is.EqualTo(1.5f).Within(PlayerState.RotationYQuantizedStep));
+        Assert.That(snapshot.DecodeMovementBlend(), Is.EqualTo(0.7f).Within(PlayerState.MovementBlendQuantizedStep));
+        Assert.That(snapshot.DecodeSlideBlend(), Is.EqualTo(0.3f).Within(PlayerState.SlideBlendQuantizedStep));
         Assert.That(snapshot.AnimationFlags, Is.EqualTo(PlayerAnimationFlags.Grounded));
     }
 
@@ -185,8 +185,15 @@ public class PlayerStateInputHandlerTests
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.GlobalPosition, Is.EqualTo(new Vector3(expectedGlobalX, expectedGlobalY, expectedGlobalZ)));
-        Assert.That(snapshot.LocalPosition, Is.EqualTo(localPosition));
+        // GlobalPosition is derived from the decoded position codes, so it carries the same
+        // quantization error — assert per axis within the field's step, not exact equality.
+        Assert.That(snapshot.GlobalPosition.X, Is.EqualTo(expectedGlobalX).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(snapshot.GlobalPosition.Y, Is.EqualTo(expectedGlobalY).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(snapshot.GlobalPosition.Z, Is.EqualTo(expectedGlobalZ).Within(PlayerState.PositionZQuantizedStep));
+        Vector3 localDecoded = snapshot.DecodePosition();
+        Assert.That(localDecoded.X, Is.EqualTo(localPosition.X).Within(PlayerState.PositionXQuantizedStep));
+        Assert.That(localDecoded.Y, Is.EqualTo(localPosition.Y).Within(PlayerState.PositionYQuantizedStep));
+        Assert.That(localDecoded.Z, Is.EqualTo(localPosition.Z).Within(PlayerState.PositionZQuantizedStep));
     }
 
     [Test]
@@ -212,8 +219,9 @@ public class PlayerStateInputHandlerTests
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.HeadYaw, Is.EqualTo(45f));
-        Assert.That(snapshot.HeadPitch, Is.EqualTo(-15f));
+        Assert.That(snapshot.DecodeHeadYaw().Value, Is.EqualTo(45f).Within(PlayerState.HeadYawQuantizedStep));
+        // HeadPitch range is [0, 360]; -15f clamps to 0 on encode.
+        Assert.That(snapshot.DecodeHeadPitch().Value, Is.EqualTo(0f).Within(PlayerState.HeadPitchQuantizedStep));
     }
 
     [Test]
@@ -228,8 +236,8 @@ public class PlayerStateInputHandlerTests
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
-        Assert.That(snapshot.HeadYaw, Is.Null);
-        Assert.That(snapshot.HeadPitch, Is.Null);
+        Assert.That(snapshot.DecodeHeadYaw(), Is.Null);
+        Assert.That(snapshot.DecodeHeadPitch(), Is.Null);
     }
 
     [Test]
@@ -321,7 +329,28 @@ public class PlayerStateInputHandlerTests
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
         Assert.That(snapshot.Seq, Is.EqualTo(1));
-        Assert.That(snapshot.HeadYaw, Is.EqualTo(20f));
+        Assert.That(snapshot.DecodeHeadYaw().Value, Is.EqualTo(20f).Within(PlayerState.HeadYawQuantizedStep));
+    }
+
+    [Test]
+    public void Handle_OnlyJumpCountChanges_IncrementsSeq()
+    {
+        var peerIndex = new PeerIndex(1);
+        peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peerIndex);
+
+        // A jump can land the next input on identical position/velocity/flags with only JumpCount
+        // bumped. JumpCount is the sole per-jump animation signal (no "Jumping" flag), so the
+        // republish must not be suppressed — otherwise observers never see the jump.
+        // The position is held non-zero so the first input publishes (an all-zero input would match
+        // the default snapshot TryRead returns before the first publish and be suppressed).
+        var pos = new Vector3(1f, 0f, 0f);
+        handler.Handle(peers, peerIndex, CreateInputMessage(position: pos, jumpCount: 0));
+        handler.Handle(peers, peerIndex, CreateInputMessage(position: pos, jumpCount: 1));
+
+        Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Seq, Is.EqualTo(1));
+        Assert.That(snapshot.JumpCount, Is.EqualTo(1));
     }
 
     [Test]
@@ -347,7 +376,8 @@ public class PlayerStateInputHandlerTests
         float slideBlend = 0f,
         float? headYaw = null,
         float? headPitch = null,
-        uint stateFlags = 0)
+        uint stateFlags = 0,
+        int jumpCount = 0)
     {
         var pos = position ?? Vector3.Zero;
         var vel = velocity ?? Vector3.Zero;
@@ -355,19 +385,24 @@ public class PlayerStateInputHandlerTests
         var state = new PlayerState
         {
             ParcelIndex = parcelIndex,
-            Position = new Decentraland.Common.Vector3 { X = pos.X, Y = pos.Y, Z = pos.Z },
-            Velocity = new Decentraland.Common.Vector3 { X = vel.X, Y = vel.Y, Z = vel.Z },
-            RotationY = rotationY,
-            MovementBlend = movementBlend,
-            SlideBlend = slideBlend,
-            StateFlags = stateFlags
+            PositionXQuantized = pos.X,
+            PositionYQuantized = pos.Y,
+            PositionZQuantized = pos.Z,
+            VelocityXQuantized = vel.X,
+            VelocityYQuantized = vel.Y,
+            VelocityZQuantized = vel.Z,
+            RotationYQuantized = rotationY,
+            MovementBlendQuantized = movementBlend,
+            SlideBlendQuantized = slideBlend,
+            StateFlags = stateFlags,
+            JumpCount = jumpCount
         };
 
         if (headYaw.HasValue)
-            state.HeadYaw = headYaw.Value;
+            state.HeadYawQuantized = headYaw.Value;
 
         if (headPitch.HasValue)
-            state.HeadPitch = headPitch.Value;
+            state.HeadPitchQuantized = headPitch.Value;
 
         return new ClientMessage
         {

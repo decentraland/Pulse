@@ -17,7 +17,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\DCLPulse.Transport.Shared\DCLPulse.Transport.Shared.csproj" />
+      <ProjectReference Include="..\DCLPulse.Transport\DCLPulse.Transport.csproj" />
       <ProjectReference Include="..\Protocol\Protocol.csproj" />
     </ItemGroup>
 

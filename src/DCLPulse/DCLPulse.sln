@@ -12,7 +12,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulseBenchmarks", "..\DC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulseTestClient", "..\DCLPulseTestClient\DCLPulseTestClient.csproj", "{1F929D98-8572-4D35-BBE0-C7C2A9BF73CD}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulse.Transport.Shared", "..\DCLPulse.Transport.Shared\DCLPulse.Transport.Shared.csproj", "{65D98796-D60E-4E4A-A880-D090509293CD}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DCLPulse.Transport", "..\DCLPulse.Transport\DCLPulse.Transport.csproj", "{65D98796-D60E-4E4A-A880-D090509293CD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

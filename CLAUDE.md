@@ -311,6 +311,14 @@ Concrete consequences:
 
 `PeerSimulation` is on the hot path and already long. New logic added to it must go into its own private method — do not inline new behavior into existing methods. Keep each method focused on a single concern (e.g. tier gating, delta computation, aliasing detection, profile announcement). The orchestrator `ProcessVisibleSubjects` should read as a short sequence of named calls, not a wall of conditionals. This keeps the per-subject control flow legible and makes it possible to test or reason about each concern in isolation.
 
+## Hardening & Runtime Configuration
+
+Network-level defenses live in `src/DCLPulse/Transport/Hardening/` and `src/DCLPulse/Messaging/Hardening/`, organized as one group per threat. [docs/hardening.md](docs/hardening.md) is the operator reference — threat model, config keys, `DisconnectReason` values, client-recovery contract and metrics for each group.
+
+Hardening knobs are boot-time `appsettings.json` values, with one exception: `Transport:Hardening:IpLimiter` is reconfigurable on a running server from the remote Unleash document. [docs/feature-flags.md](docs/feature-flags.md) covers that mechanism — the `pulse.json` endpoint, `dynamicconfig.json` as the offline defaults and type schema for the remote values, and the procedure for adding a dynamic knob (`IOptionsMonitor<T>`, never `IOptions<T>`).
+
+---
+
 ## Docker — Deployment & Debugging
 
 Three Dockerfiles:

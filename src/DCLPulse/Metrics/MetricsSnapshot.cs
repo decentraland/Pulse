@@ -60,6 +60,9 @@ public readonly record struct MetricsSnapshot
         public long TotalHandshakeReplayRejected { get; init; }
         public long TotalBannedRefused { get; init; }
         public long TotalCorruptedPacket { get; init; }
+        public long TotalIpLimitRefused { get; init; }
+        public long TotalIpLimitWhitelistBypass { get; init; }
+        public int IpLimitTrackedIps { get; init; }
     }
 
     public readonly record struct SimulationSnapshot

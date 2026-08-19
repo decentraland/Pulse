@@ -51,6 +51,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long handshakeReplayRejected;
     private long bannedRefused;
     private long corruptedPacket;
+    private long ipLimitRefused;
+    private long ipLimitWhitelistBypass;
+    private int ipLimitTrackedIps;
 
     // Latency histograms — bucketed by the measurement callbacks on recording threads.
     private readonly BucketHistogram deltaStalenessTier0 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
@@ -148,6 +151,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalHandshakeReplayRejected = Interlocked.Read(ref handshakeReplayRejected),
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
+                TotalIpLimitRefused = Interlocked.Read(ref ipLimitRefused),
+                TotalIpLimitWhitelistBypass = Interlocked.Read(ref ipLimitWhitelistBypass),
+                IpLimitTrackedIps = Volatile.Read(ref ipLimitTrackedIps),
             },
             Simulation = new MetricsSnapshot.SimulationSnapshot
             {
@@ -237,6 +243,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
                 break;
+            case "pulse.hardening.ip_limit_refused":
+                Interlocked.Add(ref ipLimitRefused, value);
+                break;
+            case "pulse.hardening.ip_limit_whitelist_bypass":
+                Interlocked.Add(ref ipLimitWhitelistBypass, value);
+                break;
             case "pulse.sim.delta_staleness_tier0_ms":
                 deltaStalenessTier0.Record(value);
                 break;
@@ -290,6 +302,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.pre_auth_in_flight":
                 Interlocked.Add(ref preAuthInFlight, value);
+                break;
+            case "pulse.hardening.ip_limit_tracked_ips":
+                Interlocked.Add(ref ipLimitTrackedIps, value);
                 break;
         }
     }

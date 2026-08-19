@@ -52,7 +52,8 @@ public class DrainPeerLifeCycleEventsTests
             new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
-            })));
+            })),
+            DisabledIpLimiter());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();
@@ -199,5 +200,14 @@ public class DrainPeerLifeCycleEventsTests
         Assert.That(peers, Does.Not.ContainKey(unknownPeer),
             "PeersManager must NOT materialize PeerState for an unknown PeerIndex when a message arrives — "
           + "cross-worker adoption is forbidden by the worker-shard isolation rule");
+    }
+
+    // Cap switched off: connections are still counted, none refused — the release path in isolation.
+    private static IpLimiter DisabledIpLimiter()
+    {
+        IOptionsMonitor<IpLimiterOptions> optionsMonitor = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
+        optionsMonitor.CurrentValue.Returns(new IpLimiterOptions { Enabled = false, MaxConcurrency = 0 });
+        optionsMonitor.OnChange(Arg.Any<Action<IpLimiterOptions, string?>>()).Returns(Substitute.For<IDisposable>());
+        return new IpLimiter(optionsMonitor, Substitute.For<ILogger<IpLimiter>>());
     }
 }

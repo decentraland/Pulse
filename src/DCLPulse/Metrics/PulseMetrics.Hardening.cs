@@ -35,5 +35,26 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> CORRUPTED_PACKET =
             METER.CreateCounter<long>("pulse.hardening.corrupted_packet");
+
+        /// <summary>
+        ///     Connections refused by the hard per-source-IP concurrent-connection cap. Distinct from
+        ///     <see cref="PRE_AUTH_IP_LIMIT_REFUSED" />, which only counts peers in PENDING_AUTH.
+        /// </summary>
+        public static readonly Counter<long> IP_LIMIT_REFUSED =
+            METER.CreateCounter<long>("pulse.hardening.ip_limit_refused");
+
+        /// <summary>
+        ///     Connections that were over the per-IP cap but admitted because the source IP is
+        ///     whitelisted. A whitelist entry with a flat zero here is vestigial.
+        /// </summary>
+        public static readonly Counter<long> IP_LIMIT_WHITELIST_BYPASS =
+            METER.CreateCounter<long>("pulse.hardening.ip_limit_whitelist_bypass");
+
+        /// <summary>
+        ///     Distinct source IPs currently holding at least one connection — the size of the
+        ///     limiter's per-IP count table.
+        /// </summary>
+        public static readonly UpDownCounter<int> IP_LIMIT_TRACKED_IPS =
+            METER.CreateUpDownCounter<int>("pulse.hardening.ip_limit_tracked_ips");
     }
 }

@@ -645,6 +645,217 @@ codes: log locally, surface to telemetry, do **not** auto-reconnect.
 
 ---
 
+## Group H — Hard Per-IP Connection Cap
+
+### Threat model
+
+A single source IP opens connections without bound. Each admitted connection consumes a
+`PeerIndex` from a fixed pool (`Transport:MaxPeers`, default 4095), a transport peer slot,
+and — once it reaches `OnPeerConnected` — a worker's `peerStates` entry and a 30 s
+`PENDING_AUTH` window. Because released slots sit in the allocator's pending-recycle grace
+window, connection *churn* from one host degrades slot availability for everyone even when no
+individual connection is long-lived.
+
+The cost asymmetry is severe: the attacker spends one connect handshake (two round trips, no
+crypto); the server spends a pool slot, a dictionary insert in three structures, a worker
+lifecycle event, and a 30 s reservation. A defense against this belongs at the cheapest layer
+available, which is why this one sits above everything in Group A.
+
+Group A caps *pre-auth* concurrency per IP. Nothing there bounds a single IP's **total**
+footprint once its connections authenticate — that is the gap this group closes.
+
+### Defenses
+
+`IpLimiter` (`src/DCLPulse/Transport/Hardening/IpLimiter.cs`) enforces a hard cap on concurrent
+connections per source IP **at the top of `EventType.Connect`, before
+`peerIndexAllocator.TryAllocate`**.
+
+That placement is strictly earlier than `PreAuthAdmission`, which runs *after* allocation and
+then rolls back with `MarkPending` + `Release`. Refusing before allocation means a flooding IP
+never touches the allocator's pending-recycle state at all, never creates a `ConnectedPeer`,
+never emits `OnPeerConnected`, never reaches a worker, and never enters `PENDING_AUTH`.
+
+Admission sequence on connect, with all rollback owned by the `ENetHostedService.Hardening.cs`
+partial:
+
+```
+1. ipLimiter.TryAcquire(ip)       -> refuse: DisconnectNow(IP_CONNECTION_LIMIT_EXCEEDED), return
+                                      (nothing allocated, nothing to undo)
+2. peerIndexAllocator.TryAllocate -> fail:   ipLimiter.Abandon(ip); DisconnectNow(SERVER_FULL)
+3. preAuthAdmission.TryAdmit      -> fail:   allocator rollback; ipLimiter.Abandon(ip); disconnect
+4. ipLimiter.Bind(peerIndex, ip)  <- commit the reservation to the peer
+5. ...existing wiring -> messagePipe.OnPeerConnected(peerIndex)
+```
+
+**Both transports enforce the cap against one shared counter.**
+`WebTransportHostedService.HandleConnect` mirrors the sequence above, using
+`ParseIp(ev.RemoteAddress)`. The two transports draw from the same `PeerIndex` pool, so ENet and
+WebTransport connections from the same IP count together against a single budget.
+
+**Release paths.** Steps 2 and 3 refuse *before* `OnPeerConnected`, so no worker lifecycle event
+will ever fire for those peers — the transport thread releases them inline via `Abandon(ip)`.
+Admitted peers release from the owning worker on the Disconnected lifecycle event
+(`PeersManager`, alongside the existing `preAuthAdmission.ReleaseOnDisconnect`), keyed by
+`PeerIndex`. `Release` is idempotent via lookup-and-clear, so a duplicate call is a no-op.
+
+State is a `Dictionary<string,int>` of per-IP counts plus a `Dictionary<PeerIndex,string>`
+reverse index, both under one `Lock` — the lock is required because ENet and WebTransport run on
+separate threads. Contention is bounded by connect rate, not packet rate. Per-IP entries are
+removed at zero, so the dictionary is bounded by concurrent connections, not by distinct IPs
+ever seen.
+
+> Earlier still would be ENet's `intercept` callback, which fires on raw datagram receive before
+> protocol handling. The C# binding does not surface it. Out of scope; noted as a future option
+> if connect-flood volume ever justifies it.
+
+### Config
+
+`Transport:Hardening:IpLimiter` — **unlike every other hardening knob in this document, this
+section is runtime-reconfigurable.** Its keys live in `dynamicconfig.json` rather than
+`appsettings.json`, and can be changed on a live server from the remote `pulse.json` document.
+See [docs/feature-flags.md](feature-flags.md) for the mechanism, the type schema, and the local
+dev loop.
+
+`dynamicconfig.json`:
+
+```json
+{
+  "Transport": {
+    "Hardening": {
+      "IpLimiter": {
+        "Enabled": false,
+        "MaxConcurrency": 10,
+        "Whitelist": ""
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `Enabled` | `false` | Master switch. When `false`, connections are still counted but never refused. |
+| `MaxConcurrency` | 10 | Max concurrent connections from one source IP, across both transports. `0` disables the cap. |
+| `Whitelist` | `""` | Comma-separated **exact** IPs exempt from the cap. Whitelisted IPs are still counted. |
+
+The shipped default is `Enabled: false`, so local dev and load tests are unclamped and the
+limiter is turned on per environment from the remote document. There is **no**
+`appsettings.Development.json` override — these keys exist only in `dynamicconfig.json`.
+
+`Whitelist` is a delimited string rather than a JSON array on purpose; the reasoning is in
+[docs/feature-flags.md](feature-flags.md). The string format also extends to CIDR later without
+a schema change.
+
+### How the limits interact
+
+`PreAuthAdmission.MaxConcurrentPreAuthPerIP` (Group A) and `IpLimiter.MaxConcurrency` are both
+"per-IP connection caps", and they are deliberately kept as **siblings rather than merged into
+one class**:
+
+| | `PreAuthAdmission.MaxConcurrentPreAuthPerIP` | `IpLimiter.MaxConcurrency` |
+|---|---|---|
+| Counts | Connections in `PENDING_AUTH` only | **All** connections, authenticated included |
+| Released on | Promotion **or** disconnect | Disconnect only |
+| Enforced | After `TryAllocate` | Before `TryAllocate` |
+| Configured | Boot-time `IOptions` | Runtime `IOptionsMonitor` |
+| Whitelist | No | Yes |
+
+Merging two counters is the right call when they move together. These do not: they count
+different populations, over different lifetimes, at different points in the connect sequence,
+from different config sources, and only one of them honours a whitelist. Every row of that table
+is a place where a merged class would need an internal branch — and merging would also drag
+`PreAuthAdmissionOptions` onto the dynamic-config path, which it is not on.
+
+The full connect pipeline, in gate order:
+
+| Gate | Order | Refused reason |
+|---|---|---|
+| Per-IP total connection cap | Before allocation | `IP_CONNECTION_LIMIT_EXCEEDED` |
+| PeerIndex pool exhausted | Allocation | `SERVER_FULL` |
+| Per-IP pre-auth quota | After allocation | `PRE_AUTH_IP_LIMIT_EXHAUSTED` |
+| Global pre-auth budget | After allocation | `PRE_AUTH_BUDGET_EXHAUSTED` |
+
+Note the arithmetic at the shipped defaults: with the limiter enabled at `MaxConcurrency: 10`, a
+single IP can never hold more than 10 connections in any state, so Group A's per-IP pre-auth
+quota of 32 is unreachable from that IP and the total cap always binds first. The pre-auth quota
+is what protects you while the limiter is disabled, and again if `MaxConcurrency` is raised above
+`MaxConcurrentPreAuthPerIP` for a CGNAT or venue deployment.
+
+### Runtime semantics
+
+Because this config is live, the semantics of a mid-flight change matter. Two of them look like
+bugs and are not.
+
+- **Read per call.** `TryAcquire` reads `options.CurrentValue` at entry. Connect rate is low, so
+  this is not a hot path in the CLAUDE.md sense (per-tick fan-out, per-packet parse) and the
+  monitor lookup is free.
+- **Counting continues while the limiter is disabled.** When `Enabled == false` or
+  `MaxConcurrency == 0`, `TryAcquire` still increments and `Release`/`Abandon` still decrement —
+  only the refusal branch is skipped. If counting stopped, re-enabling the limiter would resume
+  from a zero baseline and over-admit until the whole connected population churned. This is a
+  deliberate departure from the usual "bail out early when disabled" shape; connect-rate cost
+  makes the tradeoff free.
+- **Whitelisted IPs are still counted**, for the same reason: removing an IP from the whitelist
+  must take effect against an accurate count immediately, not once that IP's connections have
+  drained.
+- **Lowering `MaxConcurrency` does not evict.** Connections already above the new cap stay put;
+  the counter simply refuses new ones until it drains below the cap. Retroactive eviction would
+  kick legitimate players because an operator typed a smaller number. This is a deliberate
+  contrast with `BanEnforcer`, which *does* evict already-connected peers — bans are about
+  identity, capacity limits are not.
+- **Whitelist parsing is cached.** The parsed `HashSet<string>` is rebuilt on
+  `IOptionsMonitor.OnChange` and published as an immutable snapshot — the same
+  swap-a-snapshot pattern as `BanList`, so readers never lock.
+
+### Known limitations
+
+- **Exact IP match only.** No CIDR. Office / VPN egress ranges have to be listed individually in
+  `Whitelist`.
+- **IPv6 limiting is weak.** A single customer typically controls an entire /64, so a per-address
+  cap is easily evaded by rotating within the prefix. Keying IPv6 by /64 prefix is the correct
+  fix and is not implemented.
+- **NAT / CGNAT collateral.** Every user behind one shared public IP draws from the same budget,
+  so a tight cap refuses legitimate players. `MaxConcurrency: 10` is a starting point, not a
+  recommendation — watch `ip_limit_refused` before tightening. Being able to correct this without
+  a redeploy is precisely why the knob is runtime-adjustable.
+
+### DisconnectReason
+
+| Value | Meaning |
+|---|---|
+| `IP_CONNECTION_LIMIT_EXCEEDED = 17` | Hard per-source-IP concurrent-connection cap exceeded. Unlike `PRE_AUTH_IP_LIMIT_EXHAUSTED`, authenticated connections count against this cap, and the connection is refused before a `PeerIndex` is allocated. **Retryable** — capacity frees as other connections from the same IP close. |
+
+### Client recovery
+
+`IP_CONNECTION_LIMIT_EXCEEDED` is **retryable transient**, in the same family as
+`PRE_AUTH_IP_LIMIT_EXHAUSTED` and `SERVER_FULL`. Clients should:
+
+1. Retry with **exponential backoff and jitter**. Jitter is mandatory, not a refinement: without
+   it, every client behind one NAT re-synchronises onto the same retry instants and re-triggers
+   the cap indefinitely.
+2. Surface it as **"too many connections from your network"** — never as an authentication
+   failure. The user's credentials are fine; their network's connection budget is full.
+3. **Reuse the existing auth chain** on retry if still inside the anti-replay window, so the
+   retry costs no wallet signature prompt.
+4. Open a fresh connection on retry — don't try to revive the refused one.
+
+### Metrics to watch
+
+From `pulse.hardening.*`:
+
+| Metric | Type | What it tells you |
+|---|---|---|
+| `ip_limit_refused` | counter | Connections refused by the cap. Non-zero ⇒ some IP is at its budget — either a flood, or a CGNAT/venue population that needs a higher `MaxConcurrency`. |
+| `ip_limit_whitelist_bypass` | counter | Connections that *would have been* refused and were admitted because the IP is whitelisted. |
+| `ip_limit_tracked_ips` | gauge | Distinct IPs currently holding ≥1 connection. Equals the size of the limiter's per-IP dictionary. |
+
+The whitelist-bypass counter is the one worth a dashboard panel: it is the only signal that
+separates a **load-bearing** whitelist entry (actively absorbing refusals) from a **vestigial**
+one (added during an incident, never removed, doing nothing). An entry whose bypass counter is
+flat zero can be deleted without effect.
+
+---
+
 ## Shared `PeerDefense` base class
 
 `MovementInputRateLimiter`, `DiscreteEventRateLimiter`, `FieldValidator`, and

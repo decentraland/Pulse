@@ -248,6 +248,37 @@ Counter of corrupted packets observed per peer — combines two trigger points: 
 | Sustained > `MaxPerMinute` per peer | Fuzzer or broken client — bucket exhausts and the peer is dropped with `PACKET_CORRUPTED` |
 | Spike across many peers | Coordinated probing or protocol drift between client and server builds |
 
+### IP Limit Tracked IPs
+
+Gauge of distinct source IPs currently holding at least one connection — the size of `IpLimiter`'s per-IP count table. Entries are removed at zero, so this is bounded by concurrent connections, not by distinct IPs ever seen. `dcl_pulse_ip_limit_tracked_ips`.
+
+| Signal | Meaning |
+|---|---|
+| Tracks Active Peers closely | Normal — roughly one connection per IP |
+| Far below Active Peers | Heavy NAT/CGNAT sharing, or a single host holding many connections — compare against `IP Limit Refused` |
+| Flat while Active Peers drops to zero | Counter leak — a release path was missed; file a bug |
+
+### IP Limit Refused
+
+Counter of connections refused by the hard per-source-IP concurrent-connection cap (`Transport:Hardening:IpLimiter:MaxConcurrency`). Refused before a `PeerIndex` is allocated, so a flooding IP never reaches the allocator, a worker, or `PENDING_AUTH`. Distinct from **Per-IP Limit Refused** above, which only counts peers in `PENDING_AUTH` — see `docs/hardening.md` for how the two interact. `dcl_pulse_ip_limit_refused_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No IP is at its concurrent-connection cap |
+| Sporadic from known CGNAT / corporate egress | Legitimate shared IP — raise `MaxConcurrency` or whitelist the IP |
+| Sustained from one IP | Connection flood; the cap is doing its job. Consider an infrastructure-level block |
+| Rises immediately after lowering `MaxConcurrency` | Expected — existing connections are not evicted, so the counter refuses new ones until the population drains |
+
+### IP Limit Whitelisted
+
+Counter of connections that were over the per-IP cap but admitted because the source IP is in `Transport:Hardening:IpLimiter:Whitelist`. This is the metric that tells you whether a whitelist entry is load-bearing or vestigial. `dcl_pulse_ip_limit_whitelist_bypass_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero for a whitelisted IP | The entry is vestigial — that IP never exceeds the cap, so the exemption can be removed |
+| Steady non-zero | The entry is load-bearing — removing it would start refusing that IP immediately |
+| Spiking | A whitelisted IP is flooding. Whitelisting bypasses the cap entirely, so this traffic is unbounded — verify the entry is still trusted |
+
 ### Field Validation Failed
 
 Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`). `dcl_pulse_field_validation_failed_total`.
@@ -257,6 +288,31 @@ Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`
 | Zero | Normal — well-formed clients don't produce invalid fields |
 | Sporadic | Specific buggy client build; check server logs for the DisconnectReason per peer |
 | Spiking | Coordinated fuzz / exploit probing |
+
+---
+
+## Feature flags — no metrics
+
+Runtime configuration polled from the remote `pulse.json` document has **no Prometheus series and no
+dashboard group**. Its health is carried by logs and by `/about`; see
+[feature-flags.md](feature-flags.md).
+
+- **Applied and in force** — one `Information` line per *change*, not per poll:
+  `Feature flag overrides changed; 3 key(s) now applied: Transport:Hardening:IpLimiter:Enabled, …`.
+  A steady-state poller is silent, so the line appears exactly when a flag takes effect.
+- **Failures** — every path logs: a failed fetch (`Feature flags poll failed`), a malformed payload,
+  a key skipped by the type or shape check (`skipping that key`), a document a consumer refused
+  (`rolled back to the previous overrides`).
+- **What is actually applied right now** — `/about`, which returns the overrides themselves keyed
+  exactly as `dynamicconfig.json` names them:
+
+```json
+{"commitHash":"…","featureFlagOverrides":{"Transport:Hardening:IpLimiter:Enabled":"True","Transport:Hardening:IpLimiter:MaxConcurrency":"10"}}
+```
+
+It needs no bearer token, and nothing filters it: the remote document may set any configuration key,
+so whoever authors the Unleash payload decides what this endpoint publishes. When two tasks in one
+environment disagree, `/about` is what tells you which key differs.
 
 ---
 

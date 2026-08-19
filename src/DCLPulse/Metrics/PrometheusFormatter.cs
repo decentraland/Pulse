@@ -65,6 +65,9 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_handshake_replay_rejected_total", "Handshakes rejected because the (wallet, timestamp) pair was already accepted within the anti-replay window", snap.Hardening.TotalHandshakeReplayRejected);
         WriteCounter(writer, "dcl_pulse_banned_refused_total", "Handshake rejections and active-peer evictions triggered by the platform ban list", snap.Hardening.TotalBannedRefused);
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
+        WriteCounter(writer, "dcl_pulse_ip_limit_refused_total", "Connections refused by the hard per-source-IP concurrent-connection cap, before a PeerIndex is allocated", snap.Hardening.TotalIpLimitRefused);
+        WriteCounter(writer, "dcl_pulse_ip_limit_whitelist_bypass_total", "Connections over the per-IP cap that were admitted because the source IP is whitelisted", snap.Hardening.TotalIpLimitWhitelistBypass);
+        WriteGauge(writer, "dcl_pulse_ip_limit_tracked_ips", "Distinct source IPs currently holding at least one connection", snap.Hardening.IpLimitTrackedIps);
 
         WriteHistogramHeader(writer, "dcl_pulse_delta_staleness_ms", "Publish-to-fanout staleness of STATE_DELTA in ms, by AoI tier");
         WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier0Ms, "tier=\"0\"");

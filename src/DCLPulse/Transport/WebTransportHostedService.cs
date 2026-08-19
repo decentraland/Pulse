@@ -30,6 +30,7 @@ public sealed class WebTransportHostedService(
     IPeerIndexAllocator peerIndexAllocator,
     IdentityBoard identityBoard,
     PreAuthAdmission preAuthAdmission,
+    IpLimiter ipLimiter,
     CorruptedPacketLimiter corruptedPacketLimiter
 ) : BackgroundService
 {
@@ -38,8 +39,13 @@ public sealed class WebTransportHostedService(
     // Outbound datagrams carry no header — see SendDatagram.
     private const byte CHANNEL_SEQUENCED = 1;
 
+    // How often at most a per-IP refusal is reported. Touched only from the WebTransport thread.
+    private const int IP_LIMIT_LOG_INTERVAL_MS = 10_000;
+
     // The transport dimension attached to every transport counter this service records.
     private static readonly KeyValuePair<string, object?> TRANSPORT_TAG = PulseMetrics.Transport.Tag(TransportId.WebTransport);
+
+    private readonly RefusalLogThrottle ipLimitRefusalLog = new (IP_LIMIT_LOG_INTERVAL_MS);
 
     private readonly WebTransportOptions options = options.Value;
 
@@ -135,16 +141,7 @@ public sealed class WebTransportHostedService(
 
     private void HandleConnect(WebTransportEvent ev)
     {
-        if (!peerIndexAllocator.TryAllocate(TransportId.WebTransport, out PeerIndex peerIndex))
-        {
-            // Shared pool exhausted (both transports draw from it). Refuse on the WT handle directly —
-            // no PeerIndex was issued, so nothing to tear down.
-            logger.LogWarning("PeerIndex pool exhausted — refusing WebTransport connection from {Address}.", ev.RemoteAddress);
-            host.Disconnect(ev.PeerId, (uint)DisconnectReason.SERVER_FULL);
-            return;
-        }
-
-        if (!TryAdmitOrRefuse(ev, peerIndex))
+        if (!TryAdmitConnection(ev, out PeerIndex peerIndex))
             return;
 
         sessions[ev.PeerId] = new WtPeerSession(peerIndex, options.MaxMessageBytes);
@@ -160,19 +157,82 @@ public sealed class WebTransportHostedService(
     }
 
     /// <summary>
-    ///     Runs pre-auth admission on a freshly-allocated peer, sharing the budget with ENet. On
-    ///     refusal, rolls the PeerIndex allocation back and closes the WT session with the specific
-    ///     reason. Returns <c>true</c> when admitted.
+    ///     Whole admission sequence for an inbound WebTransport session, mirroring
+    ///     <see cref="ENetHostedService" /> gate for gate. The per-source-IP cap runs before a
+    ///     <see cref="PeerIndex" /> is drawn from the pool the two transports share, so the cap
+    ///     counts ENet and WebTransport connections together and a refused session touches neither
+    ///     the allocator nor a worker. Owns every rollback — a refusal after the slot was reserved
+    ///     hands it back with <see cref="IpLimiter.Abandon" />; <see cref="IpLimiter.Bind" /> commits
+    ///     it on the way out. The address is read once and threaded through, so no gate sees a
+    ///     different string than <see cref="IpLimiter.TryAcquire" /> counted.
     /// </summary>
-    private bool TryAdmitOrRefuse(WebTransportEvent ev, PeerIndex peerIndex)
+    /// <returns>
+    ///     <c>true</c> when admitted, <paramref name="peerIndex" /> holding the allocated index;
+    ///     <c>false</c> when refused and closed.
+    /// </returns>
+    /// <summary>
+    ///     Reports a per-IP refusal at a bounded rate — the refusal is the cheapest gate on the
+    ///     connect path and its rate is attacker-controlled. <c>ip_limit_refused</c> carries the
+    ///     volume, this carries the address. See <see cref="RefusalLogThrottle" />.
+    /// </summary>
+    private void LogIpLimitRefusal(string remoteAddress)
     {
-        PreAuthAdmission.AdmitResult result = preAuthAdmission.TryAdmit(peerIndex, ParseIp(ev.RemoteAddress));
+        if (!ipLimitRefusalLog.ShouldEmit(out long suppressed))
+            return;
+
+        logger.LogWarning(
+            "Per-IP connection limit exceeded — refusing WebTransport connection from {Address} ({Suppressed} further refusal(s) suppressed since the previous message; see the ip_limit_refused counter for the full rate).",
+            remoteAddress, suppressed);
+    }
+
+    private bool TryAdmitConnection(WebTransportEvent ev, out PeerIndex peerIndex)
+    {
+        peerIndex = default;
+        string peerIp = ParseIp(ev.RemoteAddress);
+
+        if (!ipLimiter.TryAcquire(peerIp))
+        {
+            LogIpLimitRefusal(ev.RemoteAddress);
+            host.Disconnect(ev.PeerId, (uint)DisconnectReason.IP_CONNECTION_LIMIT_EXCEEDED);
+            return false;
+        }
+
+        if (!peerIndexAllocator.TryAllocate(TransportId.WebTransport, out peerIndex))
+        {
+            // Shared pool exhausted (both transports draw from it). Refuse on the WT handle directly —
+            // no PeerIndex was issued, so the IP reservation is the only thing to hand back.
+            ipLimiter.Abandon(peerIp);
+            logger.LogWarning("PeerIndex pool exhausted — refusing WebTransport connection from {Address}.", ev.RemoteAddress);
+            host.Disconnect(ev.PeerId, (uint)DisconnectReason.SERVER_FULL);
+            return false;
+        }
+
+        if (!TryAdmitOrRefuse(ev, peerIndex, peerIp))
+            return false;
+
+        // Commit: keyed by PeerIndex from here, released by the worker on Disconnected.
+        ipLimiter.Bind(peerIndex, peerIp);
+        return true;
+    }
+
+    /// <summary>
+    ///     Runs pre-auth admission on a freshly-allocated peer, sharing the budget with ENet. On
+    ///     refusal, rolls back both reservations taken for this session — the PeerIndex allocation
+    ///     and the per-source-IP slot — and closes the session with the specific reason. Returns
+    ///     <c>true</c> when admitted.
+    /// </summary>
+    private bool TryAdmitOrRefuse(WebTransportEvent ev, PeerIndex peerIndex, string peerIp)
+    {
+        PreAuthAdmission.AdmitResult result = preAuthAdmission.TryAdmit(peerIndex, peerIp);
 
         if (result == PreAuthAdmission.AdmitResult.OK)
             return true;
 
         peerIndexAllocator.MarkPending(peerIndex);
         peerIndexAllocator.Release(peerIndex);
+
+        // No lifecycle event ever fires for a session refused here, so the IP slot goes back inline.
+        ipLimiter.Abandon(peerIp);
 
         DisconnectReason reason = result == PreAuthAdmission.AdmitResult.IP_LIMIT_EXHAUSTED
             ? DisconnectReason.PRE_AUTH_IP_LIMIT_EXHAUSTED

@@ -92,5 +92,13 @@ namespace Pulse.Transport
         ///     a sustained rate indicates a buggy client, fuzzer, or amplification probe.
         /// </summary>
         PACKET_CORRUPTED = 16,
+
+        /// <summary>
+        ///     Hard per-source-IP concurrent-connection cap exceeded. Unlike
+        ///     PRE_AUTH_IP_LIMIT_EXHAUSTED, authenticated connections count against this cap, and
+        ///     the connection is refused before a PeerIndex is allocated. Retryable with backoff —
+        ///     capacity frees as other connections from the same IP close.
+        /// </summary>
+        IP_CONNECTION_LIMIT_EXCEEDED = 17,
     }
 }

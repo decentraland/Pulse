@@ -53,6 +53,7 @@ public sealed class PeersManager : BackgroundService
     private readonly EmoteCompleter emoteCompleter;
     private readonly IPeerIndexAllocator peerIndexAllocator;
     private readonly PreAuthAdmission preAuthAdmission;
+    private readonly IpLimiter ipLimiter;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -71,7 +72,8 @@ public sealed class PeersManager : BackgroundService
         ClientMessageCounters incomingMessageCounters,
         EmoteCompleter emoteCompleter,
         IPeerIndexAllocator peerIndexAllocator,
-        PreAuthAdmission preAuthAdmission)
+        PreAuthAdmission preAuthAdmission,
+        IpLimiter ipLimiter)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -90,6 +92,7 @@ public sealed class PeersManager : BackgroundService
         this.peerOptions = peerOptions;
         this.peerIndexAllocator = peerIndexAllocator;
         this.preAuthAdmission = preAuthAdmission;
+        this.ipLimiter = ipLimiter;
 
         workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
@@ -250,6 +253,12 @@ public sealed class PeersManager : BackgroundService
             // Idempotent: frees the global + per-IP pre-auth slots if the peer was still
             // PENDING_AUTH; no-op if the handshake path already released them on promotion.
             preAuthAdmission.ReleaseOnDisconnect(from);
+
+            // Idempotent, and the only release path for a peer that reached OnPeerConnected.
+            // Connections refused at the transport seam — pool exhausted, or pre-auth admission —
+            // never produce a lifecycle event, so the transport hands their reservation back inline
+            // with IpLimiter.Abandon instead.
+            ipLimiter.Release(from);
 
             peerState.ConnectionState = PeerConnectionState.DISCONNECTING;
 

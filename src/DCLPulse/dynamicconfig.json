@@ -1,0 +1,9 @@
+// dynamicconfig.json — offline defaults for the remotely settable knobs. A default's JSON type is
+// also the schema: a remote value that cannot convert to it is logged and skipped.
+{
+  "Transport": { "Hardening": { "IpLimiter": {
+    "Enabled": false,
+    "MaxConcurrency": 10,
+    "Whitelist": ""
+  }}}
+}

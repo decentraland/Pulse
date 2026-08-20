@@ -66,6 +66,11 @@ When the user mentions a location by name, translate to position flags:
 
 ## Troubleshooting
 
-- **"ENet library failed to initialize"** — the ENet native library is missing. On macOS: `brew install enet`. On Windows: ensure `enet.dll` is in the output directory.
+- **"ENet library failed to initialize"** — the native library did not load. It is **committed**
+  under `src/DCLPulseTestClient/runtimes/` (`win-x64/enet.dll`, `linux-x64/libenet.so`,
+  `macos-arm64/libenet.dylib`) and the csproj copies all three to the output root, so nothing needs
+  installing on Windows, Linux x64 or Apple Silicon — suspect a stale `bin/` and rebuild. The one
+  genuine gap is **Intel macOS**: only an arm64 dylib ships, so there `brew install enet` is the
+  workaround.
 - **Handshake failed** — the server rejected the auth chain. Check that the server is running and the account's ephemeral key hasn't expired (25h lifetime). Try `metaforge account remove <name>` then re-run to create a fresh account.
 - **Connection timeout** — verify the server IP/port and that UDP traffic is not blocked by a firewall.

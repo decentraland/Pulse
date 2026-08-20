@@ -100,5 +100,15 @@ namespace Pulse.Transport
         ///     capacity frees as other connections from the same IP close.
         /// </summary>
         IP_CONNECTION_LIMIT_EXCEEDED = 17,
+
+        /// <summary>
+        ///     Per-source-IP concurrent scene-listener cap exceeded. Separate from
+        ///     IP_CONNECTION_LIMIT_EXCEEDED because the two need different operator fixes — the
+        ///     listener budget, not the player one — and because it is refused later, when the
+        ///     SCENE_LISTENER_HANDSHAKE validates, rather than at connect. Retryable, but capacity
+        ///     only frees when another listener from the same IP disconnects, so retry with a long
+        ///     backoff and jitter rather than a tight loop.
+        /// </summary>
+        SCENE_LISTENER_IP_LIMIT_EXCEEDED = 18,
     }
 }

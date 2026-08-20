@@ -103,6 +103,7 @@ Only **leaf** keys carry a type — a key that holds a value. Section nodes (`Tr
   "Transport": { "Hardening": { "IpLimiter": {
     "Enabled": false,
     "MaxConcurrency": 10,
+    "SceneListenerMaxConcurrency": 2,
     "Whitelist": "",
   }}},
 }

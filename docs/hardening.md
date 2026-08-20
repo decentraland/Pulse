@@ -664,11 +664,21 @@ available, which is why this one sits above everything in Group A.
 Group A caps *pre-auth* concurrency per IP. Nothing there bounds a single IP's **total**
 footprint once its connections authenticate — that is the gap this group closes.
 
+**Scene listeners break a single shared cap.** A scene listener is a full peer: the transport
+allocates its `PeerIndex` at connect and `HandshakeHandlerBase.Handle` builds the `PeerState` that
+`SceneListenerHandshakeHandler.TryAuthorize` stamps its listener descriptor onto, so it consumes a
+pool slot exactly like a player and must be counted. But a listener fleet runs from a
+handful of egress IPs and deliberately opens many connections, so one shared per-IP cap can only
+be wrong in one of two directions: low enough to protect players and it throttles the
+infrastructure, high enough for the fleet and it protects nothing. The cap is therefore **per
+connection class** — see the two budgets below.
+
 ### Defenses
 
 `IpLimiter` (`src/DCLPulse/Transport/Hardening/IpLimiter.cs`) enforces a hard cap on concurrent
 connections per source IP **at the top of `EventType.Connect`, before
-`peerIndexAllocator.TryAllocate`**.
+`peerIndexAllocator.TryAllocate`**, with one budget per `ConnectionClass`
+(`src/DCLPulse/Transport/Hardening/ConnectionClass.cs`).
 
 That placement is strictly earlier than `PreAuthAdmission`, which runs *after* allocation and
 then rolls back with `MarkPending` + `Release`. Refusing before allocation means a flooding IP
@@ -679,30 +689,80 @@ Admission sequence on connect, with all rollback owned by the `ENetHostedService
 partial:
 
 ```
-1. ipLimiter.TryAcquire(ip)       -> refuse: DisconnectNow(IP_CONNECTION_LIMIT_EXCEEDED), return
-                                      (nothing allocated, nothing to undo)
-2. peerIndexAllocator.TryAllocate -> fail:   ipLimiter.Abandon(ip); DisconnectNow(SERVER_FULL)
-3. preAuthAdmission.TryAdmit      -> fail:   allocator rollback; ipLimiter.Abandon(ip); disconnect
-4. ipLimiter.Bind(peerIndex, ip)  <- commit the reservation to the peer
+1. ipLimiter.TryAcquire(ip, PLAYER)      -> refuse: DisconnectNow(IP_CONNECTION_LIMIT_EXCEEDED), return
+                                            (nothing allocated, nothing to undo)
+2. peerIndexAllocator.TryAllocate       -> fail:   Abandon(ip, PLAYER); DisconnectNow(SERVER_FULL)
+3. preAuthAdmission.TryAdmit            -> fail:   allocator rollback; Abandon(ip, PLAYER); disconnect
+4. ipLimiter.Bind(peerIndex, ip, PLAYER) <- commit the reservation to the peer
 5. ...existing wiring -> messagePipe.OnPeerConnected(peerIndex)
 ```
+
+**Two budgets, not one.**
+
+| Class | Cap key | Default | Counts |
+|---|---|---|---|
+| `PLAYER` | `MaxConcurrency` | 10 | Every connection until it announces itself something else |
+| `SCENE_LISTENER` | `SceneListenerMaxConcurrency` | 2 | Connections whose `SCENE_LISTENER_HANDSHAKE` validated |
+
+The budgets are independent in both directions: a full player budget never refuses a listener, and
+a full listener budget never refuses a player. They are therefore **additive** — one IP's ceiling is
+the sum of the caps, 12 at the shipped defaults; see
+[the arithmetic](#how-the-limits-interact). Adding a class later costs an enum value, a label
+and a cap key — not a second copy of the bookkeeping. State is one `Dictionary<string,int[]>` of
+per-IP counts (one slot per class) plus a `Dictionary<PeerIndex,Reservation>` reverse index whose
+`Reservation` carries the IP **and** the class, so a disconnect always credits the budget that
+actually held the peer. `ip_limit_tracked_ips` stays one entry per IP no matter how its
+connections split across classes, and an entry is removed only once **every** class is at zero.
+
+**The class is decided in two phases.** The server cannot know at connect that a peer is a
+listener — that is only known when `SCENE_LISTENER_HANDSHAKE` validates, on the worker thread. So
+every connection is acquired against `PLAYER` at step 1 above, and the listener handshake *moves*
+the reservation:
+
+```
+SCENE_LISTENER_HANDSHAKE validates (worker thread)
+   │
+   ├─ fieldValidator.ValidateSceneListenerHandshake  -> fail: INVALID_HANDSHAKE_FIELD
+   │                                                    (a malformed announcement spends no
+   │                                                     listener capacity)
+   ├─ ipLimiter.TryReclassify(peer, SCENE_LISTENER)  -> fail: SCENE_LISTENER_IP_LIMIT_EXCEEDED
+   │                                                    PLAYER -> SCENE_LISTENER on success
+   └─ peer published, PENDING_AUTH -> AUTHENTICATED
+```
+
+`TryReclassify` is all-or-nothing: on refusal nothing is mutated, so the peer stays player-classed
+and the ordinary Disconnected release frees the slot it really holds. Both gates run inside
+`TryAuthorize`, which the pipeline calls **before** it publishes the peer into the worker's dict —
+a refused listener therefore never reaches `AUTHENTICATED`, never registers an identity, and never
+gets a listener descriptor. The same hook point as the field validation next to it, and the same
+`PENDING_DISCONNECT`-then-disconnect shape (`HandshakeHandlerBase.RejectHandshake`, sibling of
+`PeerDefense.Reject`).
+
+A peer the transport could not attribute (empty `Peer.IP`, only admitted while the limiter is
+disabled) **does** hold a reservation — both transports call `Bind` unconditionally, so the peer is
+indexed under the empty-string key — but nothing was ever counted for it in the per-IP table. Its
+promotion therefore succeeds without moving anything: there is no count to charge, and refusing on
+missing bookkeeping would disconnect a peer the limiter never counted. Such a peer stays
+`PLAYER`-classed for the rest of its session and its release decrements nothing, which is harmless
+only because no count exists to end up in the wrong budget.
 
 **Both transports enforce the cap against one shared counter.**
 `WebTransportHostedService.HandleConnect` mirrors the sequence above, using
 `ParseIp(ev.RemoteAddress)`. The two transports draw from the same `PeerIndex` pool, so ENet and
-WebTransport connections from the same IP count together against a single budget.
+WebTransport connections from the same IP count together against the same per-class budgets.
 
 **Release paths.** Steps 2 and 3 refuse *before* `OnPeerConnected`, so no worker lifecycle event
-will ever fire for those peers — the transport thread releases them inline via `Abandon(ip)`.
+will ever fire for those peers — the transport thread releases them inline via `Abandon(ip, PLAYER)`.
 Admitted peers release from the owning worker on the Disconnected lifecycle event
 (`PeersManager`, alongside the existing `preAuthAdmission.ReleaseOnDisconnect`), keyed by
-`PeerIndex`. `Release` is idempotent via lookup-and-clear, so a duplicate call is a no-op.
+`PeerIndex` — and from whichever class the reservation currently names, so a promoted listener
+credits the listener budget rather than the player one it connected under. `Release` is idempotent
+via lookup-and-clear, so a duplicate call is a no-op.
 
-State is a `Dictionary<string,int>` of per-IP counts plus a `Dictionary<PeerIndex,string>`
-reverse index, both under one `Lock` — the lock is required because ENet and WebTransport run on
-separate threads. Contention is bounded by connect rate, not packet rate. Per-IP entries are
-removed at zero, so the dictionary is bounded by concurrent connections, not by distinct IPs
-ever seen.
+Both dictionaries live under one `Lock` — required because ENet and WebTransport run on separate
+threads, and `Release`/`TryReclassify` run on worker threads. Contention is bounded by connect
+rate, not packet rate. Per-IP entries are removed once every class is at zero, so the table is
+bounded by concurrent connections, not by distinct IPs ever seen.
 
 > Earlier still would be ENet's `intercept` callback, which fires on raw datagram receive before
 > protocol handling. The C# binding does not surface it. Out of scope; noted as a future option
@@ -725,6 +785,7 @@ dev loop.
       "IpLimiter": {
         "Enabled": false,
         "MaxConcurrency": 10,
+        "SceneListenerMaxConcurrency": 2,
         "Whitelist": ""
       }
     }
@@ -735,8 +796,15 @@ dev loop.
 | Key | Default | Meaning |
 |---|---|---|
 | `Enabled` | `false` | Master switch. When `false`, connections are still counted but never refused. |
-| `MaxConcurrency` | 10 | Max concurrent connections from one source IP, across both transports. `0` disables the cap. |
-| `Whitelist` | `""` | Comma-separated **exact** IPs exempt from the cap. Whitelisted IPs are still counted. |
+| `MaxConcurrency` | 10 | Max concurrent player-class connections from one source IP, across both transports. `0` disables the cap. |
+| `SceneListenerMaxConcurrency` | 2 | Max concurrent scene-listener connections from one source IP — one global value applied to every IP, not a per-fleet allowance ([sizing](#sizing-scenelistenermaxconcurrency)). `0` disables the cap — it does **not** mean "no listeners". |
+| `Whitelist` | `""` | Comma-separated **exact** IPs exempt from **both** caps. Whitelisted IPs are still counted. |
+
+The cap keys stay flat, one per class, rather than nesting under a `MaxConcurrency` object: the
+flat keys are the ones the live remote payload already sets, and since the key allowlist was
+removed a renamed key would bind to nothing and silently revert the cap to its default. The
+options type maps the flat keys onto a per-class lookup internally
+(`IpLimiterOptions.MaxConcurrencyFor`).
 
 The shipped default is `Enabled: false`, so local dev and load tests are unclamped and the
 limiter is turned on per environment from the remote document. There is **no**
@@ -745,6 +813,39 @@ limiter is turned on per environment from the remote document. There is **no**
 `Whitelist` is a delimited string rather than a JSON array on purpose; the reasoning is in
 [docs/feature-flags.md](feature-flags.md). The string format also extends to CIDR later without
 a schema change.
+
+### Sizing `SceneListenerMaxConcurrency`
+
+A listener's reach is bounded by `SceneListener:MaxParcels` (default 4096 parcels per connection).
+`ParcelEncoder` widens the `ParcelEncoderOptions` bounds of x ∈ [-150, 163], z ∈ [-150, 158] by
+`Padding` (2 per side) in its constructor, and `FieldValidator.ValidateSceneListenerHandshake`
+accepts rects against those *padded* bounds via `IsValidCoordinate` — so the encodable area is
+x ∈ [-152, 165] (318 columns) × z ∈ [-152, 160] (313 rows) = **99,534 parcels**. One listener
+connection therefore covers at most 4096 / 99,534 ≈ **4.1%** of it, and whole-map coverage needs
+99,534 / 4096 ≈ 24.3 → **25** concurrent connections.
+
+**Raising this cap is the wrong way to pay for that — whitelist the fleet instead.**
+`SceneListenerMaxConcurrency` is a **global** knob: it is the per-IP listener cap applied to *every*
+source address, not an allowance handed to a known fleet. Setting it to 25 grants 25 listener slots
+to every IP on the internet and pushes the per-IP ceiling to `10 + 25 = 35`, past
+`MaxConcurrentPreAuthPerIP` of 32. And nothing gates who may claim listener budget: there is **no
+listener allowlist** — `SceneListenerHandshakeHandler` requires only a valid Decentraland auth
+chain, a non-empty realm and at least one in-bounds rect, all three of which any client can
+produce.
+
+So a listener fleet that needs many connections should have its **egress IPs whitelisted**;
+`Whitelist` exempts an IP from both caps, on the listener promotion path as much as at connect, and
+it names the hosts that are actually entitled to the capacity. `SceneListenerMaxConcurrency` should
+stay small — the shipped default of 2 is a starting point for one or two scoped scenes from an
+unlisted host. A **per-wallet listener allowlist**, so listener capacity could be granted to an
+identity instead of to every source IP alike, is the prerequisite for ever raising this global cap
+substantially; it does not exist.
+
+Under-setting this budget **shows up as missing coverage, not as an error**: refused listeners
+retry, so the fleet stays up and simply never observes some parcels. Nothing in the listener's own
+telemetry says "I was capped" — watch `ip_limit_refused{class="scene_listener"}` and the
+`scene_listener_connected` gauge together, and compare the gauge against the number of connections
+the fleet is configured to open.
 
 ### How the limits interact
 
@@ -770,16 +871,26 @@ The full connect pipeline, in gate order:
 
 | Gate | Order | Refused reason |
 |---|---|---|
-| Per-IP total connection cap | Before allocation | `IP_CONNECTION_LIMIT_EXCEEDED` |
+| Per-IP total connection cap (player class) | Before allocation | `IP_CONNECTION_LIMIT_EXCEEDED` |
 | PeerIndex pool exhausted | Allocation | `SERVER_FULL` |
 | Per-IP pre-auth quota | After allocation | `PRE_AUTH_IP_LIMIT_EXHAUSTED` |
 | Global pre-auth budget | After allocation | `PRE_AUTH_BUDGET_EXHAUSTED` |
+| Per-IP scene-listener cap | On listener-handshake validation | `SCENE_LISTENER_IP_LIMIT_EXCEEDED` |
 
-Note the arithmetic at the shipped defaults: with the limiter enabled at `MaxConcurrency: 10`, a
-single IP can never hold more than 10 connections in any state, so Group A's per-IP pre-auth
-quota of 32 is unreachable from that IP and the total cap always binds first. The pre-auth quota
-is what protects you while the limiter is disabled, and again if `MaxConcurrency` is raised above
-`MaxConcurrentPreAuthPerIP` for a CGNAT or venue deployment.
+Note the arithmetic at the shipped defaults. **The class budgets are additive: one IP's ceiling is
+their sum, not the largest of them.** A promotion moves a reservation between the budgets rather
+than duplicating it — `TryReclassify` credits the class it came from as it charges the target, so
+every promotion hands a player slot back — which means a single IP can hold `MaxConcurrency` player
+connections **and** `SceneListenerMaxConcurrency` listener connections at the same time:
+`10 + 2 = 12` concurrent connections at the shipped defaults. A fleet host sitting at its listener
+cap still has all 10 player slots available. There is deliberately no cross-class ceiling; that is
+what "two budgets, not one" buys.
+
+What therefore has to stay under Group A's per-IP pre-auth quota (`MaxConcurrentPreAuthPerIP`, 32)
+is that **sum**, not `MaxConcurrency` alone. At the shipped defaults 12 < 32, so the total caps bind
+first and the pre-auth quota is unreachable from one IP; raise either class's cap past that headroom
+and the pre-auth quota becomes the gate that refuses first for connections still in `PENDING_AUTH`.
+The pre-auth quota is also what protects you while the limiter is disabled.
 
 ### Runtime semantics
 
@@ -795,6 +906,10 @@ bugs and are not.
   from a zero baseline and over-admit until the whole connected population churned. This is a
   deliberate departure from the usual "bail out early when disabled" shape; connect-rate cost
   makes the tradeoff free.
+- **A disabled limiter still reclassifies.** `TryReclassify` moves the reservation whether or not
+  enforcement is on; only the refusal is skipped. A move that paused while disabled would leave
+  listeners charged to the player budget, and re-enabling would then refuse players for
+  connections that are not theirs.
 - **Whitelisted IPs are still counted**, for the same reason: removing an IP from the whitelist
   must take effect against an accurate count immediately, not once that IP's connections have
   drained.
@@ -824,6 +939,7 @@ bugs and are not.
 | Value | Meaning |
 |---|---|
 | `IP_CONNECTION_LIMIT_EXCEEDED = 17` | Hard per-source-IP concurrent-connection cap exceeded. Unlike `PRE_AUTH_IP_LIMIT_EXHAUSTED`, authenticated connections count against this cap, and the connection is refused before a `PeerIndex` is allocated. **Retryable** — capacity frees as other connections from the same IP close. |
+| `SCENE_LISTENER_IP_LIMIT_EXCEEDED = 18` | Per-source-IP concurrent **scene-listener** cap exceeded. Deliberately distinct from `17`: the operator fix is a different knob (`SceneListenerMaxConcurrency`, not `MaxConcurrency`), and it is refused later — when the listener handshake validates, not at connect. A shared code would make the two indistinguishable in the field. **Retryable**, but see the recovery contract below. |
 
 ### Client recovery
 
@@ -839,14 +955,29 @@ bugs and are not.
    retry costs no wallet signature prompt.
 4. Open a fresh connection on retry — don't try to revive the refused one.
 
+`SCENE_LISTENER_IP_LIMIT_EXCEEDED` is retryable too, but its capacity behaves differently and the
+client contract follows from that: the budget only frees when **another listener from the same IP
+disconnects**, which on a steady fleet may be minutes or never. So:
+
+1. **Long backoff with jitter** — start around 5–10 s, double, cap in the minutes, and keep
+   retrying rather than giving up: a listener that stops retrying leaves its parcels unobserved
+   with nothing in the logs to say why. Jitter is mandatory, for the same re-synchronisation
+   reason as above; a fleet started by one orchestrator retries in lockstep otherwise.
+2. **Do not re-announce a smaller parcel set** hoping to fit. The cap counts connections, not
+   parcels — a narrower announcement is refused identically. Fixing it means whitelisting the egress
+   IP, spreading the fleet across more egress addresses, or — knowing it widens the cap for every IP
+   — raising `SceneListenerMaxConcurrency`.
+3. **Surface it as a capacity/config problem, not an auth failure**, and log the reason code: this
+   is the one refusal whose only other symptom is silently missing coverage.
+
 ### Metrics to watch
 
 From `pulse.hardening.*`:
 
 | Metric | Type | What it tells you |
 |---|---|---|
-| `ip_limit_refused` | counter | Connections refused by the cap. Non-zero ⇒ some IP is at its budget — either a flood, or a CGNAT/venue population that needs a higher `MaxConcurrency`. |
-| `ip_limit_whitelist_bypass` | counter | Connections that *would have been* refused and were admitted because the IP is whitelisted. |
+| `ip_limit_refused` | counter | Connections refused by a per-IP cap, labelled `class="player"` / `class="scene_listener"` (one series per `ConnectionClass`, always emitted). `player` non-zero ⇒ some IP is at its budget — either a flood, or a CGNAT/venue population that needs a higher `MaxConcurrency`. `scene_listener` non-zero ⇒ a fleet is being capped and parcels are going unobserved; whitelist the egress IP rather than raising the global listener cap ([sizing](#sizing-scenelistenermaxconcurrency)). |
+| `ip_limit_whitelist_bypass` | counter | Connections that *would have been* refused and were admitted because the IP is whitelisted — either cap, including a listener promotion. |
 | `ip_limit_tracked_ips` | gauge | Distinct IPs currently holding ≥1 connection. Equals the size of the limiter's per-IP dictionary. |
 
 The whitelist-bypass counter is the one worth a dashboard panel: it is the only signal that

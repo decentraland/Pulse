@@ -4,6 +4,7 @@
   "Transport": { "Hardening": { "IpLimiter": {
     "Enabled": false,
     "MaxConcurrency": 10,
+    "SceneListenerMaxConcurrency": 2,
     "Whitelist": ""
   }}}
 }

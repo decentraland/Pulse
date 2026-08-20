@@ -35,7 +35,7 @@ public sealed partial class ENetHostedService
         peerIndex = default;
         string peerIp = netEvent.Peer.IP;
 
-        if (!ipLimiter.TryAcquire(peerIp))
+        if (!ipLimiter.TryAcquire(peerIp, ConnectionClass.PLAYER))
         {
             LogIpLimitRefusal(peerIp, netEvent.Peer.Port);
             netEvent.Peer.DisconnectNow((uint)DisconnectReason.IP_CONNECTION_LIMIT_EXCEEDED);
@@ -49,7 +49,7 @@ public sealed partial class ENetHostedService
             // Pool exhausted — refuse the connection. This can happen if the pool is the
             // same size as ENet's max peers and every pending-recycle slot is still in grace.
             // Operator should raise the pool size or shorten the grace window.
-            ipLimiter.Abandon(peerIp);
+            ipLimiter.Abandon(peerIp, ConnectionClass.PLAYER);
 
             logger.LogWarning("PeerIndex pool exhausted — refusing connection from {IP}:{Port}",
                 peerIp, netEvent.Peer.Port);
@@ -62,7 +62,7 @@ public sealed partial class ENetHostedService
             return false;
 
         // Commit: keyed by PeerIndex from here, released by the worker on Disconnected.
-        ipLimiter.Bind(peerIndex, peerIp);
+        ipLimiter.Bind(peerIndex, peerIp, ConnectionClass.PLAYER);
         return true;
     }
 
@@ -100,7 +100,7 @@ public sealed partial class ENetHostedService
         peerIndexAllocator.Release(peerIndex);
 
         // No lifecycle event ever fires for a peer refused here, so the IP slot goes back inline.
-        ipLimiter.Abandon(peerIp);
+        ipLimiter.Abandon(peerIp, ConnectionClass.PLAYER);
 
         DisconnectReason reason = result == PreAuthAdmission.AdmitResult.IP_LIMIT_EXHAUSTED
             ? DisconnectReason.PRE_AUTH_IP_LIMIT_EXHAUSTED

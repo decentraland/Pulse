@@ -85,8 +85,8 @@ public class IpLimiterLifecycleTests
         var peer = new PeerIndex(1);
 
         // Transport thread reserves and commits the slot before announcing the peer.
-        Assert.That(limiter.TryAcquire(IP), Is.True);
-        limiter.Bind(peer, IP);
+        Assert.That(limiter.TryAcquire(IP, ConnectionClass.PLAYER), Is.True);
+        limiter.Bind(peer, IP, ConnectionClass.PLAYER);
         Assert.That(limiter.TrackedIps, Is.EqualTo(1));
 
         eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peer));
@@ -107,19 +107,19 @@ public class IpLimiterLifecycleTests
         for (var i = 0; i < CAP; i++)
         {
             peers4[i] = new PeerIndex((uint)i);
-            Assert.That(limiter.TryAcquire(IP), Is.True);
-            limiter.Bind(peers4[i], IP);
+            Assert.That(limiter.TryAcquire(IP, ConnectionClass.PLAYER), Is.True);
+            limiter.Bind(peers4[i], IP, ConnectionClass.PLAYER);
             eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(peers4[i]));
         }
 
-        Assert.That(limiter.TryAcquire(IP), Is.False, "The IP is at its cap before any disconnect");
+        Assert.That(limiter.TryAcquire(IP, ConnectionClass.PLAYER), Is.False, "The IP is at its cap before any disconnect");
 
         eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(peers4[0]));
         manager.DrainEvents(eventChannel.Reader, peers, workerIndex: 0);
 
-        Assert.That(limiter.TryAcquire(IP), Is.True,
+        Assert.That(limiter.TryAcquire(IP, ConnectionClass.PLAYER), Is.True,
             "Draining one disconnect must free exactly one slot for that IP");
-        Assert.That(limiter.TryAcquire(IP), Is.False);
+        Assert.That(limiter.TryAcquire(IP, ConnectionClass.PLAYER), Is.False);
     }
 
     [Test]
@@ -128,10 +128,10 @@ public class IpLimiterLifecycleTests
         var first = new PeerIndex(1);
         var second = new PeerIndex(2);
 
-        limiter.TryAcquire(IP);
-        limiter.Bind(first, IP);
-        limiter.TryAcquire(IP);
-        limiter.Bind(second, IP);
+        limiter.TryAcquire(IP, ConnectionClass.PLAYER);
+        limiter.Bind(first, IP, ConnectionClass.PLAYER);
+        limiter.TryAcquire(IP, ConnectionClass.PLAYER);
+        limiter.Bind(second, IP, ConnectionClass.PLAYER);
 
         eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Connected(first));
         eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(first));
@@ -148,7 +148,7 @@ public class IpLimiterLifecycleTests
     {
         // A peer refused at the transport seam never reaches a worker, so its reservation is
         // handed back inline with Abandon and no binding exists to release here.
-        limiter.TryAcquire(OTHER_IP);
+        limiter.TryAcquire(OTHER_IP, ConnectionClass.PLAYER);
 
         eventChannel.Writer.TryWrite(MessagePipe.IncomingEvent.Disconnected(new PeerIndex(42)));
 

@@ -3,6 +3,7 @@ using System.Text;
 using Decentraland.Pulse;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
+using Pulse.Transport.Hardening;
 
 namespace Pulse.Metrics;
 
@@ -66,7 +67,7 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_handshake_replay_rejected_total", "Handshakes rejected because the (wallet, timestamp) pair was already accepted within the anti-replay window", snap.Hardening.TotalHandshakeReplayRejected);
         WriteCounter(writer, "dcl_pulse_banned_refused_total", "Handshake rejections and active-peer evictions triggered by the platform ban list", snap.Hardening.TotalBannedRefused);
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
-        WriteCounter(writer, "dcl_pulse_ip_limit_refused_total", "Connections refused by the hard per-source-IP concurrent-connection cap, before a PeerIndex is allocated", snap.Hardening.TotalIpLimitRefused);
+        WriteLabeledCounter(writer, "dcl_pulse_ip_limit_refused_total", "Connections refused by the hard per-source-IP concurrent-connection cap, by connection-class budget", PulseMetrics.Hardening.CONNECTION_CLASS_TAG_KEY, ConnectionClasses.LABELS, snap.Hardening.IpLimitRefusedByClass);
         WriteCounter(writer, "dcl_pulse_ip_limit_whitelist_bypass_total", "Connections over the per-IP cap that were admitted because the source IP is whitelisted", snap.Hardening.TotalIpLimitWhitelistBypass);
         WriteGauge(writer, "dcl_pulse_ip_limit_tracked_ips", "Distinct source IPs currently holding at least one connection", snap.Hardening.IpLimitTrackedIps);
 
@@ -163,6 +164,37 @@ internal static class PrometheusFormatter
         writer.Write(name);
         writer.Write(' ');
         writer.WriteLine(value);
+    }
+
+    /// <summary>
+    ///     Emits one counter as a series per label value — <paramref name="labels" /> supplies the
+    ///     label text for index <c>i</c> of <paramref name="values" />. A null or short
+    ///     <paramref name="values" /> still produces the full label set at zero, so a collector that
+    ///     never recorded a class exposes a well-formed series rather than a missing one (Prometheus
+    ///     rate() over an appearing series reads as a step, not as traffic).
+    /// </summary>
+    private static void WriteLabeledCounter(
+        StreamWriter writer, string name, string help,
+        string labelKey, string[] labels, long[]? values)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.WriteLine(" counter");
+
+        for (var i = 0; i < labels.Length; i++)
+        {
+            writer.Write(name);
+            writer.Write('{');
+            writer.Write(labelKey);
+            writer.Write("=\"");
+            writer.Write(labels[i]);
+            writer.Write("\"} ");
+            writer.WriteLine(values is not null && i < values.Length ? values[i] : 0);
+        }
     }
 
     private static void WriteGauge(StreamWriter writer, string name, string help, long value)

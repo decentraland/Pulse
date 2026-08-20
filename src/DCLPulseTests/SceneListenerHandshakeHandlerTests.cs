@@ -22,6 +22,7 @@ public class SceneListenerHandshakeHandlerTests
     private const string WALLET = "0xabc0000000000000000000000000000000000001";
     private const string EPHEMERAL = "0xdef0000000000000000000000000000000000002";
     private const string TIMESTAMP = "1700000000000";
+    private const string LISTENER_IP = "203.0.113.9";
 
     private SnapshotBoard snapshotBoard;
     private SpatialGrid spatialGrid;
@@ -30,6 +31,7 @@ public class SceneListenerHandshakeHandlerTests
     private ParcelEncoder parcelEncoder;
     private Dictionary<PeerIndex, PeerState> peers;
     private SceneListenerHandshakeHandler handler;
+    private IpLimiter ipLimiter;
     private PeerIndex peer;
 
     [SetUp]
@@ -54,6 +56,8 @@ public class SceneListenerHandshakeHandlerTests
             parcelEncoder,
             transport);
 
+        ipLimiter = BuildIpLimiter();
+
         handler = new SceneListenerHandshakeHandler(
             messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             authChainValidator: new AuthChainValidator(verifier),
@@ -73,11 +77,15 @@ public class SceneListenerHandshakeHandlerTests
             banList: new BanList(),
             fieldValidator: fieldValidator,
             cellMapper: new SceneListenerCellMapper(parcelEncoder, spatialGrid, parcelOptions),
+            ipLimiter: ipLimiter,
             logger: Substitute.For<ILogger<SceneListenerHandshakeHandler>>());
 
         peer = new PeerIndex(1);
         peers = new Dictionary<PeerIndex, PeerState> { [peer] = new (PeerConnectionState.PENDING_AUTH) };
     }
+
+    [TearDown]
+    public void TearDown() => ipLimiter.Dispose();
 
     [Test]
     public void Handle_ValidRequest_AuthenticatesWithListenerDescriptor()
@@ -180,6 +188,51 @@ public class SceneListenerHandshakeHandlerTests
 
         Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_AUTH),
             "A parse failure responds with an error but leaves the peer awaiting a retry within the attempt budget.");
+    }
+
+    [Test]
+    public void Handle_ListenerBudgetFull_RejectsBeforeAuthenticated()
+    {
+        // The fixture's limiter caps one listener per IP. Fill that budget from the same IP, then
+        // hand the peer a valid announcement: the gate must run before the peer is published, so
+        // the handshake never reaches AUTHENTICATED and the reason names the listener cap rather
+        // than the player one.
+        Assume.That(ipLimiter.TryAcquire(LISTENER_IP, ConnectionClass.SCENE_LISTENER), Is.True);
+        ipLimiter.TryAcquire(LISTENER_IP, ConnectionClass.PLAYER);
+        ipLimiter.Bind(peer, LISTENER_IP, ConnectionClass.PLAYER);
+
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 10, 10)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
+            Assert.That(peers[peer].SceneListener, Is.Null, "No listener descriptor may survive a refusal.");
+            Assert.That(identityBoard.TryGetPeerIndexByWallet(WALLET, out _), Is.False,
+                "A refused listener must not be registered as an identity.");
+        });
+
+        transport.Received(1).Disconnect(peer, DisconnectReason.SCENE_LISTENER_IP_LIMIT_EXCEEDED);
+    }
+
+    /// <summary>
+    ///     A live limiter rather than a substitute: the fixture asserts on the budget decision, and
+    ///     the arithmetic behind it is exactly what would be stubbed away. Capped at one listener
+    ///     per IP so a single extra connection fills it.
+    /// </summary>
+    private static IpLimiter BuildIpLimiter()
+    {
+        IOptionsMonitor<IpLimiterOptions> monitor = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
+
+        monitor.CurrentValue.Returns(new IpLimiterOptions
+        {
+            Enabled = true,
+            MaxConcurrency = 10,
+            SceneListenerMaxConcurrency = 1,
+        });
+
+        monitor.OnChange(Arg.Any<Action<IpLimiterOptions, string?>>()).Returns(Substitute.For<IDisposable>());
+
+        return new IpLimiter(monitor, Substitute.For<ILogger<IpLimiter>>());
     }
 
     private ClientMessage BuildListenerHandshake(string realm, params (int MinX, int MinZ, int MaxX, int MaxZ)[] rects)

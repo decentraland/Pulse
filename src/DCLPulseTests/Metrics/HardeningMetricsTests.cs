@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.Messaging;
 using Pulse.Metrics;
+using Pulse.Transport.Hardening;
 using System.Text;
 
 namespace DCLPulseTests.Metrics;
@@ -33,7 +34,8 @@ public class HardeningMetricsTests
     {
         MetricsSnapshot before = collector.TakeSnapshot();
 
-        PulseMetrics.Hardening.IP_LIMIT_REFUSED.Add(3);
+        PulseMetrics.Hardening.IP_LIMIT_REFUSED.Add(3, PulseMetrics.Hardening.Tag(ConnectionClass.PLAYER));
+        PulseMetrics.Hardening.IP_LIMIT_REFUSED.Add(1, PulseMetrics.Hardening.Tag(ConnectionClass.SCENE_LISTENER));
         PulseMetrics.Hardening.IP_LIMIT_WHITELIST_BYPASS.Add(2);
         PulseMetrics.Hardening.IP_LIMIT_TRACKED_IPS.Add(5);
         PulseMetrics.Hardening.IP_LIMIT_TRACKED_IPS.Add(-1);
@@ -42,7 +44,11 @@ public class HardeningMetricsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(after.Hardening.TotalIpLimitRefused - before.Hardening.TotalIpLimitRefused, Is.EqualTo(3));
+            Assert.That(Refused(after, ConnectionClass.PLAYER) - Refused(before, ConnectionClass.PLAYER), Is.EqualTo(3),
+                "The class tag must bucket the measurement, not pool it");
+            Assert.That(Refused(after, ConnectionClass.SCENE_LISTENER) - Refused(before, ConnectionClass.SCENE_LISTENER), Is.EqualTo(1));
+            Assert.That(after.Hardening.TotalIpLimitRefused - before.Hardening.TotalIpLimitRefused, Is.EqualTo(4),
+                "The total sums every class");
             Assert.That(after.Hardening.TotalIpLimitWhitelistBypass - before.Hardening.TotalIpLimitWhitelistBypass, Is.EqualTo(2));
             Assert.That(after.Hardening.IpLimitTrackedIps - before.Hardening.IpLimitTrackedIps, Is.EqualTo(4));
         });
@@ -56,7 +62,7 @@ public class HardeningMetricsTests
             Transport = new MetricsSnapshot.TransportSnapshot { ByTransport = new MetricsSnapshot.PerTransportCounters[2] },
             Hardening = new MetricsSnapshot.HardeningSnapshot
             {
-                TotalIpLimitRefused = 3,
+                IpLimitRefusedByClass = [3, 1],
                 TotalIpLimitWhitelistBypass = 2,
                 IpLimitTrackedIps = 4,
             },
@@ -66,7 +72,8 @@ public class HardeningMetricsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(output, Does.Contain("dcl_pulse_ip_limit_refused_total 3"));
+            Assert.That(output, Does.Contain("dcl_pulse_ip_limit_refused_total{class=\"player\"} 3"));
+            Assert.That(output, Does.Contain("dcl_pulse_ip_limit_refused_total{class=\"scene_listener\"} 1"));
             Assert.That(output, Does.Contain("dcl_pulse_ip_limit_whitelist_bypass_total 2"));
             Assert.That(output, Does.Contain("dcl_pulse_ip_limit_tracked_ips 4"));
         });
@@ -88,6 +95,13 @@ public class HardeningMetricsTests
 
         Assert.That(output, Does.Not.Contain("feature_flags"));
     }
+
+    /// <summary>
+    ///     Per-IP refusals recorded against one connection class, read out of a snapshot the way the
+    ///     Prometheus writer reads them.
+    /// </summary>
+    private static long Refused(MetricsSnapshot snap, ConnectionClass connectionClass) =>
+        snap.Hardening.IpLimitRefusedByClass?[(int)connectionClass] ?? 0;
 
     private static string Format(MetricsSnapshot snap)
     {

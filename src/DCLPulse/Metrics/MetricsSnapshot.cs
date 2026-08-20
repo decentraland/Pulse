@@ -61,9 +61,29 @@ public readonly record struct MetricsSnapshot
         public long TotalHandshakeReplayRejected { get; init; }
         public long TotalBannedRefused { get; init; }
         public long TotalCorruptedPacket { get; init; }
-        public long TotalIpLimitRefused { get; init; }
         public long TotalIpLimitWhitelistBypass { get; init; }
         public int IpLimitTrackedIps { get; init; }
+
+        /// <summary>
+        ///     Per-IP-cap refusals indexed by <c>(int)ConnectionClass</c> — labels in
+        ///     <c>ConnectionClasses.LABELS</c>. Null on a snapshot no collector populated, such as
+        ///     a default-constructed one.
+        /// </summary>
+        public long[]? IpLimitRefusedByClass { get; init; }
+
+        /// <summary>Refusals summed over every connection class, for single-number consumers.</summary>
+        public long TotalIpLimitRefused
+        {
+            get
+            {
+                long total = 0;
+
+                foreach (long refused in IpLimitRefusedByClass ?? [])
+                    total += refused;
+
+                return total;
+            }
+        }
     }
 
     public readonly record struct SceneListenerSnapshot

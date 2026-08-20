@@ -190,7 +190,7 @@ public sealed class WebTransportHostedService(
         peerIndex = default;
         string peerIp = ParseIp(ev.RemoteAddress);
 
-        if (!ipLimiter.TryAcquire(peerIp))
+        if (!ipLimiter.TryAcquire(peerIp, ConnectionClass.PLAYER))
         {
             LogIpLimitRefusal(ev.RemoteAddress);
             host.Disconnect(ev.PeerId, (uint)DisconnectReason.IP_CONNECTION_LIMIT_EXCEEDED);
@@ -201,7 +201,7 @@ public sealed class WebTransportHostedService(
         {
             // Shared pool exhausted (both transports draw from it). Refuse on the WT handle directly —
             // no PeerIndex was issued, so the IP reservation is the only thing to hand back.
-            ipLimiter.Abandon(peerIp);
+            ipLimiter.Abandon(peerIp, ConnectionClass.PLAYER);
             logger.LogWarning("PeerIndex pool exhausted — refusing WebTransport connection from {Address}.", ev.RemoteAddress);
             host.Disconnect(ev.PeerId, (uint)DisconnectReason.SERVER_FULL);
             return false;
@@ -211,7 +211,7 @@ public sealed class WebTransportHostedService(
             return false;
 
         // Commit: keyed by PeerIndex from here, released by the worker on Disconnected.
-        ipLimiter.Bind(peerIndex, peerIp);
+        ipLimiter.Bind(peerIndex, peerIp, ConnectionClass.PLAYER);
         return true;
     }
 
@@ -232,7 +232,7 @@ public sealed class WebTransportHostedService(
         peerIndexAllocator.Release(peerIndex);
 
         // No lifecycle event ever fires for a session refused here, so the IP slot goes back inline.
-        ipLimiter.Abandon(peerIp);
+        ipLimiter.Abandon(peerIp, ConnectionClass.PLAYER);
 
         DisconnectReason reason = result == PreAuthAdmission.AdmitResult.IP_LIMIT_EXHAUSTED
             ? DisconnectReason.PRE_AUTH_IP_LIMIT_EXHAUSTED

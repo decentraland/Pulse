@@ -22,6 +22,7 @@ internal static class PrometheusFormatter
         ClientMessage.MessageOneofCase.EmoteStart,
         ClientMessage.MessageOneofCase.EmoteStop,
         ClientMessage.MessageOneofCase.Teleport,
+        ClientMessage.MessageOneofCase.SceneListenerHandshake,
     ];
 
     private static readonly ServerMessage.MessageOneofCase[] OUTGOING_MESSAGE_TYPES =
@@ -68,6 +69,11 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_ip_limit_refused_total", "Connections refused by the hard per-source-IP concurrent-connection cap, before a PeerIndex is allocated", snap.Hardening.TotalIpLimitRefused);
         WriteCounter(writer, "dcl_pulse_ip_limit_whitelist_bypass_total", "Connections over the per-IP cap that were admitted because the source IP is whitelisted", snap.Hardening.TotalIpLimitWhitelistBypass);
         WriteGauge(writer, "dcl_pulse_ip_limit_tracked_ips", "Distinct source IPs currently holding at least one connection", snap.Hardening.IpLimitTrackedIps);
+
+        WriteGauge(writer, "dcl_pulse_scene_listener_connected", "Currently connected scene listeners", snap.SceneListener.Connected);
+        WriteCounter(writer, "dcl_pulse_scene_listener_forbidden_messages_dropped_total", "Messages dropped from scene listeners that attempted a forbidden operation", snap.SceneListener.TotalForbiddenMessagesDropped);
+        WriteCounter(writer, "dcl_pulse_scene_listener_visible_subjects_sum", "Sum of visible subjects observed across scene-listener announcements (histogram _sum)", snap.SceneListener.VisibleSubjectsSum);
+        WriteCounter(writer, "dcl_pulse_scene_listener_visible_subjects_count", "Number of scene-listener visible-subject observations (histogram _count)", snap.SceneListener.VisibleSubjectsCount);
 
         WriteHistogramHeader(writer, "dcl_pulse_delta_staleness_ms", "Publish-to-fanout staleness of STATE_DELTA in ms, by AoI tier");
         WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier0Ms, "tier=\"0\"");

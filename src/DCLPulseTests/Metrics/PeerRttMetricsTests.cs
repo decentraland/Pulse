@@ -15,8 +15,8 @@ public class PeerRttMetricsTests
     [Test]
     public void Rtt_measurement_routes_to_the_matching_continent_histogram()
     {
-        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
-        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(8), new ServerMessageCounters(10));
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
         collector.StartAsync(CancellationToken.None);
 
         MetricsSnapshot before = collector.TakeSnapshot();
@@ -35,8 +35,8 @@ public class PeerRttMetricsTests
     {
         var snap = new MetricsSnapshot
         {
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
             Transport = new MetricsSnapshot.TransportSnapshot
             {
                 ByTransport = new MetricsSnapshot.PerTransportCounters[Enum.GetValues<TransportId>().Length],
@@ -72,8 +72,8 @@ public class PeerRttMetricsTests
     {
         var snap = new MetricsSnapshot
         {
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
             Transport = new MetricsSnapshot.TransportSnapshot
             {
                 ByTransport = new MetricsSnapshot.PerTransportCounters[Enum.GetValues<TransportId>().Length],

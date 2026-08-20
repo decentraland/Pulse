@@ -20,8 +20,8 @@ public class HardeningMetricsTests
     [SetUp]
     public void SetUp()
     {
-        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
-        collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(10), new ServerMessageCounters(10));
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
         collector.StartAsync(CancellationToken.None);
     }
 
@@ -60,8 +60,8 @@ public class HardeningMetricsTests
                 TotalIpLimitWhitelistBypass = 2,
                 IpLimitTrackedIps = 4,
             },
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
         });
 
         Assert.Multiple(() =>
@@ -82,8 +82,8 @@ public class HardeningMetricsTests
         string output = Format(new MetricsSnapshot
         {
             Transport = new MetricsSnapshot.TransportSnapshot { ByTransport = new MetricsSnapshot.PerTransportCounters[2] },
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
         });
 
         Assert.That(output, Does.Not.Contain("feature_flags"));

@@ -13,10 +13,8 @@ public class HistogramCollectorTests
     [SetUp]
     public void SetUp()
     {
-        // Match the constructor arities used by existing tests (see PeerSimulationTests.SetUp
-        // for MessagePipe/ServerMessageCounters; mirror whatever ClientMessageCounters takes).
-        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
-        collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(10), new ServerMessageCounters(10));
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
         collector.StartAsync(CancellationToken.None);
     }
 

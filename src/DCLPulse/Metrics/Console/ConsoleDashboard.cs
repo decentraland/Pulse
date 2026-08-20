@@ -75,6 +75,7 @@ public sealed class ConsoleDashboard(
         (ClientMessage.MessageOneofCase.EmoteStart, "EmoteStart", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.EmoteStop, "EmoteStop", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.Teleport, "Teleport", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.SceneListenerHandshake, "SceneListenerHandshake", STYLE_INBOUND),
     ]);
 
     private static readonly MessageTableConfig<ServerMessage.MessageOneofCase> OUTGOING_MESSAGES_CONFIG = new ("Outgoing Messages",
@@ -117,6 +118,11 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker ipLimitWhitelistBypassTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker ipLimitTrackedIpsTracker = new (SPARKLINE_MAX_SAMPLES);
 
+    // Scene-listener trackers.
+    private readonly GaugeTracker sceneListenersConnectedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker sceneListenerForbiddenDroppedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker sceneListenerVisibleSubjectsTracker = new (SPARKLINE_MAX_SAMPLES);
+
     // Latency trackers — histogram-backed; percentile columns show value distribution (ms/µs).
     private readonly HistogramTracker deltaStalenessT0Tracker = new ();
     private readonly HistogramTracker deltaStalenessT1Tracker = new ();
@@ -158,6 +164,9 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView ipLimitRefused = new ();
     private readonly RateStatsView ipLimitWhitelistBypass = new ();
     private readonly RateStatsView ipLimitTrackedIps = new ();
+    private readonly RateStatsView sceneListenersConnected = new ();
+    private readonly RateStatsView sceneListenerForbiddenDropped = new ();
+    private readonly RateStatsView sceneListenerVisibleSubjects = new ();
     private readonly RateStatsView deltaStalenessT0 = new ();
     private readonly RateStatsView deltaStalenessT1 = new ();
     private readonly RateStatsView deltaStalenessT2 = new ();
@@ -188,6 +197,9 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline ipLimitRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline ipLimitWhitelistBypassSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline ipLimitTrackedIpsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenersConnectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenerForbiddenDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenerVisibleSubjectsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline deltaStalenessT0Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline deltaStalenessT1Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline deltaStalenessT2Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -322,6 +334,22 @@ public sealed class ConsoleDashboard(
 
         UpdateIpLimit(snap.Hardening, elapsed);
 
+        // Scene-listener gauge + rate + histogram mean.
+        RateStats connectedStats = sceneListenersConnectedTracker.Record(snap.SceneListener.Connected);
+        RateStats forbiddenDroppedRate = sceneListenerForbiddenDroppedTracker.Update(snap.SceneListener.TotalForbiddenMessagesDropped, elapsed);
+        double visibleSubjectsMean = snap.SceneListener.VisibleSubjectsCount > 0
+            ? (double)snap.SceneListener.VisibleSubjectsSum / snap.SceneListener.VisibleSubjectsCount
+            : 0.0;
+        RateStats visibleSubjectsStats = sceneListenerVisibleSubjectsTracker.Record(visibleSubjectsMean);
+
+        sceneListenersConnected.Apply(connectedStats, v => v.ToString("N0"));
+        sceneListenerForbiddenDropped.Apply(forbiddenDroppedRate, v => v.ToString("N0"));
+        sceneListenerVisibleSubjects.Apply(visibleSubjectsStats, v => v.ToString("N1"));
+
+        ShiftSample(sceneListenersConnectedSparkline.Values, snap.SceneListener.Connected);
+        ShiftSample(sceneListenerForbiddenDroppedSparkline.Values, forbiddenDroppedRate.PerSec);
+        ShiftSample(sceneListenerVisibleSubjectsSparkline.Values, visibleSubjectsMean);
+
         // Latency histograms.
         RateStats stalenessT0Stats = deltaStalenessT0Tracker.Update(snap.Simulation.DeltaStalenessTier0Ms, elapsed);
         RateStats stalenessT1Stats = deltaStalenessT1Tracker.Update(snap.Simulation.DeltaStalenessTier1Ms, elapsed);
@@ -416,6 +444,16 @@ public sealed class ConsoleDashboard(
 
         var hardening = new Group("Hardening", hardeningTable);
 
+        var sceneListenerTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Connected", sceneListenersConnected, sceneListenersConnectedSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Forbidden Dropped", sceneListenerForbiddenDropped, sceneListenerForbiddenDroppedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Visible Subjects", sceneListenerVisibleSubjects, sceneListenerVisibleSubjectsSparkline.Style(STYLE_INBOUND)),
+            ]);
+
+        var sceneListener = new Group("Scene Listener", sceneListenerTable);
+
         var latencyTable = new Table(
             TableHeaders(),
             [
@@ -440,6 +478,7 @@ public sealed class ConsoleDashboard(
                 pipeline,
                 webTransportGroup,
                 hardening,
+                sceneListener,
                 latency,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()

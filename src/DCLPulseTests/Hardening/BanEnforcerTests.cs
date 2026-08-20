@@ -31,7 +31,7 @@ public class BanEnforcerTests
         banList = new BanList();
         messagePipe = new MessagePipe(
             Substitute.For<ILogger<MessagePipe>>(),
-            new ServerMessageCounters(10));
+            new ServerMessageCounters());
         identityBoard = new IdentityBoard(MAX_PEERS);
         enforcer = new BanEnforcer(
             Substitute.For<ILogger<BanEnforcer>>(),

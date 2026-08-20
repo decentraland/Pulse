@@ -52,6 +52,7 @@ public class PlayerStateInputHandlerTests
                 {
                     MaxRealmLength = 0, MaxEmoteDurationMs = 0,
                 }),
+                Options.Create(new SceneListenerOptions()),
                 parcelEncoder,
                 Substitute.For<ITransport>()));
 

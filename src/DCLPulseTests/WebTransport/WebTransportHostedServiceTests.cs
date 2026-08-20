@@ -39,7 +39,7 @@ public class WebTransportHostedServiceTests
     {
         host = new RecordingWebTransportHost();
 
-        messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10));
+        messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
         allocator = new PeerIndexAllocator(MAX_PEERS);
         identityBoard = new IdentityBoard(MAX_PEERS);
     }

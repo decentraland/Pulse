@@ -64,6 +64,10 @@ if (!useWebTransport)
 
 Console.WriteLine($"Transport: {(useWebTransport ? "WebTransport" : "ENet")}");
 
+// Scene-listener mode: connect receive-only for a fixed parcel set, never simulate or send.
+if (!string.IsNullOrWhiteSpace(options.SceneListenerParcels))
+    return await RunSceneListenerAsync();
+
 // When running as a worker child, accounts are pre-created by the orchestrator
 var accountNames = new string[options.BotCount];
 
@@ -182,6 +186,193 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
 
     Console.WriteLine($"[{accountName}] Ready.");
     return session;
+}
+
+// --- Scene-listener mode ---
+
+async Task<int> RunSceneListenerAsync()
+{
+    List<ParcelRect> parcelRects = ParseListenerRects(options.SceneListenerParcels);
+
+    if (parcelRects.Count == 0)
+    {
+        Console.Error.WriteLine(
+            "No valid parcels in --scene-listener-parcels; expected comma-separated x:z or x1:z1..x2:z2 specs (e.g. -7:0,-6:0..-5:1).");
+        return 1;
+    }
+
+    string announcedRects = string.Join(", ", parcelRects.Select(FormatRect));
+
+    string listenerAccount = options.AccountPrefix;
+
+    Console.WriteLine($"[{listenerAccount}] Ensuring account exists..");
+    await MetaForge.RunCommandAsync($"account create {listenerAccount} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+
+    Console.WriteLine($"[{listenerAccount}] Signing auth chain..");
+    LoginResult login = await authenticator.LoginAsync(listenerAccount, lifeCycleCts.Token);
+
+    var pipe = new MessagePipe();
+    var listenerTransport = new BotTransport(sharedTransport, pipe);
+    var service = new PulseMultiplayerService(listenerTransport, pipe);
+
+    Console.WriteLine($"[{listenerAccount}] Connecting as scene listener to {options.ServerIp}:{options.ServerPort} " +
+                      $"for rects {announcedRects} in realm '{options.Realm}'..");
+
+    await service.ConnectAsSceneListenerAsync(options.ServerIp, options.ServerPort, login.AuthChainJson,
+        options.Realm, parcelRects, lifeCycleCts.Token);
+
+    Console.WriteLine($"[{listenerAccount}] Scene listener ready. Observing {parcelRects.Count} rect(s): {announcedRects}. Press Ctrl+C to quit.");
+
+    await ProcessListenerEventsAsync(listenerAccount, service);
+
+    await service.DisconnectAsync(DisconnectReason.GRACEFUL, CancellationToken.None);
+    service.Dispose();
+    await Task.Delay(200);
+    sharedTransport.Dispose();
+    return 0;
+}
+
+/// <summary>
+///     Parses "x:z" (single parcel) and "x1:z1..x2:z2" (inclusive rect) specs, comma-separated.
+///     Malformed entries are skipped with a warning; an empty result aborts.
+/// </summary>
+static List<ParcelRect> ParseListenerRects(string spec)
+{
+    var rects = new List<ParcelRect>();
+
+    foreach (string entry in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        string[] corners = entry.Split("..", StringSplitOptions.TrimEntries);
+
+        if (corners.Length is not (1 or 2) || !TryParseParcel(corners[0], out int minX, out int minZ))
+        {
+            Console.WriteLine($"Skipping malformed parcel spec '{entry}' (expected x:z or x1:z1..x2:z2)");
+            continue;
+        }
+
+        int maxX = minX, maxZ = minZ;
+
+        if (corners.Length == 2 && !TryParseParcel(corners[1], out maxX, out maxZ))
+        {
+            Console.WriteLine($"Skipping malformed parcel spec '{entry}' (expected x:z or x1:z1..x2:z2)");
+            continue;
+        }
+
+        rects.Add(new ParcelRect
+        {
+            MinX = Math.Min(minX, maxX),
+            MinZ = Math.Min(minZ, maxZ),
+            MaxX = Math.Max(minX, maxX),
+            MaxZ = Math.Max(minZ, maxZ),
+        });
+    }
+
+    return rects;
+}
+
+static bool TryParseParcel(string s, out int x, out int z)
+{
+    x = 0;
+    z = 0;
+    string[] parts = s.Split(':', StringSplitOptions.TrimEntries);
+    return parts.Length == 2 && int.TryParse(parts[0], out x) && int.TryParse(parts[1], out z);
+}
+
+static string FormatRect(ParcelRect r) =>
+    r.MinX == r.MaxX && r.MinZ == r.MaxZ
+        ? $"[{r.MinX}:{r.MinZ}]"
+        : $"[{r.MinX}:{r.MinZ}..{r.MaxX}:{r.MaxZ}]";
+
+// Receive-only: subscribe to the positional stream and log each message with subject id + parcel.
+// Never sends anything back to the server after the handshake.
+//
+// We ALSO subscribe to EmoteStarted/EmoteStopped/PlayerProfileVersionAnnounced — messages a scene
+// listener must NEVER receive. Without an active subscription the service silently drops them
+// (RouteIncomingMessagesAsync discards messages with no subscriber), so a "0 received" tally would
+// be true by construction rather than evidence. Subscribing turns any server-side leak into a
+// visible LEAK line and a non-zero counter.
+async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerService service)
+{
+    string Parcel(int index)
+    {
+        parcelEncoder.Decode(index, out int x, out int z);
+        return $"{x}:{z}";
+    }
+
+    long positionalCount = 0;
+    long leakCount = 0;
+
+    try
+    {
+        await foreach (ServerMessage message in service.SubscribeAllAsync(lifeCycleCts.Token,
+                           ServerMessage.MessageOneofCase.PlayerJoined,
+                           ServerMessage.MessageOneofCase.PlayerLeft,
+                           ServerMessage.MessageOneofCase.PlayerStateDelta,
+                           ServerMessage.MessageOneofCase.PlayerStateFull,
+                           ServerMessage.MessageOneofCase.Teleported,
+                           // Leak-detection subscriptions: a scene listener must never see these.
+                           ServerMessage.MessageOneofCase.EmoteStarted,
+                           ServerMessage.MessageOneofCase.EmoteStopped,
+                           ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced))
+        {
+            switch (message.MessageCase)
+            {
+                case ServerMessage.MessageOneofCase.PlayerJoined:
+                    PlayerJoined joined = message.PlayerJoined;
+                    positionalCount++;
+                    Console.WriteLine($"[{accountName}] PlayerJoined subject={joined.State.SubjectId} " +
+                                      $"parcel={Parcel(joined.State.State.ParcelIndex)} user={joined.UserId}");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerLeft:
+                    positionalCount++;
+                    Console.WriteLine($"[{accountName}] PlayerLeft subject={message.PlayerLeft.SubjectId}");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerStateDelta:
+                    PlayerStateDeltaTier0 delta = message.PlayerStateDelta;
+                    positionalCount++;
+                    // parcel_index is an optional delta field, only present when it changed.
+                    string deltaParcel = delta.HasParcelIndex ? Parcel(delta.ParcelIndex) : "(unchanged)";
+                    Console.WriteLine($"[{accountName}] PlayerStateDelta subject={delta.SubjectId} " +
+                                      $"parcel={deltaParcel} seq={delta.NewSeq}");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerStateFull:
+                    PlayerStateFull full = message.PlayerStateFull;
+                    positionalCount++;
+                    Console.WriteLine($"[{accountName}] PlayerStateFull subject={full.SubjectId} " +
+                                      $"parcel={Parcel(full.State.ParcelIndex)} seq={full.Sequence}");
+                    break;
+                case ServerMessage.MessageOneofCase.Teleported:
+                    TeleportPerformed teleport = message.Teleported;
+                    positionalCount++;
+                    Console.WriteLine($"[{accountName}] Teleported subject={teleport.SubjectId} " +
+                                      $"parcel={Parcel(teleport.State.ParcelIndex)} seq={teleport.Sequence}");
+                    break;
+                case ServerMessage.MessageOneofCase.EmoteStarted:
+                    leakCount++;
+                    Console.WriteLine($"[{accountName}] LEAK: EmoteStarted for subject {message.EmoteStarted.SubjectId} " +
+                                      "— server must never send this to a scene listener");
+                    break;
+                case ServerMessage.MessageOneofCase.EmoteStopped:
+                    leakCount++;
+                    Console.WriteLine($"[{accountName}] LEAK: EmoteStopped for subject {message.EmoteStopped.SubjectId} " +
+                                      "— server must never send this to a scene listener");
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced:
+                    leakCount++;
+                    Console.WriteLine($"[{accountName}] LEAK: PlayerProfileVersionAnnounced for subject " +
+                                      $"{message.PlayerProfileVersionAnnounced.SubjectId} " +
+                                      "— server must never send this to a scene listener");
+                    break;
+            }
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Graceful shutdown (Ctrl+C / stop file) cancels the subscription.
+    }
+
+    Console.WriteLine($"[{accountName}] Listener summary: positional messages={positionalCount}, " +
+                      $"suppressed-message LEAKS={leakCount}");
 }
 
 // --- WebTransport helpers ---

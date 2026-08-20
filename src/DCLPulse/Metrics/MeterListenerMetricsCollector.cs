@@ -52,6 +52,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long bannedRefused;
     private long corruptedPacket;
 
+    // Scene-listener totals.
+    private int sceneListenersConnected;
+    private long sceneListenerForbiddenMessagesDropped;
+    private long sceneListenerVisibleSubjectsSum;
+    private long sceneListenerVisibleSubjectsCount;
+
     // Latency histograms — bucketed by the measurement callbacks on recording threads.
     private readonly BucketHistogram deltaStalenessTier0 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
     private readonly BucketHistogram deltaStalenessTier1 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
@@ -149,6 +155,13 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
             },
+            SceneListener = new MetricsSnapshot.SceneListenerSnapshot
+            {
+                Connected = Volatile.Read(ref sceneListenersConnected),
+                TotalForbiddenMessagesDropped = Interlocked.Read(ref sceneListenerForbiddenMessagesDropped),
+                VisibleSubjectsSum = Interlocked.Read(ref sceneListenerVisibleSubjectsSum),
+                VisibleSubjectsCount = Interlocked.Read(ref sceneListenerVisibleSubjectsCount),
+            },
             Simulation = new MetricsSnapshot.SimulationSnapshot
             {
                 DeltaStalenessTier0Ms = deltaStalenessTier0.Snapshot(),
@@ -237,6 +250,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
                 break;
+            case "pulse.scene_listener.forbidden_messages_dropped":
+                Interlocked.Add(ref sceneListenerForbiddenMessagesDropped, value);
+                break;
             case "pulse.sim.delta_staleness_tier0_ms":
                 deltaStalenessTier0.Record(value);
                 break;
@@ -290,6 +306,13 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.pre_auth_in_flight":
                 Interlocked.Add(ref preAuthInFlight, value);
+                break;
+            case "pulse.scene_listener.connected":
+                Interlocked.Add(ref sceneListenersConnected, value);
+                break;
+            case "pulse.scene_listener.visible_subjects":
+                Interlocked.Add(ref sceneListenerVisibleSubjectsSum, value);
+                Interlocked.Increment(ref sceneListenerVisibleSubjectsCount);
                 break;
         }
     }

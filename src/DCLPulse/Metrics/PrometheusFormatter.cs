@@ -22,6 +22,7 @@ internal static class PrometheusFormatter
         ClientMessage.MessageOneofCase.EmoteStart,
         ClientMessage.MessageOneofCase.EmoteStop,
         ClientMessage.MessageOneofCase.Teleport,
+        ClientMessage.MessageOneofCase.SceneListenerHandshake,
     ];
 
     private static readonly ServerMessage.MessageOneofCase[] OUTGOING_MESSAGE_TYPES =
@@ -65,6 +66,11 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_handshake_replay_rejected_total", "Handshakes rejected because the (wallet, timestamp) pair was already accepted within the anti-replay window", snap.Hardening.TotalHandshakeReplayRejected);
         WriteCounter(writer, "dcl_pulse_banned_refused_total", "Handshake rejections and active-peer evictions triggered by the platform ban list", snap.Hardening.TotalBannedRefused);
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
+
+        WriteGauge(writer, "dcl_pulse_scene_listener_connected", "Currently connected scene listeners", snap.SceneListener.Connected);
+        WriteCounter(writer, "dcl_pulse_scene_listener_forbidden_messages_dropped_total", "Messages dropped from scene listeners that attempted a forbidden operation", snap.SceneListener.TotalForbiddenMessagesDropped);
+        WriteCounter(writer, "dcl_pulse_scene_listener_visible_subjects_sum", "Sum of visible subjects observed across scene-listener announcements (histogram _sum)", snap.SceneListener.VisibleSubjectsSum);
+        WriteCounter(writer, "dcl_pulse_scene_listener_visible_subjects_count", "Number of scene-listener visible-subject observations (histogram _count)", snap.SceneListener.VisibleSubjectsCount);
 
         WriteHistogramHeader(writer, "dcl_pulse_delta_staleness_ms", "Publish-to-fanout staleness of STATE_DELTA in ms, by AoI tier");
         WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier0Ms, "tier=\"0\"");

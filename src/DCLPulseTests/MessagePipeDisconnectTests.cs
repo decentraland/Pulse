@@ -23,7 +23,7 @@ public class MessagePipeDisconnectTests
     {
         pipe = new MessagePipe(
             Substitute.For<ILogger<MessagePipe>>(),
-            new ServerMessageCounters(10));
+            new ServerMessageCounters());
     }
 
     [Test]
@@ -56,7 +56,7 @@ public class MessagePipeDisconnectTests
     {
         // Disconnects carry no ServerMessage, so they must not bump the per-type counter —
         // that would skew the Prometheus / dashboard outgoing-message rates.
-        var counters = new ServerMessageCounters(10);
+        var counters = new ServerMessageCounters();
         var localPipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), counters);
 
         localPipe.SendDisconnect(new PeerIndex(1), DisconnectReason.AUTH_FAILED);

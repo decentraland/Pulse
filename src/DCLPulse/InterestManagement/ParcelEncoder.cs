@@ -32,6 +32,14 @@ public class ParcelEncoder
 
     public bool IsValidIndex(int index) => (uint)index < (uint)MaxIndexExclusive;
 
+    /// <summary>
+    ///     Whether (x, z) lies within the encodable (padded) parcel bounds. Required before
+    ///     <see cref="Encode" /> for client-supplied coordinates: Encode is pure arithmetic
+    ///     and out-of-range coordinates alias into other rows' indices instead of failing.
+    /// </summary>
+    public bool IsValidCoordinate(int x, int z) =>
+        x >= minX && x < minX + width && z >= minZ && z < minZ + height;
+
     public int EncodeFromGlobalPosition(Vector3 globalPosition, out Vector3 localPosition)
     {
         int x = (int)MathF.Floor(globalPosition.X / parcelSize);

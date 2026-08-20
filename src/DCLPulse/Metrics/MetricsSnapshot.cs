@@ -6,6 +6,7 @@ public readonly record struct MetricsSnapshot
     public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
     public SceneListenerSnapshot SceneListener { get; init; }
+    public SimulationSnapshot Simulation { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
@@ -18,6 +19,15 @@ public readonly record struct MetricsSnapshot
         // both transports, so they are not attributable to one transport.
         public int IncomingQueueDepth { get; init; }
         public int OutgoingQueueDepth { get; init; }
+
+        /// <summary>ENet outbound drain-cycle duration (µs), non-empty cycles only.</summary>
+        public HistogramSnapshot OutgoingDrainCycleUs { get; init; }
+
+        /// <summary>
+        ///     Peer RTT histograms indexed by (int)Continent — see Continents.LABELS.
+        ///     Sampled from ENet peers (ENet maintains RTT via reliable-channel ACKs).
+        /// </summary>
+        public HistogramSnapshot[]? PeerRttMs { get; init; }
     }
 
     public readonly record struct PerTransportCounters
@@ -63,5 +73,14 @@ public readonly record struct MetricsSnapshot
         // as the standard _sum / _count decomposition.
         public long VisibleSubjectsSum { get; init; }
         public long VisibleSubjectsCount { get; init; }
+    }
+
+    public readonly record struct SimulationSnapshot
+    {
+        public HistogramSnapshot DeltaStalenessTier0Ms { get; init; }
+        public HistogramSnapshot DeltaStalenessTier1Ms { get; init; }
+        public HistogramSnapshot DeltaStalenessTier2Ms { get; init; }
+        public HistogramSnapshot TickDurationUs { get; init; }
+        public long TotalTickOverruns { get; init; }
     }
 }

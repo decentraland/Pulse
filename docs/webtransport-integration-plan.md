@@ -4,7 +4,7 @@
 
 Pulse speaks **ENet/UDP only** today. Native (Unity) clients can use it, but **browsers cannot open raw UDP/ENet sockets** — the only way a browser reaches a UDP-based game server is **WebTransport** (HTTP/3 over QUIC). To let the Decentraland **web explorer** connect to Pulse, we add WebTransport as a *second, coexisting* transport **alongside** ENet — not a replacement. ENet remains the path for native clients; WebTransport unlocks the browser.
 
-Groundwork is already on branch `feat/webtransport`: shared transport contracts were extracted into the new `src/DCLPulse.Transport.Shared` project (`PacketMode`, `DisconnectReason`, `ENetChannel`, and the ENet managed binding `ENet.cs`).
+Groundwork is already on branch `feat/webtransport`: shared transport contracts were extracted into the new `src/DCLPulse.Transport` project (`PacketMode`, `DisconnectReason`, `ENetChannel`, and the ENet managed binding `ENet.cs`).
 
 **Decisions (confirmed):**
 - Primary audience: **browser clients** (drives the TLS/cert strategy below).
@@ -81,7 +81,7 @@ WebTransport mandates TLS over QUIC. Browsers validate two ways: a **CA-signed c
 
 ## 2. Reliability model & how it affects Pulse
 
-WebTransport offers two primitives; map `PacketMode` ([`PacketMode.cs`](src/DCLPulse.Transport.Shared/Runtime/PacketMode.cs)) onto them:
+WebTransport offers two primitives; map `PacketMode` ([`PacketMode.cs`](src/DCLPulse.Transport/Package/Runtime/PacketMode.cs)) onto them:
 
 | `PacketMode` | ENet today | WebTransport mapping | Notes |
 |---|---|---|---|
@@ -141,7 +141,7 @@ Existing transport metrics ([`PulseMetrics.Transport.cs`](src/DCLPulse/Metrics/P
 ## 4. Code layout, config, and wiring
 
 - **`WebTransportHostedService`** in `src/DCLPulse/Transport/` next to `ENetHostedService`, implementing `ITransport` ([`ITransport.cs`](src/DCLPulse/Transport/ITransport.cs)). Its loop mirrors ENet: `wt_host_service` drain → on Connect `TryAllocate` + `PreAuthAdmission.TryAdmit` + `OnPeerConnected`; on data parse `ClientMessage` (`CorruptedPacketLimiter.RecordCorruption` on failure) + `OnDataReceived`; on Disconnect `MarkPending` + `OnPeerDisconnected` + hardening `Release`; outgoing drain maps `PacketMode` → stream/datagram.
-- **Channel-semantics helper** (stream length-framing + datagram seq/dedup) in `DCLPulse.Transport.Shared` (a `WebTransport/` subfolder) so it's unit-testable in isolation. Keep `PacketMode`/`DisconnectReason` where they are; leave `ENet.cs` in place (don't refactor ENet to avoid churn).
+- **Channel-semantics helper** (stream length-framing + datagram seq/dedup) in `DCLPulse.Transport` (a `WebTransport/` subfolder) so it's unit-testable in isolation. Keep `PacketMode`/`DisconnectReason` where they are; leave `ENet.cs` in place (don't refactor ENet to avoid churn).
 - **Package reference**: simplest is to add the `Decentraland.RustWebTransport` `PackageReference` directly to `DCLPulse.csproj` (or a dedicated `src/DCLWebTransport` project the way `DCLAuth` holds the RustEthereum reference). Prefer adding it to the project that owns `WebTransportHostedService`.
 - **Config**: a `WebTransport` section in `appsettings*.json` (`Enabled`, `Port`, `CertPath`/`KeyPath` or ACME settings, `MaxDatagramBytes`, send-queue bounds), overridable via Docker env (`WebTransport__Enabled`, …) like the existing `Peers__ResyncWithDelta`. Both transports start independently; either can be disabled.
 

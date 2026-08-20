@@ -22,8 +22,8 @@ public class PrometheusHistogramTests
         {
             // Write() iterates the enum counters and the per-transport array unconditionally —
             // they must be non-null.
-            IncomingMessages = new ClientMessageCounters(10),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
             Transport = new MetricsSnapshot.TransportSnapshot
             {
                 ByTransport = new MetricsSnapshot.PerTransportCounters[Enum.GetValues<TransportId>().Length],

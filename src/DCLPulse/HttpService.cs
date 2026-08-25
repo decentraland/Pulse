@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Options;
+using Pulse.FeatureFlags;
 using Pulse.Metrics;
 using System.Net;
+using System.Text.Json;
 
 namespace Pulse;
 
@@ -8,14 +10,14 @@ public sealed class HttpService(
     ILogger<HttpService> logger,
     IOptions<HttpServiceOptions> options,
     IMetricsCollector metricsCollector,
-    MetricsBearerToken metricsBearerToken) : BackgroundService
+    MetricsBearerToken metricsBearerToken,
+    PulseFlagsConfigurationProvider featureFlagsProvider) : BackgroundService
 {
-    private static readonly byte[] ABOUT_RESPONSE =
-        System.Text.Encoding.UTF8.GetBytes(
-            System.Text.Json.JsonSerializer.Serialize(new
-            {
-                commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown",
-            }));
+    private static readonly string COMMIT_HASH = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
+
+    // camelCase members, verbatim dictionary keys: the override map is keyed by configuration paths
+    // ("Transport:Hardening:IpLimiter:Enabled") that must read back exactly as typed.
+    private static readonly JsonSerializerOptions ABOUT_JSON = new () { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -44,7 +46,7 @@ public sealed class HttpService(
                         case "/about":
                             ctx.Response.StatusCode = 200;
                             ctx.Response.ContentType = "application/json";
-                            await ctx.Response.OutputStream.WriteAsync(ABOUT_RESPONSE, stoppingToken);
+                            await ctx.Response.OutputStream.WriteAsync(BuildAboutResponse(), stoppingToken);
                             break;
                         case "/metrics":
                             if (!AuthorizeMetrics(ctx.Request))
@@ -79,6 +81,15 @@ public sealed class HttpService(
         }
     }
 
+    /// <summary>
+    ///     Serialises the current <c>/about</c> body. Built per request rather than cached: the
+    ///     feature-flag overrides change whenever a new remote document is applied, and the point of
+    ///     reporting them is to show what this task is running right now.
+    /// </summary>
+    private byte[] BuildAboutResponse() =>
+        JsonSerializer.SerializeToUtf8Bytes(
+            new AboutResponse(COMMIT_HASH, featureFlagsProvider.AppliedOverrides), ABOUT_JSON);
+
     private bool AuthorizeMetrics(HttpListenerRequest request)
     {
         if (string.IsNullOrEmpty(metricsBearerToken.Value))
@@ -90,4 +101,14 @@ public sealed class HttpService(
                && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
                && header.AsSpan(7).Equals(metricsBearerToken.Value, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    ///     Body of <c>/about</c>. <paramref name="FeatureFlagOverrides" /> is the remote
+    ///     configuration this task is running with, reported verbatim: the remote document may set
+    ///     any configuration key, so whatever it sets is what appears here — on an endpoint that
+    ///     takes no bearer token. Whoever authors the document decides what this endpoint publishes.
+    /// </summary>
+    private readonly record struct AboutResponse(
+        string CommitHash,
+        IReadOnlyDictionary<string, string?> FeatureFlagOverrides);
 }

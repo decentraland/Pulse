@@ -114,6 +114,9 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker handshakeReplayRejectedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker bannedRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker ipLimitRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker ipLimitWhitelistBypassTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker ipLimitTrackedIpsTracker = new (SPARKLINE_MAX_SAMPLES);
 
     // Scene-listener trackers.
     private readonly GaugeTracker sceneListenersConnectedTracker = new (SPARKLINE_MAX_SAMPLES);
@@ -158,6 +161,9 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView handshakeReplayRejected = new ();
     private readonly RateStatsView bannedRefused = new ();
     private readonly RateStatsView corruptedPacket = new ();
+    private readonly RateStatsView ipLimitRefused = new ();
+    private readonly RateStatsView ipLimitWhitelistBypass = new ();
+    private readonly RateStatsView ipLimitTrackedIps = new ();
     private readonly RateStatsView sceneListenersConnected = new ();
     private readonly RateStatsView sceneListenerForbiddenDropped = new ();
     private readonly RateStatsView sceneListenerVisibleSubjects = new ();
@@ -188,6 +194,9 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline handshakeReplayRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline bannedRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline ipLimitRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline ipLimitWhitelistBypassSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline ipLimitTrackedIpsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline sceneListenersConnectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline sceneListenerForbiddenDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline sceneListenerVisibleSubjectsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -323,6 +332,8 @@ public sealed class ConsoleDashboard(
         ShiftSample(bannedRefusedSparkline.Values, bannedRefusedRate.PerSec);
         ShiftSample(corruptedPacketSparkline.Values, corruptedPacketRate.PerSec);
 
+        UpdateIpLimit(snap.Hardening, elapsed);
+
         // Scene-listener gauge + rate + histogram mean.
         RateStats connectedStats = sceneListenersConnectedTracker.Record(snap.SceneListener.Connected);
         RateStats forbiddenDroppedRate = sceneListenerForbiddenDroppedTracker.Update(snap.SceneListener.TotalForbiddenMessagesDropped, elapsed);
@@ -378,6 +389,21 @@ public sealed class ConsoleDashboard(
         outgoingMessagesState.Apply(outgoingRates);
     }
 
+    private void UpdateIpLimit(MetricsSnapshot.HardeningSnapshot hardening, double elapsed)
+    {
+        RateStats refusedRate = ipLimitRefusedTracker.Update(hardening.TotalIpLimitRefused, elapsed);
+        RateStats bypassRate = ipLimitWhitelistBypassTracker.Update(hardening.TotalIpLimitWhitelistBypass, elapsed);
+        RateStats trackedIpsStats = ipLimitTrackedIpsTracker.Record(hardening.IpLimitTrackedIps);
+
+        ipLimitRefused.Apply(refusedRate, v => v.ToString("N0"));
+        ipLimitWhitelistBypass.Apply(bypassRate, v => v.ToString("N0"));
+        ipLimitTrackedIps.Apply(trackedIpsStats, v => v.ToString("N0"));
+
+        ShiftSample(ipLimitRefusedSparkline.Values, refusedRate.PerSec);
+        ShiftSample(ipLimitWhitelistBypassSparkline.Values, bypassRate.PerSec);
+        ShiftSample(ipLimitTrackedIpsSparkline.Values, hardening.IpLimitTrackedIps);
+    }
+
     private Visual BuildVisualTree()
     {
         var pipelineTable = new Table(
@@ -411,6 +437,9 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Handshake Replay Rejected", handshakeReplayRejected, handshakeReplayRejectedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Banned Refused", bannedRefused, bannedRefusedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Corrupted Packets", corruptedPacket, corruptedPacketSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("IP Limit Tracked IPs", ipLimitTrackedIps, ipLimitTrackedIpsSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("IP Limit Refused", ipLimitRefused, ipLimitRefusedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("IP Limit Whitelisted", ipLimitWhitelistBypass, ipLimitWhitelistBypassSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
 
         var hardening = new Group("Hardening", hardeningTable);

@@ -19,6 +19,7 @@ public sealed partial class ENetHostedService(
     IPeerIndexAllocator peerIndexAllocator,
     IdentityBoard identityBoard,
     PreAuthAdmission preAuthAdmission,
+    IpLimiter ipLimiter,
     CorruptedPacketLimiter corruptedPacketLimiter,
     ContinentResolver continentResolver
 ) : BackgroundService
@@ -271,20 +272,7 @@ public sealed partial class ENetHostedService(
         {
             case EventType.Connect:
             {
-                // Allocate a slot stamped as ENet-owned; the stamp rides on the PeerIndex through every
-                // store it lands in (slotToPeerIndex, connectedPeers, the worker's peerStates, IdentityBoard).
-                if (!peerIndexAllocator.TryAllocate(TransportId.ENet, out PeerIndex peerIndex))
-                {
-                    // Pool exhausted — refuse the connection. This can happen if the pool is the
-                    // same size as ENet's max peers and every pending-recycle slot is still in grace.
-                    // Operator should raise the pool size or shorten the grace window.
-                    logger.LogWarning("PeerIndex pool exhausted — refusing connection from {IP}:{Port}",
-                        netEvent.Peer.IP, netEvent.Peer.Port);
-                    netEvent.Peer.DisconnectNow((uint)DisconnectReason.SERVER_FULL);
-                    break;
-                }
-
-                if (!TryAdmitOrRefuse(ref netEvent, peerIndex))
+                if (!TryAdmitConnection(ref netEvent, out PeerIndex peerIndex))
                     break;
 
                 netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);

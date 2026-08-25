@@ -121,8 +121,24 @@ public sealed class ENetTransport : IDisposable
 
             case EventType.Disconnect:
             case EventType.Timeout:
+            {
+                // netEvent.Data carries the uint the server passed to Disconnect/DisconnectNow.
+                // Timeout carries nothing, so only Disconnect names a server-side reason.
+                if (netEvent.Type == EventType.Timeout)
+                    Console.WriteLine($"[peer {peerId}] timed out.");
+                else
+                    Console.WriteLine(
+                        $"[peer {peerId}] disconnected by server: {(DisconnectReason)netEvent.Data} ({netEvent.Data}).");
+
+                // A refusal during the connect handshake may never produce a Connect event, which
+                // would leave the pending connect awaiting forever. Fault it instead.
+                if (connections.TryGetValue(peerId, out PeerConnection closed))
+                    closed.Completion?.TrySetException(new PulseException(
+                        $"peer {peerId} disconnected: {(DisconnectReason)netEvent.Data}"));
+
                 connections.Remove(peerId);
                 break;
+            }
 
             case EventType.Receive:
             {

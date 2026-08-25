@@ -4,6 +4,7 @@ using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Pulse;
+using Pulse.FeatureFlags;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Messaging.Hardening;
@@ -21,11 +22,54 @@ HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 builder.Logging.ClearProviders();
 
+// ── Runtime configuration ───────────────────────────────────────────────────────────────────────
+// dynamicconfig.json carries the offline defaults for every remotely settable knob, and those
+// defaults double as the type schema the remote document's values are checked against.
+// AddDynamicConfig inserts it below the environment-variable provider rather than appending, so the
+// defaults stay defaults: Transport__Hardening__IpLimiter__Enabled=true on a task definition wins.
+// See DynamicConfigExtensions.
+string dynamicConfigPath =
+    Path.Combine(builder.Environment.ContentRootPath, DynamicConfigSchema.FILE_NAME);
+
+builder.Configuration.AddDynamicConfig(dynamicConfigPath);
+
+var featureFlagsOptions = builder.Configuration
+                                 .GetSection(FeatureFlagsOptions.SECTION_NAME)
+                                 .Get<FeatureFlagsOptions>() ?? new FeatureFlagsOptions();
+
+var envName = new EnvName();
+var featureFlagsClient = new FeatureFlagsClient(featureFlagsOptions, envName);
+
+// Configuration sources are built before DI exists, so the blocking first load logs through a
+// bootstrap logger; the host's own logger replaces it once builder.Build() has run.
+ILoggerFactory bootstrapLoggerFactory =
+    LoggerFactory.Create(logging => logging.AddSimpleConsole().SetMinimumLevel(LogLevel.Information));
+
+var featureFlagsSource = new PulseFlagsConfigurationSource(
+    featureFlagsOptions,
+    DynamicConfigSchema.LoadFromFile(dynamicConfigPath),
+    featureFlagsClient,
+    bootstrapLoggerFactory.CreateLogger("Pulse.FeatureFlags"));
+
+// Appended last, so the chain is appsettings.json → appsettings.{Environment}.json →
+// dynamicconfig.json → environment variables → command line → remote pulse.json. Remote overrides
+// are the one layer meant to outrank an operator's environment — that is how a live server is
+// reconfigured without a redeploy.
+builder.Configuration.Sources.Add(featureFlagsSource);
+
+builder.Services.AddSingleton(featureFlagsOptions);
+builder.Services.AddSingleton(featureFlagsClient);
+builder.Services.AddSingleton(featureFlagsSource.Provider);
+builder.Services.AddHostedService<FeatureFlagsPoller>();
+
 builder.Services.Configure<ENetTransportOptions>(
     builder.Configuration.GetSection(ENetTransportOptions.SECTION_NAME));
 
 builder.Services.Configure<PreAuthAdmissionOptions>(
     builder.Configuration.GetSection(PreAuthAdmissionOptions.SECTION_NAME));
+
+builder.Services.Configure<IpLimiterOptions>(
+    builder.Configuration.GetSection(IpLimiterOptions.SECTION_NAME));
 
 builder.Services.Configure<CorruptedPacketLimiterOptions>(
     builder.Configuration.GetSection(CorruptedPacketLimiterOptions.SECTION_NAME));
@@ -52,6 +96,7 @@ builder.Services.Configure<BansOptions>(
     builder.Configuration.GetSection(BansOptions.SECTION_NAME));
 
 builder.Services.AddSingleton<PreAuthAdmission>();
+builder.Services.AddSingleton<IpLimiter>();
 builder.Services.AddSingleton<CorruptedPacketLimiter>();
 builder.Services.AddSingleton<HandshakeAttemptPolicy>();
 builder.Services.AddSingleton<MovementInputRateLimiter>();
@@ -220,7 +265,7 @@ builder.Services.Configure<HttpServiceOptions>(
 
 builder.Services.AddSingleton<MetricsBearerToken>();
 builder.Services.AddSingleton<CommsBearerToken>();
-builder.Services.AddSingleton<EnvName>();
+builder.Services.AddSingleton(envName);
 builder.Services.AddHostedService<HttpService>();
 builder.Services.AddHostedService<BansPollingHttpService>();
 
@@ -230,6 +275,13 @@ builder.Services.Configure<ParcelEncoderOptions>(
 builder.Services.AddSingleton<ParcelEncoder>();
 
 IHost host = builder.Build();
+
+// Swap the bootstrap console logger for the host's, so poll-time warnings don't corrupt the
+// ConsoleDashboard TUI.
+featureFlagsSource.Provider.UseLogger(
+    host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Pulse.FeatureFlags"));
+
+bootstrapLoggerFactory.Dispose();
 
 if (!webTransportEnabled)
     host.Services.GetRequiredService<ILoggerFactory>()

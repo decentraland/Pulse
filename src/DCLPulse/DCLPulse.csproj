@@ -36,6 +36,12 @@
         <ProjectReference Include="..\Protocol\Protocol.csproj" />
     </ItemGroup>
 
+    <!-- The Worker SDK only auto-copies appsettings*.json to the output directory; the default
+         content glob picks this file up but leaves it uncopied, so the metadata is set here. -->
+    <ItemGroup>
+        <Content Update="dynamicconfig.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
     <ItemGroup>
         <None Include="runtimes\win-x64\native\enet.dll">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

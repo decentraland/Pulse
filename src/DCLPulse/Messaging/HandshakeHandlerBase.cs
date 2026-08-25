@@ -193,12 +193,27 @@ public abstract class HandshakeHandlerBase(
         }
     }
 
+    /// <summary>
+    ///     Turns a peer away mid-handshake: flips <paramref name="existingState" /> to
+    ///     PENDING_DISCONNECT synchronously — so further packets from it fail
+    ///     <c>SkipFromUnauthorizedPeer</c> before the transport's Disconnect event lands — and
+    ///     disconnects it with <paramref name="reason" />. Same shape as
+    ///     <c>PeerDefense.Reject</c>, which post-auth defenses use; this one lives here because the
+    ///     handshake pipeline owns the peer's transport handle. Always returns <c>false</c>, never
+    ///     the outcome of the disconnect.
+    /// </summary>
+    protected bool RejectHandshake(PeerIndex from, PeerState existingState, DisconnectReason reason)
+    {
+        existingState.ConnectionState = PeerConnectionState.PENDING_DISCONNECT;
+        transport.Disconnect(from, reason);
+        return false;
+    }
+
     private void RejectBanned(PeerIndex from, PeerState state, string wallet)
     {
         SendResponse(from, success: false, "banned");
-        state.ConnectionState = PeerConnectionState.PENDING_DISCONNECT;
         PulseMetrics.Hardening.BANNED_REFUSED.Add(1);
-        transport.Disconnect(from, DisconnectReason.BANNED);
+        RejectHandshake(from, state, DisconnectReason.BANNED);
         logger.LogInformation("{Handshake} rejected: wallet {Wallet} is banned", LogName, wallet);
     }
 

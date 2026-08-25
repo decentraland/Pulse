@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using Pulse.Messaging;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
+using Pulse.Transport.Hardening;
 
 namespace Pulse.Metrics;
 
@@ -36,6 +37,10 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private readonly long[] unauthMessagesSkipped = new long[TRANSPORT_COUNT];
     private readonly long[] sendFailures = new long[TRANSPORT_COUNT];
 
+    // Per-connection-class per-IP refusals, indexed by (int)ConnectionClass — the counter carries a
+    // class tag, so the callback buckets each measurement the way transport totals are bucketed.
+    private readonly long[] ipLimitRefused = new long[ConnectionClasses.COUNT];
+
     // WebTransport-specific totals (no ENet analogue, so not per-transport).
     private long datagramsDroppedStale;
     private long datagramsDroppedOversize;
@@ -51,6 +56,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long handshakeReplayRejected;
     private long bannedRefused;
     private long corruptedPacket;
+    private long ipLimitWhitelistBypass;
+    private int ipLimitTrackedIps;
 
     // Scene-listener totals.
     private int sceneListenersConnected;
@@ -154,6 +161,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalHandshakeReplayRejected = Interlocked.Read(ref handshakeReplayRejected),
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
+                IpLimitRefusedByClass = SnapshotIpLimitRefused(),
+                TotalIpLimitWhitelistBypass = Interlocked.Read(ref ipLimitWhitelistBypass),
+                IpLimitTrackedIps = Volatile.Read(ref ipLimitTrackedIps),
             },
             SceneListener = new MetricsSnapshot.SceneListenerSnapshot
             {
@@ -183,6 +193,16 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             snapshots[i] = peerRttMs[i].Snapshot();
 
         return snapshots;
+    }
+
+    private long[] SnapshotIpLimitRefused()
+    {
+        var byClass = new long[ipLimitRefused.Length];
+
+        for (var i = 0; i < byClass.Length; i++)
+            byClass[i] = Interlocked.Read(ref ipLimitRefused[i]);
+
+        return byClass;
     }
 
     private void OnLongMeasurement(
@@ -250,6 +270,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
                 break;
+            case "pulse.hardening.ip_limit_refused":
+                Interlocked.Add(ref ipLimitRefused[ConnectionClassIndex(tags)], value);
+                break;
+            case "pulse.hardening.ip_limit_whitelist_bypass":
+                Interlocked.Add(ref ipLimitWhitelistBypass, value);
+                break;
             case "pulse.scene_listener.forbidden_messages_dropped":
                 Interlocked.Add(ref sceneListenerForbiddenMessagesDropped, value);
                 break;
@@ -307,6 +333,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.hardening.pre_auth_in_flight":
                 Interlocked.Add(ref preAuthInFlight, value);
                 break;
+            case "pulse.hardening.ip_limit_tracked_ips":
+                Interlocked.Add(ref ipLimitTrackedIps, value);
+                break;
             case "pulse.scene_listener.connected":
                 Interlocked.Add(ref sceneListenersConnected, value);
                 break;
@@ -329,6 +358,20 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 return (int)transport;
 
         return (int)TransportId.ENet;
+    }
+
+    /// <summary>
+    ///     Resolves the connection-class bucket from a measurement's tags. Defaults to
+    ///     <see cref="ConnectionClass.PLAYER" /> for an untagged measurement — every recording site
+    ///     tags itself, so the default only guards against an accidentally-untagged site.
+    /// </summary>
+    private static int ConnectionClassIndex(ReadOnlySpan<KeyValuePair<string, object?>> tags)
+    {
+        foreach (KeyValuePair<string, object?> tag in tags)
+            if (tag.Key == PulseMetrics.Hardening.CONNECTION_CLASS_TAG_KEY && tag.Value is ConnectionClass connectionClass)
+                return (int)connectionClass;
+
+        return (int)ConnectionClass.PLAYER;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

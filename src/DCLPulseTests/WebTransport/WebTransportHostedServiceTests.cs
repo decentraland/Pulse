@@ -252,10 +252,38 @@ public class WebTransportHostedServiceTests
 
     // ── Helpers ──────────────────────────────────────────────────────
 
+    [Test]
+    public void Connect_IpLimitRefusals_AreStillRefused_ButLoggedAtBoundedRate()
+    {
+        // The refusal rate is attacker-controlled, so the log must not scale with it. Regression
+        // guard: the throttle field was once declared and never called, and nothing caught it —
+        // refusals stayed correct while the log flooded, so only the record count detects it.
+        ILogger<WebTransportHostedService> logger = Substitute.For<ILogger<WebTransportHostedService>>();
+        WebTransportHostedService service = MakeService(ipLimitMaxConcurrency: 1, logger: logger);
+
+        const string ip = "10.0.0.7:5000";
+        service.HandleEvent(Connect(wtId: 1, ip: ip));
+
+        for (var i = 0; i < 20; i++)
+            service.HandleEvent(Connect(wtId: (ulong)(100 + i), ip: ip));
+
+        Assert.That(host.Disconnects, Has.Count.EqualTo(20),
+            "Throttling gates the log, never the decision — every connection over the cap is still refused.");
+
+        logger.Received(1).Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Any<Arg.AnyType>(),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<Arg.AnyType, Exception?, string>>());
+    }
+
     private WebTransportHostedService MakeService(
         int maxPeers = MAX_PEERS,
         int maxDatagramBytes = 1200,
-        int maxConcurrentPreAuthPerIp = 0)
+        int maxConcurrentPreAuthPerIp = 0,
+        int ipLimitMaxConcurrency = 0,
+        ILogger<WebTransportHostedService>? logger = null)
     {
         if (maxPeers != MAX_PEERS)
             allocator = new PeerIndexAllocator(maxPeers);
@@ -278,8 +306,20 @@ public class WebTransportHostedServiceTests
             Options.Create(new CorruptedPacketLimiterOptions { BurstCapacity = 5, MaxPerMinute = 60 }),
             timeProvider);
 
-        return new WebTransportHostedService(host, options, Substitute.For<ILogger<WebTransportHostedService>>(),
-            messagePipe, allocator, identityBoard, preAuth, corruptedLimiter);
+        // Cap off unless a test asks for one: still counted, never refused — pool exhaustion and
+        // pre-auth in isolation.
+        IOptionsMonitor<IpLimiterOptions> ipLimiterOptions = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
+        ipLimiterOptions.CurrentValue.Returns(new IpLimiterOptions
+        {
+            Enabled = ipLimitMaxConcurrency > 0,
+            MaxConcurrency = ipLimitMaxConcurrency,
+        });
+        ipLimiterOptions.OnChange(Arg.Any<Action<IpLimiterOptions, string?>>()).Returns(Substitute.For<IDisposable>());
+        var ipLimiter = new IpLimiter(ipLimiterOptions, Substitute.For<ILogger<IpLimiter>>());
+
+        return new WebTransportHostedService(host, options,
+            logger ?? Substitute.For<ILogger<WebTransportHostedService>>(),
+            messagePipe, allocator, identityBoard, preAuth, ipLimiter, corruptedLimiter);
     }
 
     private async Task<MessagePipe.IncomingEvent> DrainOneAsync()

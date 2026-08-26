@@ -76,6 +76,7 @@ public sealed class ConsoleDashboard(
         (ClientMessage.MessageOneofCase.EmoteStop, "EmoteStop", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.Teleport, "Teleport", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.SceneListenerHandshake, "SceneListenerHandshake", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.SceneListenerUpdate, "SceneListenerUpdate", STYLE_INBOUND),
     ]);
 
     private static readonly MessageTableConfig<ServerMessage.MessageOneofCase> OUTGOING_MESSAGES_CONFIG = new ("Outgoing Messages",

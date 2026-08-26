@@ -18,8 +18,8 @@ public partial class PeerSimulationTests
     {
         peers[listener] = new PeerState(PeerConnectionState.AUTHENTICATED)
         {
-            SceneListener = new SceneListenerState(realm,
-                new HashSet<int>(parcels ?? []),
+            SceneListener = new SceneListenerState(
+                new Dictionary<string, HashSet<int>> { [realm] = new (parcels ?? []) },
                 cellKeys ?? [spatialGrid.ComputeCellKey(0f, 0f)]),
         };
 
@@ -207,6 +207,59 @@ public partial class PeerSimulationTests
                 .Where(m => m.To == listener)
                 .Select(m => m.Message.MessageCase),
             Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerLeft));
+    }
+
+    /// <summary>
+    ///     AoI reassignment as the simulation sees it: swapping the descriptor (what
+    ///     <c>SceneListenerUpdateHandler</c> does) changes what the very next tick collects.
+    /// </summary>
+    [Test]
+    public void SceneListener_AoiReassigned_JoinsSubjectInTheNewParcels()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+        PublishSubjectInParcel(subject, seq: 2, parcel: 6, worldPos: new Vector3(20f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        Assert.That(DrainAllMessages().Where(m => m.To == listener), Is.Empty, "parcel 6 is outside the announced set");
+
+        ReassignSceneListenerAoi(listener, parcels: [6]);
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
+    }
+
+    [Test]
+    public void SceneListener_AoiReassigned_StopsSendingForDroppedParcels()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+        PublishSubjectInParcel(subject, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        DrainAllMessages(); // PlayerJoined
+
+        ReassignSceneListenerAoi(listener, parcels: [6]);
+        PublishSubjectInParcel(subject, seq: 3, parcel: 5, worldPos: new Vector3(9f, 0f, 8f));
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.None.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
+    }
+
+    /// <summary>Mirrors the handler's swap: a fresh descriptor, same realm, same cell cover.</summary>
+    private void ReassignSceneListenerAoi(PeerIndex listener, int[] parcels)
+    {
+        SceneListenerState previous = peers[listener].SceneListener!;
+        string realm = previous.ParcelsByRealm.Keys.Single();
+
+        peers[listener].SceneListener = new SceneListenerState(
+            new Dictionary<string, HashSet<int>> { [realm] = new (parcels) }, previous.CellKeys);
     }
 
     [Test]

@@ -252,24 +252,39 @@ public class FieldValidatorTests
 
     // ── SceneListener handshake ──────────────────────────────────────
 
-    private static SceneListenerHandshakeRequest ListenerRequest(string realm, params (int MinX, int MinZ, int MaxX, int MaxZ)[] rects)
-    {
-        var request = new SceneListenerHandshakeRequest { Realm = realm };
+    private static SceneListenerHandshakeRequest ListenerRequest(string realm, params (int MinX, int MinZ, int MaxX, int MaxZ)[] rects) =>
+        ListenerRequest(Aoi(realm, rects));
 
-        foreach ((int minX, int minZ, int maxX, int maxZ) in rects)
-            request.ParcelRects.Add(new ParcelRect { MinX = minX, MinZ = minZ, MaxX = maxX, MaxZ = maxZ });
+    private static SceneListenerHandshakeRequest ListenerRequest(params SceneListenerAoi[] aoi)
+    {
+        var request = new SceneListenerHandshakeRequest();
+        request.Aoi.AddRange(aoi);
 
         return request;
     }
+
+    private static SceneListenerAoi Aoi(string realm, params (int MinX, int MinZ, int MaxX, int MaxZ)[] rects)
+    {
+        var announced = new SceneListenerAoi { Realm = realm };
+
+        foreach ((int minX, int minZ, int maxX, int maxZ) in rects)
+            announced.ParcelRects.Add(new ParcelRect { MinX = minX, MinZ = minZ, MaxX = maxX, MaxZ = maxZ });
+
+        return announced;
+    }
+
+    /// <summary>The parcels validated for one realm, or null when validation rejected the AoI.</summary>
+    private static HashSet<int>? Parcels(Dictionary<string, HashSet<int>>? byRealm, string realm = "main") =>
+        byRealm is not null && byRealm.TryGetValue(realm, out HashSet<int>? parcels) ? parcels : null;
 
     [Test]
     public void SceneListener_ValidSingleCellRect_ExpandsToOneParcel()
     {
         FieldValidator v = Create();
-        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 10, 10)), out HashSet<int>? parcels);
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 10, 10)), out Dictionary<string, HashSet<int>>? byRealm);
 
         Assert.That(ok, Is.True);
-        Assert.That(parcels, Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10) }));
+        Assert.That(Parcels(byRealm), Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10) }));
     }
 
     [Test]
@@ -278,10 +293,10 @@ public class FieldValidatorTests
         FieldValidator v = Create();
         // A 2×2 rect (4 parcels) plus a disjoint 1×1 rect (1 parcel); Σ area = 5 ≤ fixture cap 8.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
-            ListenerRequest("main", (10, 10, 11, 11), (20, 20, 20, 20)), out HashSet<int>? parcels);
+            ListenerRequest("main", (10, 10, 11, 11), (20, 20, 20, 20)), out Dictionary<string, HashSet<int>>? byRealm);
 
         Assert.That(ok, Is.True);
-        Assert.That(parcels, Is.EquivalentTo(new[]
+        Assert.That(Parcels(byRealm), Is.EquivalentTo(new[]
         {
             parcelEncoder.Encode(10, 10), parcelEncoder.Encode(11, 10),
             parcelEncoder.Encode(10, 11), parcelEncoder.Encode(11, 11),
@@ -296,10 +311,10 @@ public class FieldValidatorTests
         // A rect spanning the parcel-coordinate origin: (-1,-1)..(0,0) → area 4 ≤ fixture cap 8.
         // Pins that expansion is sign-agnostic against future encoder refactors.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
-            ListenerRequest("main", (-1, -1, 0, 0)), out HashSet<int>? parcels);
+            ListenerRequest("main", (-1, -1, 0, 0)), out Dictionary<string, HashSet<int>>? byRealm);
 
         Assert.That(ok, Is.True);
-        Assert.That(parcels, Is.EquivalentTo(new[]
+        Assert.That(Parcels(byRealm), Is.EquivalentTo(new[]
         {
             parcelEncoder.Encode(-1, -1), parcelEncoder.Encode(0, -1),
             parcelEncoder.Encode(-1, 0), parcelEncoder.Encode(0, 0),
@@ -341,10 +356,10 @@ public class FieldValidatorTests
         FieldValidator v = Create();
         // Two identical 2×2 rects: Σ nominal area = 8 ≤ cap 8, so accepted; the union dedups to 4 parcels.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
-            ListenerRequest("main", (10, 10, 11, 11), (10, 10, 11, 11)), out HashSet<int>? parcels);
+            ListenerRequest("main", (10, 10, 11, 11), (10, 10, 11, 11)), out Dictionary<string, HashSet<int>>? byRealm);
 
         Assert.That(ok, Is.True);
-        Assert.That(parcels!.Count, Is.EqualTo(4));
+        Assert.That(Parcels(byRealm)!.Count, Is.EqualTo(4));
     }
 
     [Test]
@@ -364,6 +379,56 @@ public class FieldValidatorTests
         FieldValidator v = Create();
 
         Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_MultipleRealms_ExpandPerRealm()
+    {
+        FieldValidator v = Create();
+        // Two worlds, each with a scene at the same parcel — the shape a cohosting server
+        // announces, and the one a single flat parcel set could not express.
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest(Aoi("world-a", (0, 0, 0, 0)), Aoi("world-b", (0, 0, 1, 0))),
+            out Dictionary<string, HashSet<int>>? byRealm);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(Parcels(byRealm, "world-a"), Is.EquivalentTo(new[] { parcelEncoder.Encode(0, 0) }));
+            Assert.That(Parcels(byRealm, "world-b"),
+                Is.EquivalentTo(new[] { parcelEncoder.Encode(0, 0), parcelEncoder.Encode(1, 0) }));
+        });
+    }
+
+    [Test]
+    public void SceneListener_AreaBudgetSpansRealms_Rejects()
+    {
+        FieldValidator v = Create();
+        // 2×2 + 2×2 = 8 is exactly the fixture cap; a third parcel in a third realm exceeds it,
+        // so extra realms buy no extra area.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest(Aoi("a", (10, 10, 11, 11)), Aoi("b", (10, 10, 11, 11)), Aoi("c", (20, 20, 20, 20))),
+            out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_RepeatedRealm_Rejects()
+    {
+        FieldValidator v = Create();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest(Aoi("main", (10, 10, 10, 10)), Aoi("main", (20, 20, 20, 20))), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_EmptyAoi_Rejects()
+    {
+        FieldValidator v = Create();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest(), out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 

@@ -65,13 +65,12 @@ public partial class PulseMultiplayerService(
 
         _ = RouteIncomingMessagesAsync(connectionLifeCycleCts.Token);
 
-        var request = new SceneListenerHandshakeRequest
-        {
-            AuthChain = ByteString.CopyFromUtf8(authChain),
-            Realm = realm,
-        };
-
-        request.ParcelRects.AddRange(parcelRects);
+        var request = new SceneListenerHandshakeRequest { AuthChain = ByteString.CopyFromUtf8(authChain) };
+        var aoi = new SceneListenerAoi { Realm = realm };
+        aoi.ParcelRects.AddRange(parcelRects);
+        // One realm: the bot announces the realm it was pointed at. A cohosting server announces
+        // several, which is what the repeated field is for.
+        request.Aoi.Add(aoi);
 
         pipe.Send(new MessagePipe.OutgoingMessage(new ClientMessage
         {

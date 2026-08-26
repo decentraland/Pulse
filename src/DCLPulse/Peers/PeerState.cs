@@ -15,7 +15,9 @@ public class PeerState(PeerConnectionState connectionState)
 
     /// <summary>
     ///     Non-null marks this peer as a scene listener (receive-only, parcel-set AoI).
-    ///     Set once by the scene-listener handshake; immutable for the connection lifetime.
+    ///     Set by the scene-listener handshake and replaced wholesale by
+    ///     <see cref="Messaging.SceneListenerUpdateHandler" />; a peer never stops being a
+    ///     listener, and never becomes one after the handshake.
     /// </summary>
     public SceneListenerState? SceneListener { get; set; }
 

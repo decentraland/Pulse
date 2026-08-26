@@ -70,10 +70,23 @@ message ParcelRect {
   sint32 max_z = 4;
 }
 
+// One realm's slice of the AoI. Per realm, not per connection: every world numbers its
+// parcels from 0,0, so a server cohosting several worlds needs them keyed by realm.
+message SceneListenerAoi {
+  string realm = 1;                     // required; same rules as TeleportRequest.realm
+  repeated ParcelRect parcel_rects = 2; // inclusive parcel-coord rects
+}
+
 message SceneListenerHandshakeRequest {
-  bytes auth_chain = 1;                 // same signed-fetch headers JSON as HandshakeRequest
-  string realm = 2;                     // required; same rules as TeleportRequest.realm
-  repeated ParcelRect parcel_rects = 3; // inclusive parcel-coord rects; immutable for the connection
+  bytes auth_chain = 1;             // same signed-fetch headers JSON as HandshakeRequest
+  reserved 2, 3;                    // was a single realm + its rects
+  repeated SceneListenerAoi aoi = 4;
+}
+
+// AoI reassignment on a live listener connection. Same rules and budget, no
+// re-authentication; realms absent from it are no longer observed.
+message SceneListenerUpdate {
+  repeated SceneListenerAoi aoi = 1;
 }
 ```
 
@@ -81,7 +94,8 @@ message SceneListenerHandshakeRequest {
 positive ones. The client sends plain rects and no longer computes packed indices;
 the server expands the rects to the internal parcel-index set on receipt (below).
 
-New `ClientMessage` envelope variant: `scene_listener_handshake = 8`.
+New `ClientMessage` envelope variants: `scene_listener_handshake = 8`,
+`scene_listener_update = 9`.
 
 `HandshakeRequest` is untouched. No new server→client messages: the server
 replies with the existing `HandshakeResponse` (`Success`/`Error`), and the
@@ -127,13 +141,15 @@ On success:
   already connected (as player or listener) evicts the existing session.
 - **No** `SnapshotBoard.SetActive`, **no** snapshot seed, **no**
   `SpatialGrid.Set`.
-- A listener descriptor is stamped onto `PeerState`: the realm, a
-  `HashSet<int>` of parcel indices, and the precomputed, deduped array of
+- A listener descriptor is stamped onto `PeerState`: a `HashSet<int>` of parcel
+  indices **per realm**, and the precomputed, deduped array of
   covering `SpatialGrid` cell keys. Each 16 m parcel overlaps 1–4 of the
   100-unit grid cells (parcels straddling cell boundaries in X and/or Z), so
   the covering set is the union over all parcels, computed once. The
-  descriptor is immutable for the connection's lifetime; re-announcing
-  requires reconnecting.
+  descriptor object is immutable; `SceneListenerUpdate` reassigns the AoI by
+  swapping in a whole new one, so a reader that has already resolved it always
+  sees a consistent parcel set and cell cover. The realm is fixed for the
+  connection's lifetime.
 
 `PeerState` and its listener descriptor are owned by the peer's shard worker,
 which is also the worker that runs its observer simulation — no cross-worker
@@ -223,14 +239,18 @@ construction.
   resync served; delta stream for a listener matches a player-observer's
   stream for the same subject.
 - **Inbound policy**: each forbidden message type dropped + counted; `Resync`
-  honored.
+  and `SceneListenerUpdate` honored.
+- **AoI reassignment**: an accepted update replaces the realms, their parcel
+  sets and the cell cover; a malformed one disconnects with
+  `INVALID_SCENE_LISTENER_FIELD` and leaves the previous set in force; a
+  non-listener peer's update is dropped.
 - **End-to-end** (`DCLPulseTestClient`): a listener-mode bot (new flag) plus a
   moving player bot; assert the listener receives joins/deltas only while the
   player is inside the announced parcels, and `PlayerLeft` when it walks out.
 
 ## Out of scope
 
-- Changing the parcel set without reconnecting.
+- Listener-driven filtering beyond (realm, parcel) — no per-scene subscription.
 - Listener-specific bandwidth tiers or cadence config (fixed TIER_0 for now).
 - Wallet allowlists or listener-specific auth purposes.
 - Any server→client protocol additions.

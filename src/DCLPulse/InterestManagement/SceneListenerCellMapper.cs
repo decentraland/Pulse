@@ -3,11 +3,12 @@ using Microsoft.Extensions.Options;
 namespace Pulse.InterestManagement;
 
 /// <summary>
-///     Maps an announced parcel set to the deduped <see cref="SpatialGrid" /> cell keys
-///     covering it. Computed once per scene-listener handshake; immutable thereafter.
+///     Maps an announced AoI to the deduped <see cref="SpatialGrid" /> cell keys covering it.
+///     Computed once per scene-listener announcement; immutable thereafter.
 ///     Each 16m parcel overlaps 1–4 of the larger grid cells. The closed max corner may
-///     over-cover one neighboring cell when a parcel edge lands exactly on a cell boundary —
-///     harmless, the simulation filters candidates parcel-exact.
+///     over-cover one neighboring cell when a parcel edge lands exactly on a cell boundary,
+///     and realms share one grid coordinate space so their cells overlap outright — both are
+///     harmless, the simulation filters candidates realm- and parcel-exact.
 /// </summary>
 public sealed class SceneListenerCellMapper(
     ParcelEncoder parcelEncoder,
@@ -16,7 +17,10 @@ public sealed class SceneListenerCellMapper(
 {
     private readonly int parcelSize = parcelOptions.Value.ParcelSize;
 
-    public long[] ComputeCellKeys(IReadOnlyCollection<int> parcelIndices)
+    public long[] ComputeCellKeys(Dictionary<string, HashSet<int>> parcelsByRealm) =>
+        ComputeCellKeys(parcelsByRealm.Values.SelectMany(parcels => parcels));
+
+    public long[] ComputeCellKeys(IEnumerable<int> parcelIndices)
     {
         var keys = new HashSet<long>();
 

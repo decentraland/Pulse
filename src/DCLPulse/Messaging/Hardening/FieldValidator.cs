@@ -119,51 +119,85 @@ public sealed class FieldValidator(
     ///     <paramref name="parcels" /> holds the deduped union of expanded parcel indices.
     /// </summary>
     public bool ValidateSceneListenerHandshake(PeerIndex from, PeerState state, SceneListenerHandshakeRequest request,
-        [NotNullWhen(true)] out HashSet<int>? parcels)
+        [NotNullWhen(true)] out Dictionary<string, HashSet<int>>? parcelsByRealm) =>
+        ValidateSceneListenerAoi(from, state, request.Aoi, DisconnectReason.INVALID_HANDSHAKE_FIELD, out parcelsByRealm);
+
+    /// <summary>
+    ///     Validates a <see cref="SceneListenerUpdate" />: the same rules and budget as the
+    ///     handshake's announcement, which this replaces wholesale.
+    /// </summary>
+    public bool ValidateSceneListenerUpdate(PeerIndex from, PeerState state, SceneListenerUpdate update,
+        [NotNullWhen(true)] out Dictionary<string, HashSet<int>>? parcelsByRealm) =>
+        ValidateSceneListenerAoi(from, state, update.Aoi, DisconnectReason.INVALID_SCENE_LISTENER_FIELD, out parcelsByRealm);
+
+    /// <summary>
+    ///     Shared gate for both scene-listener announcements: checks every realm, bounds-checks
+    ///     every rect, and expands each realm's rects to parcel indices. The
+    ///     <see cref="SceneListenerOptions.MaxParcels" /> budget spans the whole announcement, not
+    ///     one realm of it, so adding realms cannot buy extra area. <paramref name="reason" /> is
+    ///     the message-specific disconnect reason, so a rejection still names the message that
+    ///     carried the bad AoI.
+    /// </summary>
+    private bool ValidateSceneListenerAoi(PeerIndex from, PeerState state, IReadOnlyList<SceneListenerAoi> aoi,
+        DisconnectReason reason, [NotNullWhen(true)] out Dictionary<string, HashSet<int>>? parcelsByRealm)
     {
-        parcels = null;
+        parcelsByRealm = null;
 
-        if (string.IsNullOrEmpty(request.Realm))
-            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        if (aoi.Count == 0)
+            return Reject(from, state, reason);
 
-        if (maxRealmLength > 0 && request.Realm.Length > maxRealmLength)
-            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-
-        if (request.ParcelRects.Count == 0)
-            return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
-
-        // Nominal-area budget: Σ (w×h) ≤ MaxParcels, enforced before any expansion so a
-        // hostile payload can't buy CPU/memory with huge or heavily overlapping rects. The
-        // deduped union is necessarily ≤ the sum, so no post-expansion cap is needed.
-        // Trade-off: overlapping rects are budgeted by sum, not union — clients should
-        // announce disjoint rects.
+        // Nominal-area budget: Σ (w×h) over every realm ≤ MaxParcels, enforced before any
+        // expansion so a hostile payload can't buy CPU/memory with huge or heavily overlapping
+        // rects. The deduped union is necessarily ≤ the sum, so no post-expansion cap is needed.
+        // Trade-off: overlapping rects are budgeted by sum, not union — clients should announce
+        // disjoint rects.
         long nominalArea = 0;
+        var expanded = new Dictionary<string, HashSet<int>>();
 
-        foreach (ParcelRect rect in request.ParcelRects)
+        foreach (SceneListenerAoi realmAoi in aoi)
         {
-            if (rect.MinX > rect.MaxX || rect.MinZ > rect.MaxZ)
-                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+            if (string.IsNullOrEmpty(realmAoi.Realm))
+                return Reject(from, state, reason);
 
-            if (!parcelEncoder.IsValidCoordinate(rect.MinX, rect.MinZ)
-                || !parcelEncoder.IsValidCoordinate(rect.MaxX, rect.MaxZ))
-                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+            if (maxRealmLength > 0 && realmAoi.Realm.Length > maxRealmLength)
+                return Reject(from, state, reason);
 
-            nominalArea += (long)(rect.MaxX - rect.MinX + 1) * (rect.MaxZ - rect.MinZ + 1);
+            // One entry per realm: a repeat is a malformed announcement, not a merge — silently
+            // unioning them would hide the client bug and make the budget ambiguous.
+            if (expanded.ContainsKey(realmAoi.Realm))
+                return Reject(from, state, reason);
 
-            if (nominalArea > maxSceneListenerParcels)
-                return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+            if (realmAoi.ParcelRects.Count == 0)
+                return Reject(from, state, reason);
+
+            foreach (ParcelRect rect in realmAoi.ParcelRects)
+            {
+                if (rect.MinX > rect.MaxX || rect.MinZ > rect.MaxZ)
+                    return Reject(from, state, reason);
+
+                if (!parcelEncoder.IsValidCoordinate(rect.MinX, rect.MinZ)
+                    || !parcelEncoder.IsValidCoordinate(rect.MaxX, rect.MaxZ))
+                    return Reject(from, state, reason);
+
+                nominalArea += (long)(rect.MaxX - rect.MinX + 1) * (rect.MaxZ - rect.MinZ + 1);
+
+                if (nominalArea > maxSceneListenerParcels)
+                    return Reject(from, state, reason);
+            }
+
+            var deduped = new HashSet<int>();
+
+            foreach (ParcelRect rect in realmAoi.ParcelRects)
+            {
+                for (int z = rect.MinZ; z <= rect.MaxZ; z++)
+                    for (int x = rect.MinX; x <= rect.MaxX; x++)
+                        deduped.Add(parcelEncoder.Encode(x, z));
+            }
+
+            expanded[realmAoi.Realm] = deduped;
         }
 
-        var deduped = new HashSet<int>();
-
-        foreach (ParcelRect rect in request.ParcelRects)
-        {
-            for (int z = rect.MinZ; z <= rect.MaxZ; z++)
-                for (int x = rect.MinX; x <= rect.MaxX; x++)
-                    deduped.Add(parcelEncoder.Encode(x, z));
-        }
-
-        parcels = deduped;
+        parcelsByRealm = expanded;
         return true;
     }
 

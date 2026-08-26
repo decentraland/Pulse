@@ -217,10 +217,12 @@ public sealed class PeerSimulation : IPeerSimulation
     // ── Scene-listener interest collection ──────────────────────────
 
     /// <summary>
-    ///     Fills the collector with subjects standing inside the listener's parcels: union the
-    ///     occupants of the precomputed covering cells, then filter parcel-exact (the covering
-    ///     cells over-approximate — a 100-unit cell holds ~6×6 parcels) and by realm. Every
-    ///     accepted subject is TIER_0: a parcel set has no distance to tier by.
+    ///     Fills the collector with subjects standing inside the listener's AoI: union the
+    ///     occupants of the precomputed covering cells, then filter on (realm, parcel) exactly.
+    ///     Neither filter is redundant — the covering cells over-approximate (a 100-unit cell
+    ///     holds ~6×6 parcels), and every realm numbers its parcels from 0,0, so two cohosted
+    ///     worlds share both cells and parcel indices. Every accepted subject is TIER_0: a
+    ///     parcel set has no distance to tier by.
     /// </summary>
     private void CollectSceneListenerSubjects(PeerIndex observerId, SceneListenerState listener)
     {
@@ -239,10 +241,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
                     continue;
 
-                if (!string.Equals(subjectSnapshot.Realm, listener.Realm, StringComparison.Ordinal))
-                    continue;
-
-                if (!listener.Parcels.Contains(subjectSnapshot.Parcel))
+                if (!listener.Observes(subjectSnapshot.Realm, subjectSnapshot.Parcel))
                     continue;
 
                 collector.Add(subject, PeerViewSimulationTier.TIER_0);

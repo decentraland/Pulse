@@ -51,15 +51,18 @@ public class SceneListenerRealSceneTests
         Assert.That(sumArea, Is.LessThanOrEqualTo(new SceneListenerOptions().MaxParcels),
             "A real scene of this size must fit the default nominal-area budget.");
 
-        var request = new SceneListenerHandshakeRequest { Realm = "main" };
-        request.ParcelRects.AddRange(rects);
+        var request = new SceneListenerHandshakeRequest();
+        var aoi = new SceneListenerAoi { Realm = "main" };
+        aoi.ParcelRects.AddRange(rects);
+        request.Aoi.Add(aoi);
 
-        bool ok = validator.ValidateSceneListenerHandshake(new PeerIndex(1), state, request, out HashSet<int>? parcels);
+        bool ok = validator.ValidateSceneListenerHandshake(new PeerIndex(1), state, request,
+            out Dictionary<string, HashSet<int>>? parcelsByRealm);
 
         Assert.That(ok, Is.True, "A well-formed real-scene announcement must be accepted.");
 
         HashSet<int> expected = scene.Select(c => encoder.Encode(c.X, c.Z)).ToHashSet();
-        Assert.That(parcels, Is.EquivalentTo(expected),
+        Assert.That(parcelsByRealm!["main"], Is.EquivalentTo(expected),
             "Server-side expansion must reproduce the announced footprint exactly.");
     }
 

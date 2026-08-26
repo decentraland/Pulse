@@ -14,10 +14,10 @@ namespace Pulse.Messaging;
 /// <summary>
 ///     Scene-listener handshake: authenticates via the shared <see cref="HandshakeHandlerBase" />
 ///     pipeline (identical attempt throttle, ban list, and replay guard), but the peer announces
-///     an immutable parcel-set AoI instead of an initial state and is never registered as a
+///     a per-realm parcel-set AoI instead of an initial state and is never registered as a
 ///     subject — no SnapshotBoard slot, no SpatialGrid entry — so it stays invisible to every
-///     player observer. Re-announcing the parcel set requires reconnecting: no post-auth message
-///     can mutate it.
+///     player observer. The AoI is reassigned in place afterwards by
+///     <see cref="SceneListenerUpdateHandler" />.
 ///     <para />
 ///     A listener is nevertheless a full peer holding a <see cref="PeerIndex" /> and a per-IP
 ///     connection slot, so this is also where the connection is moved out of the player budget of
@@ -63,13 +63,14 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
     {
         SceneListenerHandshakeRequest request = message.SceneListenerHandshake;
 
-        if (!fieldValidator.ValidateSceneListenerHandshake(from, existingState, request, out HashSet<int>? parcels))
+        if (!fieldValidator.ValidateSceneListenerHandshake(from, existingState, request,
+                out Dictionary<string, HashSet<int>>? parcelsByRealm))
             return false;
 
         if (!TryReserveListenerBudget(from, existingState))
             return false;
 
-        peer.SceneListener = new SceneListenerState(request.Realm, parcels, cellMapper.ComputeCellKeys(parcels));
+        peer.SceneListener = new SceneListenerState(parcelsByRealm, cellMapper.ComputeCellKeys(parcelsByRealm));
         return true;
     }
 
@@ -102,7 +103,7 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
     {
         SceneListenerState listener = peer.SceneListener!;
 
-        logger.LogInformation("Scene listener accepted with wallet {Wallet} - peerId {Peer} ({ParcelCount} parcels, realm '{Realm}')",
-            peer.WalletId, from, listener.Parcels.Count, listener.Realm);
+        logger.LogInformation("Scene listener accepted with wallet {Wallet} - peerId {Peer} ({ParcelCount} parcels across realms {Realms})",
+            peer.WalletId, from, listener.ParcelCount, string.Join(", ", listener.ParcelsByRealm.Keys));
     }
 }

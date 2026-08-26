@@ -110,5 +110,13 @@ namespace Pulse.Transport
         ///     backoff and jitter rather than a tight loop.
         /// </summary>
         SCENE_LISTENER_IP_LIMIT_EXCEEDED = 18,
+
+        /// <summary>
+        ///     SceneListenerUpdate carried an invalid AoI (empty rect list, inverted or
+        ///     out-of-range rect, or a nominal area over SceneListener:MaxParcels). Terminal —
+        ///     same class of client bug as the other INVALID_*_FIELD reasons. The AoI in force
+        ///     when the bad update arrived is left untouched.
+        /// </summary>
+        INVALID_SCENE_LISTENER_FIELD = 19,
     }
 }

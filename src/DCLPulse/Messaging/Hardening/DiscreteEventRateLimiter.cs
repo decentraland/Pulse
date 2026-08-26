@@ -7,9 +7,10 @@ namespace Pulse.Messaging.Hardening;
 
 /// <summary>
 ///     Token-bucket rate limiter shared across the server's discrete-event handlers (emote
-///     start/stop, teleport). Each event triggers an O(observers) reliable broadcast, so the
-///     cap bounds the fan-out amplification an attacker can drive. Inherits its core logic
-///     from <see cref="TokenBucketRateLimiter" />.
+///     start/stop, teleport, scene-listener AoI update). Each event triggers an O(observers)
+///     reliable broadcast — or, for the AoI update, an O(Σ rect area) expansion — so the cap
+///     bounds the amplification an attacker can drive. Inherits its core logic from
+///     <see cref="TokenBucketRateLimiter" />.
 /// </summary>
 public sealed class DiscreteEventRateLimiter : TokenBucketRateLimiter
 {

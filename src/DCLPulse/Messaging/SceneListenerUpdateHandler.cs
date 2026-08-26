@@ -1,6 +1,7 @@
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
+using Pulse.Metrics;
 using Pulse.Peers;
 
 namespace Pulse.Messaging;
@@ -30,10 +31,12 @@ public class SceneListenerUpdateHandler(ILogger<SceneListenerUpdateHandler> logg
 
         // Only a peer that authenticated as a listener has an AoI to replace. A player sending
         // this is a client bug, not an attack surface — drop it before the rate limiter so it
-        // cannot spend a player's discrete-event budget.
+        // cannot spend a player's discrete-event budget, and count it rather than warn: an
+        // unthrottled log line per packet would be the one amplification left on this path.
         if (peerState.SceneListener is not { } listener)
         {
-            logger.LogWarning("Peer {Peer} sent SceneListenerUpdate but is not a scene listener, skipped", from);
+            PulseMetrics.SceneListener.FORBIDDEN_MESSAGES_DROPPED.Add(1);
+            logger.LogDebug("Peer {Peer} sent SceneListenerUpdate but is not a scene listener, dropped", from);
             return;
         }
 

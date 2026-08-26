@@ -294,8 +294,8 @@ public sealed class PeersManager : BackgroundService
     ///     <c>Input</c>/emotes/<c>Teleport</c>/profile announcements and repeat handshakes are
     ///     dropped silently (mirrors the pre-auth "non-handshake silently dropped" convention; no
     ///     disconnect — a buggy listener degrades to noise, not connection churn). The listener's
-    ///     own AoI is the one thing it may change, and only through
-    ///     <see cref="Messaging.SceneListenerUpdateHandler" />; the realm stays fixed at connect.
+    ///     own AoI — realms included — is the one thing it may change, and only through
+    ///     <see cref="Messaging.SceneListenerUpdateHandler" />; its role is fixed at connect.
     /// </summary>
     internal static bool IsForbiddenForSceneListener(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {

@@ -148,8 +148,10 @@ On success:
   the covering set is the union over all parcels, computed once. The
   descriptor object is immutable; `SceneListenerUpdate` reassigns the AoI by
   swapping in a whole new one, so a reader that has already resolved it always
-  sees a consistent parcel set and cell cover. The realm is fixed for the
-  connection's lifetime.
+  sees a consistent parcel set and cell cover. The realms are part of the AoI
+  and are replaced with it: a realm absent from an update is no longer
+  observed. What is fixed for the connection's lifetime is the role — a
+  listener never becomes a player, nor the reverse.
 
 `PeerState` and its listener descriptor are owned by the peer's shard worker,
 which is also the worker that runs its observer simulation — no cross-worker

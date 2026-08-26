@@ -252,6 +252,34 @@ public partial class PeerSimulationTests
             Has.None.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
     }
 
+    /// <summary>
+    ///     A subject the reassignment dropped is not told goodbye by the update itself: it simply
+    ///     stops being collected, and its view ages out through the ordinary stale-view sweep —
+    ///     the same path as a player walking out of range — so PlayerLeft trails the update by up
+    ///     to two sweep intervals.
+    /// </summary>
+    [Test]
+    public void SceneListener_AoiReassigned_DroppedSubjectSweptWithPlayerLeft()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+        PublishSubjectInParcel(subject, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        DrainAllMessages(); // PlayerJoined
+
+        // The subject stays put; the listener stops observing its parcel.
+        ReassignSceneListenerAoi(listener, parcels: [6]);
+
+        for (uint tick = 2; tick <= SWEEP_INTERVAL * 2 + 1; tick++)
+            simulation.SimulateTick(peers, tick);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerLeft));
+    }
+
     /// <summary>Mirrors the handler's swap: a fresh descriptor, same realm, same cell cover.</summary>
     private void ReassignSceneListenerAoi(PeerIndex listener, int[] parcels)
     {

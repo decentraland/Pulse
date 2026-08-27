@@ -51,25 +51,24 @@ namespace Decentraland.Pulse {
             "aW5feBgBIAEoERINCgVtaW5fehgCIAEoERINCgVtYXhfeBgDIAEoERINCgVt",
             "YXhfehgEIAEoESJXChBTY2VuZUxpc3RlbmVyQW9pEg0KBXJlYWxtGAEgASgJ",
             "EjQKDHBhcmNlbF9yZWN0cxgCIAMoCzIeLmRlY2VudHJhbGFuZC5wdWxzZS5Q",
-            "YXJjZWxSZWN0IocBCh1TY2VuZUxpc3RlbmVySGFuZHNoYWtlUmVxdWVzdBIS",
-            "CgphdXRoX2NoYWluGAEgASgMEjEKA2FvaRgEIAMoCzIkLmRlY2VudHJhbGFu",
-            "ZC5wdWxzZS5TY2VuZUxpc3RlbmVyQW9pSgQIAhADSgQIAxAEUgVyZWFsbVIM",
-            "cGFyY2VsX3JlY3RzIkgKE1NjZW5lTGlzdGVuZXJVcGRhdGUSMQoDYW9pGAEg",
-            "AygLMiQuZGVjZW50cmFsYW5kLnB1bHNlLlNjZW5lTGlzdGVuZXJBb2ki1wQK",
-            "DUNsaWVudE1lc3NhZ2USOQoJaGFuZHNoYWtlGAEgASgLMiQuZGVjZW50cmFs",
-            "YW5kLnB1bHNlLkhhbmRzaGFrZVJlcXVlc3RIABI1CgVpbnB1dBgCIAEoCzIk",
-            "LmRlY2VudHJhbGFuZC5wdWxzZS5QbGF5ZXJTdGF0ZUlucHV0SAASMwoGcmVz",
-            "eW5jGAMgASgLMiEuZGVjZW50cmFsYW5kLnB1bHNlLlJlc3luY1JlcXVlc3RI",
-            "ABJOChRwcm9maWxlX2Fubm91bmNlbWVudBgEIAEoCzIuLmRlY2VudHJhbGFu",
-            "ZC5wdWxzZS5Qcm9maWxlVmVyc2lvbkFubm91bmNlbWVudEgAEjUKC2Vtb3Rl",
-            "X3N0YXJ0GAUgASgLMh4uZGVjZW50cmFsYW5kLnB1bHNlLkVtb3RlU3RhcnRI",
-            "ABIzCgplbW90ZV9zdG9wGAYgASgLMh0uZGVjZW50cmFsYW5kLnB1bHNlLkVt",
-            "b3RlU3RvcEgAEjcKCHRlbGVwb3J0GAcgASgLMiMuZGVjZW50cmFsYW5kLnB1",
-            "bHNlLlRlbGVwb3J0UmVxdWVzdEgAElUKGHNjZW5lX2xpc3RlbmVyX2hhbmRz",
-            "aGFrZRgIIAEoCzIxLmRlY2VudHJhbGFuZC5wdWxzZS5TY2VuZUxpc3RlbmVy",
-            "SGFuZHNoYWtlUmVxdWVzdEgAEkgKFXNjZW5lX2xpc3RlbmVyX3VwZGF0ZRgJ",
-            "IAEoCzInLmRlY2VudHJhbGFuZC5wdWxzZS5TY2VuZUxpc3RlbmVyVXBkYXRl",
-            "SABCCQoHbWVzc2FnZWIGcHJvdG8z"));
+            "YXJjZWxSZWN0ImYKHVNjZW5lTGlzdGVuZXJIYW5kc2hha2VSZXF1ZXN0EhIK",
+            "CmF1dGhfY2hhaW4YASABKAwSMQoDYW9pGAIgAygLMiQuZGVjZW50cmFsYW5k",
+            "LnB1bHNlLlNjZW5lTGlzdGVuZXJBb2kiSAoTU2NlbmVMaXN0ZW5lclVwZGF0",
+            "ZRIxCgNhb2kYASADKAsyJC5kZWNlbnRyYWxhbmQucHVsc2UuU2NlbmVMaXN0",
+            "ZW5lckFvaSLXBAoNQ2xpZW50TWVzc2FnZRI5CgloYW5kc2hha2UYASABKAsy",
+            "JC5kZWNlbnRyYWxhbmQucHVsc2UuSGFuZHNoYWtlUmVxdWVzdEgAEjUKBWlu",
+            "cHV0GAIgASgLMiQuZGVjZW50cmFsYW5kLnB1bHNlLlBsYXllclN0YXRlSW5w",
+            "dXRIABIzCgZyZXN5bmMYAyABKAsyIS5kZWNlbnRyYWxhbmQucHVsc2UuUmVz",
+            "eW5jUmVxdWVzdEgAEk4KFHByb2ZpbGVfYW5ub3VuY2VtZW50GAQgASgLMi4u",
+            "ZGVjZW50cmFsYW5kLnB1bHNlLlByb2ZpbGVWZXJzaW9uQW5ub3VuY2VtZW50",
+            "SAASNQoLZW1vdGVfc3RhcnQYBSABKAsyHi5kZWNlbnRyYWxhbmQucHVsc2Uu",
+            "RW1vdGVTdGFydEgAEjMKCmVtb3RlX3N0b3AYBiABKAsyHS5kZWNlbnRyYWxh",
+            "bmQucHVsc2UuRW1vdGVTdG9wSAASNwoIdGVsZXBvcnQYByABKAsyIy5kZWNl",
+            "bnRyYWxhbmQucHVsc2UuVGVsZXBvcnRSZXF1ZXN0SAASVQoYc2NlbmVfbGlz",
+            "dGVuZXJfaGFuZHNoYWtlGAggASgLMjEuZGVjZW50cmFsYW5kLnB1bHNlLlNj",
+            "ZW5lTGlzdGVuZXJIYW5kc2hha2VSZXF1ZXN0SAASSAoVc2NlbmVfbGlzdGVu",
+            "ZXJfdXBkYXRlGAkgASgLMicuZGVjZW50cmFsYW5kLnB1bHNlLlNjZW5lTGlz",
+            "dGVuZXJVcGRhdGVIAEIJCgdtZXNzYWdlYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Decentraland.Pulse.PulseSharedReflection.Descriptor, global::Decentraland.Common.OptionsReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -2976,9 +2975,9 @@ namespace Decentraland.Pulse {
     }
 
     /// <summary>Field number for the "aoi" field.</summary>
-    public const int AoiFieldNumber = 4;
+    public const int AoiFieldNumber = 2;
     private static readonly pb::FieldCodec<global::Decentraland.Pulse.SceneListenerAoi> _repeated_aoi_codec
-        = pb::FieldCodec.ForMessage(34, global::Decentraland.Pulse.SceneListenerAoi.Parser);
+        = pb::FieldCodec.ForMessage(18, global::Decentraland.Pulse.SceneListenerAoi.Parser);
     private readonly pbc::RepeatedField<global::Decentraland.Pulse.SceneListenerAoi> aoi_ = new pbc::RepeatedField<global::Decentraland.Pulse.SceneListenerAoi>();
     /// <summary>
     /// Announced AoI, one entry per realm; replaceable afterwards with SceneListenerUpdate.
@@ -3106,7 +3105,7 @@ namespace Decentraland.Pulse {
             AuthChain = input.ReadBytes();
             break;
           }
-          case 34: {
+          case 18: {
             aoi_.AddEntriesFrom(input, _repeated_aoi_codec);
             break;
           }
@@ -3133,7 +3132,7 @@ namespace Decentraland.Pulse {
             AuthChain = input.ReadBytes();
             break;
           }
-          case 34: {
+          case 18: {
             aoi_.AddEntriesFrom(ref input, _repeated_aoi_codec);
             break;
           }

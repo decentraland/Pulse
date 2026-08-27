@@ -79,8 +79,7 @@ message SceneListenerAoi {
 
 message SceneListenerHandshakeRequest {
   bytes auth_chain = 1;             // same signed-fetch headers JSON as HandshakeRequest
-  reserved 2, 3;                    // was a single realm + its rects
-  repeated SceneListenerAoi aoi = 4;
+  repeated SceneListenerAoi aoi = 2; // replaces the single realm + rects; nothing shipped them
 }
 
 // AoI reassignment on a live listener connection. Same rules and budget, no

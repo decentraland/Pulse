@@ -1,7 +1,6 @@
 using DCL.Auth;
 using Decentraland.Pulse;
 using Google.Protobuf;
-using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
 using Pulse.Metrics;
 using Pulse.Peers;
@@ -34,7 +33,6 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
     HandshakeReplayPolicy replayPolicy,
     BanList banList,
     FieldValidator fieldValidator,
-    SceneListenerCellMapper cellMapper,
     IpLimiter ipLimiter,
     ILogger<SceneListenerHandshakeHandler> logger)
     : HandshakeHandlerBase(messagePipe, authChainValidator, peerStateFactory, identityBoard, transport,
@@ -64,13 +62,13 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
         SceneListenerHandshakeRequest request = message.SceneListenerHandshake;
 
         if (!fieldValidator.ValidateSceneListenerHandshake(from, existingState, request,
-                out Dictionary<string, HashSet<int>>? parcelsByRealm))
+                out SceneListenerState? listener))
             return false;
 
         if (!TryReserveListenerBudget(from, existingState))
             return false;
 
-        peer.SceneListener = new SceneListenerState(parcelsByRealm, cellMapper.ComputeCellKeys(parcelsByRealm));
+        peer.SceneListener = listener;
         return true;
     }
 
@@ -103,7 +101,12 @@ public class SceneListenerHandshakeHandler(MessagePipe messagePipe,
     {
         SceneListenerState listener = peer.SceneListener!;
 
-        logger.LogInformation("Scene listener accepted with wallet {Wallet} - peerId {Peer} ({ParcelCount} parcels across realms {Realms})",
-            peer.WalletId, from, listener.ParcelCount, string.Join(", ", listener.ParcelsByRealm.Keys));
+        logger.LogInformation("Scene listener accepted with wallet {Wallet} - peerId {Peer} ({ParcelCount} parcels across {RealmCount} realms)",
+            peer.WalletId, from, listener.ParcelCount, listener.ParcelsByRealm.Count);
+
+        // The budget admits hundreds of realms, so the names are unbounded in aggregate — kept out
+        // of the accept line and behind a level check.
+        if (logger.IsEnabled(LogLevel.Debug))
+            logger.LogDebug("Scene listener {Peer} observes realms {Realms}", from, string.Join(", ", listener.ParcelsByRealm.Keys));
     }
 }

@@ -24,12 +24,18 @@ public class FieldValidatorTests
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
     }
 
-    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 8) =>
+    /// <summary>
+    ///     Fixture scene-listener budget. It is cumulative over realms *and* parcels: each realm
+    ///     costs <c>FieldValidator.REALM_BUDGET_COST</c> (4) on top of its rect areas, so 16 admits
+    ///     one realm of up to 12 parcels, or three realms of one parcel each.
+    /// </summary>
+    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 16) =>
         new (Options.Create(new FieldValidatorOptions
         {
             MaxRealmLength = maxRealmLength,
             MaxEmoteDurationMs = maxDurationMs,
-        }), Options.Create(new SceneListenerOptions { MaxParcels = maxParcels }), parcelEncoder, transport);
+        }), Options.Create(new SceneListenerOptions { MaxParcels = maxParcels }), parcelEncoder,
+            SceneListenerTestFactory.CellMapper(), transport);
 
     private static PeerState NewState() => new (PeerConnectionState.AUTHENTICATED);
 
@@ -274,29 +280,29 @@ public class FieldValidatorTests
     }
 
     /// <summary>The parcels validated for one realm, or null when validation rejected the AoI.</summary>
-    private static HashSet<int>? Parcels(Dictionary<string, HashSet<int>>? byRealm, string realm = "main") =>
-        byRealm is not null && byRealm.TryGetValue(realm, out HashSet<int>? parcels) ? parcels : null;
+    private static HashSet<int>? Parcels(SceneListenerState? listener, string realm = "main") =>
+        listener is not null && listener.ParcelsByRealm.TryGetValue(realm, out HashSet<int>? parcels) ? parcels : null;
 
     [Test]
     public void SceneListener_ValidSingleCellRect_ExpandsToOneParcel()
     {
         FieldValidator v = Create();
-        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 10, 10)), out Dictionary<string, HashSet<int>>? byRealm);
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 10, 10)), out SceneListenerState? listener);
 
         Assert.That(ok, Is.True);
-        Assert.That(Parcels(byRealm), Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10) }));
+        Assert.That(Parcels(listener), Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10) }));
     }
 
     [Test]
     public void SceneListener_ValidRects_ExpandToUnionOfParcels()
     {
         FieldValidator v = Create();
-        // A 2×2 rect (4 parcels) plus a disjoint 1×1 rect (1 parcel); Σ area = 5 ≤ fixture cap 8.
+        // A 2×2 rect (4 parcels) plus a disjoint 1×1 rect (1 parcel); one realm + Σ area = 4 + 5 ≤ 16.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
-            ListenerRequest("main", (10, 10, 11, 11), (20, 20, 20, 20)), out Dictionary<string, HashSet<int>>? byRealm);
+            ListenerRequest("main", (10, 10, 11, 11), (20, 20, 20, 20)), out SceneListenerState? listener);
 
         Assert.That(ok, Is.True);
-        Assert.That(Parcels(byRealm), Is.EquivalentTo(new[]
+        Assert.That(Parcels(listener), Is.EquivalentTo(new[]
         {
             parcelEncoder.Encode(10, 10), parcelEncoder.Encode(11, 10),
             parcelEncoder.Encode(10, 11), parcelEncoder.Encode(11, 11),
@@ -308,13 +314,13 @@ public class FieldValidatorTests
     public void SceneListener_OriginCrossingRect_ExpandsSignAgnostically()
     {
         FieldValidator v = Create();
-        // A rect spanning the parcel-coordinate origin: (-1,-1)..(0,0) → area 4 ≤ fixture cap 8.
+        // A rect spanning the parcel-coordinate origin: (-1,-1)..(0,0) → 4 + area 4 ≤ 16.
         // Pins that expansion is sign-agnostic against future encoder refactors.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
-            ListenerRequest("main", (-1, -1, 0, 0)), out Dictionary<string, HashSet<int>>? byRealm);
+            ListenerRequest("main", (-1, -1, 0, 0)), out SceneListenerState? listener);
 
         Assert.That(ok, Is.True);
-        Assert.That(Parcels(byRealm), Is.EquivalentTo(new[]
+        Assert.That(Parcels(listener), Is.EquivalentTo(new[]
         {
             parcelEncoder.Encode(-1, -1), parcelEncoder.Encode(0, -1),
             parcelEncoder.Encode(-1, 0), parcelEncoder.Encode(0, 0),
@@ -334,7 +340,7 @@ public class FieldValidatorTests
     public void SceneListener_OutOfBoundsCorner_Rejects()
     {
         FieldValidator v = Create();
-        // Aliasing guard: a 1×1 rect (nominal area 1 ≤ cap) whose coordinate is far out of bounds.
+        // Aliasing guard: a 1×1 rect (well within the budget) whose coordinate is far out of bounds.
         // Encode alone would map it to a valid-looking index in another row instead of failing;
         // IsValidCoordinate is what rejects it here, not the area budget.
         Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (9999, 10, 9999, 10)), out _), Is.False);
@@ -345,8 +351,9 @@ public class FieldValidatorTests
     public void SceneListener_NominalAreaOverCap_Rejects()
     {
         FieldValidator v = Create();
-        // Single 3×3 rect = 9 nominal parcels > fixture cap 8. Budget is enforced before expansion.
-        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 12, 12)), out _), Is.False);
+        // Single 4×4 rect = 16 nominal parcels; with the realm charge that is 20 > cap 16. The
+        // budget is enforced before expansion.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 13, 13)), out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 
@@ -354,12 +361,12 @@ public class FieldValidatorTests
     public void SceneListener_OverlappingRectsWithinCap_DedupUnion()
     {
         FieldValidator v = Create();
-        // Two identical 2×2 rects: Σ nominal area = 8 ≤ cap 8, so accepted; the union dedups to 4 parcels.
+        // Two identical 2×2 rects: 4 + Σ nominal area 8 = 12 ≤ 16, so accepted; the union dedups to 4.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
-            ListenerRequest("main", (10, 10, 11, 11), (10, 10, 11, 11)), out Dictionary<string, HashSet<int>>? byRealm);
+            ListenerRequest("main", (10, 10, 11, 11), (10, 10, 11, 11)), out SceneListenerState? listener);
 
         Assert.That(ok, Is.True);
-        Assert.That(Parcels(byRealm)!.Count, Is.EqualTo(4));
+        Assert.That(Parcels(listener)!.Count, Is.EqualTo(4));
     }
 
     [Test]
@@ -390,13 +397,13 @@ public class FieldValidatorTests
         // announces, and the one a single flat parcel set could not express.
         bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
             ListenerRequest(Aoi("world-a", (0, 0, 0, 0)), Aoi("world-b", (0, 0, 1, 0))),
-            out Dictionary<string, HashSet<int>>? byRealm);
+            out SceneListenerState? listener);
 
         Assert.Multiple(() =>
         {
             Assert.That(ok, Is.True);
-            Assert.That(Parcels(byRealm, "world-a"), Is.EquivalentTo(new[] { parcelEncoder.Encode(0, 0) }));
-            Assert.That(Parcels(byRealm, "world-b"),
+            Assert.That(Parcels(listener, "world-a"), Is.EquivalentTo(new[] { parcelEncoder.Encode(0, 0) }));
+            Assert.That(Parcels(listener, "world-b"),
                 Is.EquivalentTo(new[] { parcelEncoder.Encode(0, 0), parcelEncoder.Encode(1, 0) }));
         });
     }
@@ -405,12 +412,54 @@ public class FieldValidatorTests
     public void SceneListener_AreaBudgetSpansRealms_Rejects()
     {
         FieldValidator v = Create();
-        // 2×2 + 2×2 = 8 is exactly the fixture cap; a third parcel in a third realm exceeds it,
-        // so extra realms buy no extra area.
+        // Two realms of 2×2 spend 2 × (4 + 4) = 16, exactly the fixture cap; a third realm of a
+        // single parcel exceeds it, so extra realms buy no extra area.
         Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
             ListenerRequest(Aoi("a", (10, 10, 11, 11)), Aoi("b", (10, 10, 11, 11)), Aoi("c", (20, 20, 20, 20))),
             out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_ManyTinyRealmsWithinBudget_Accepted()
+    {
+        FieldValidator v = Create();
+        // Three realms of one parcel each: 3 parcels of area, and 3 × (4 + 1) = 15 ≤ cap 16.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest(Aoi("a", (0, 0, 0, 0)), Aoi("b", (1, 0, 1, 0)), Aoi("c", (2, 0, 2, 0))),
+            out _), Is.True);
+    }
+
+    [Test]
+    public void SceneListener_RealmOverheadOverBudget_Rejects()
+    {
+        FieldValidator v = Create();
+        // Four parcels of area in total — trivially under a parcels-only cap of 16 — but realms are
+        // charged against the same budget, so 4 × (4 + 1) = 20 > 16. An announcement cannot spend a
+        // parcel-shaped budget on realm-shaped memory.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest(Aoi("a", (0, 0, 0, 0)), Aoi("b", (1, 0, 1, 0)),
+                Aoi("c", (2, 0, 2, 0)), Aoi("d", (3, 0, 3, 0))),
+            out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_ValidAoi_CarriesCellCoverAndParcelCount()
+    {
+        FieldValidator v = Create();
+        // The descriptor is assembled in one place, so a valid announcement comes back with the
+        // cell cover the simulation queries the grid with, not just the parcel set.
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (10, 10, 11, 11)), out SceneListenerState? listener);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(listener!.ParcelCount, Is.EqualTo(4));
+            Assert.That(listener.CellKeys, Is.Not.Empty);
+            Assert.That(listener.CellKeys, Is.Unique);
+        });
     }
 
     [Test]

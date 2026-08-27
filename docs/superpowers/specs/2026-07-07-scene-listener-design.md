@@ -143,8 +143,12 @@ On success:
 - A listener descriptor is stamped onto `PeerState`: a `HashSet<int>` of parcel
   indices **per realm**, and the precomputed, deduped array of
   covering `SpatialGrid` cell keys. Each 16 m parcel overlaps 1–4 of the
-  100-unit grid cells (parcels straddling cell boundaries in X and/or Z), so
-  the covering set is the union over all parcels, computed once. The
+  100-unit grid cells (parcels straddling cell boundaries in X and/or Z); the
+  cover is taken per announced **rect** as the contiguous cell range between
+  its corners, which is the same set the per-parcel corners produce (a parcel
+  is smaller than a cell, so the range has no gaps) at O(cells) instead of
+  O(4 × parcels). `FieldValidator` builds the whole descriptor while it is
+  already walking the rects, so both handlers just stamp what it returns. The
   descriptor object is immutable; `SceneListenerUpdate` reassigns the AoI by
   swapping in a whole new one, so a reader that has already resolved it always
   sees a consistent parcel set and cell cover. The realms are part of the AoI

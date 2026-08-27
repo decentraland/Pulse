@@ -1,5 +1,4 @@
 using Decentraland.Pulse;
-using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
 using Pulse.Metrics;
 using Pulse.Peers;
@@ -20,8 +19,7 @@ namespace Pulse.Messaging;
 /// </summary>
 public class SceneListenerUpdateHandler(ILogger<SceneListenerUpdateHandler> logger,
     DiscreteEventRateLimiter rateLimiter,
-    FieldValidator fieldValidator,
-    SceneListenerCellMapper cellMapper)
+    FieldValidator fieldValidator)
     : RuntimePacketHandlerBase<SceneListenerUpdateHandler>(logger), IMessageHandler
 {
     public void Handle(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
@@ -31,12 +29,17 @@ public class SceneListenerUpdateHandler(ILogger<SceneListenerUpdateHandler> logg
 
         // Only a peer that authenticated as a listener has an AoI to replace. A player sending
         // this is a client bug, not an attack surface — drop it before the rate limiter so it
-        // cannot spend a player's discrete-event budget, and count it rather than warn: an
-        // unthrottled log line per packet would be the one amplification left on this path.
-        if (peerState.SceneListener is not { } listener)
+        // cannot spend a player's discrete-event budget, and count it rather than warn.
+        if (peerState.SceneListener is not { } previous)
         {
             PulseMetrics.SceneListener.FORBIDDEN_MESSAGES_DROPPED.Add(1);
-            logger.LogDebug("Peer {Peer} sent SceneListenerUpdate but is not a scene listener, dropped", from);
+
+            // Dropping ahead of the limiter leaves nothing throttling this path, so the counter
+            // above must be all it costs: unguarded, the argument array and the boxed PeerIndex
+            // are built at the call site on every packet even with Debug off.
+            if (logger.IsEnabled(LogLevel.Debug))
+                logger.LogDebug("Peer {Peer} sent SceneListenerUpdate but is not a scene listener, dropped", from);
+
             return;
         }
 
@@ -46,14 +49,20 @@ public class SceneListenerUpdateHandler(ILogger<SceneListenerUpdateHandler> logg
             return;
 
         if (!fieldValidator.ValidateSceneListenerUpdate(from, peerState, message.SceneListenerUpdate,
-                out Dictionary<string, HashSet<int>>? parcelsByRealm))
+                out SceneListenerState? updated))
             return;
 
         // Replacing the whole descriptor rather than mutating it keeps SceneListenerState
         // immutable for its readers. Realms absent from the update are simply no longer observed.
-        peerState.SceneListener = new SceneListenerState(parcelsByRealm, cellMapper.ComputeCellKeys(parcelsByRealm));
+        peerState.SceneListener = updated;
 
-        logger.LogInformation("Scene listener {Peer} reassigned its AoI: {ParcelCount} parcels across realms {Realms} (was {PreviousCount})",
-            from, peerState.SceneListener.ParcelCount, string.Join(", ", parcelsByRealm.Keys), listener.ParcelCount);
+        logger.LogInformation(
+            "Scene listener {Peer} reassigned its AoI: {ParcelCount} parcels across {RealmCount} realms (was {PreviousParcelCount} across {PreviousRealmCount})",
+            from, updated.ParcelCount, updated.ParcelsByRealm.Count, previous.ParcelCount, previous.ParcelsByRealm.Count);
+
+        // The budget admits hundreds of realms, so joining their names is unbounded work — it goes
+        // behind a level check rather than into an argument the runtime evaluates regardless.
+        if (logger.IsEnabled(LogLevel.Debug))
+            logger.LogDebug("Scene listener {Peer} now observes realms {Realms}", from, string.Join(", ", updated.ParcelsByRealm.Keys));
     }
 }

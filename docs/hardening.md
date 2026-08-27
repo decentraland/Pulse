@@ -201,6 +201,11 @@ asymmetry favours the attacker:
 2. **Discrete-event fan-out.** `EmoteStart`, `EmoteStop`, `TeleportRequest` each cause
    O(observers) reliable broadcasts. A peer spamming emote starts multiplies their send rate
    by the observer count in their interest set.
+3. **Scene-listener AoI churn.** `SceneListenerUpdate` costs O(Σ rect area) to expand and
+   re-cover, not O(observers) — a different shape of amplification, capped by the same bucket.
+   The announcement itself is separately capped by `SceneListener:MaxParcels`
+   ([field validation](#group-b-field-validation--post-auth-input-sanitisation)), so one update's
+   work is bounded and the bucket bounds their rate.
 
 ### Defenses
 
@@ -210,7 +215,7 @@ Two dedicated limiters in `src/DCLPulse/Messaging/Hardening/`, both inheriting f
 | Component | Cap | Enforcement |
 |---|---|---|
 | `MovementInputRateLimiter` | Token bucket, `MaxHz` refill (default 20) + `BurstCapacity` (default 16) on `PlayerStateInput` | Burst absorbs UDP jitter (ISP/NAT/Wi-Fi clustering, worker batch drain) without false positives |
-| `DiscreteEventRateLimiter` | Token bucket, `RatePerSecond` refill (default 5) + `BurstCapacity` (default 10) | Shared across emote start/stop + teleport |
+| `DiscreteEventRateLimiter` | Token bucket, `RatePerSecond` refill (default 5) + `BurstCapacity` (default 10) | Shared across emote start/stop, teleport and `SceneListenerUpdate` |
 
 Per-peer state lives on `PeerThrottleState` hanging off `PeerState` (one `(tokens, lastRefillMs)`
 pair per limiter). Mutated exclusively on the owning worker thread, so no synchronisation is
@@ -301,6 +306,12 @@ that fall outside the encoder's grid produce garbage global positions downstream
   `TeleportRequest.Position`. Rejects NaN and ±Infinity. Optional fields (head yaw/pitch)
   are checked only when the proto's `Has*` flag is set.
 - Null-guard on `Position`/`Velocity` proto sub-messages to prevent NRE on malformed input.
+- **Scene-listener announcements** (`SceneListenerHandshake` and `SceneListenerUpdate`, which
+  carry the same `repeated SceneListenerAoi`): each realm non-empty and within `MaxRealmLength`,
+  each realm named at most once, at least one rect per realm, every rect non-inverted and fully
+  inside the encodable parcel bounds, and the whole announcement within the
+  `SceneListener:MaxParcels` budget below. Bounds and budget are checked **before** any rect is
+  expanded, so a rejected announcement spends no expansion work.
 
 On any violation the peer is disconnected with a message-type-specific `DisconnectReason`.
 
@@ -315,12 +326,40 @@ On any violation the peer is disconnected with a message-type-specific `Disconne
         "MaxEmoteDurationMs": 60000
       }
     }
+  },
+  "SceneListener": {
+    "MaxParcels": 4096
   }
 }
 ```
 
 Zero disables each individual check; parcel-index validation is always on (its bounds are the
 server's own configured realm size, not a per-defense knob).
+
+#### `SceneListener:MaxParcels` — one budget over realms *and* parcels
+
+The announcement budget is denominated in parcels and **cumulative across the whole
+announcement**, both dimensions of it:
+
+```
+Σ over announced realms ( REALM_BUDGET_COST + Σ nominal rect areas )  ≤  MaxParcels
+```
+
+`REALM_BUDGET_COST` is 4, a `const` in `FieldValidator` rather than a second knob. A realm carries
+fixed overhead that a parcel count cannot see — its retained name (up to `MaxRealmLength` chars), a
+dictionary entry, a set header — measuring at roughly six parcel slots. Charging it against the
+same budget is what stops "many realms, one parcel each" from spending a parcel-shaped allowance on
+realm-shaped memory: without the charge, 4096 single-parcel realms are a legal announcement costing
+~1.6 MB and ~1 ms to expand; with it the ceiling is 819 such realms at ~230 KB.
+
+Consequences worth knowing when sizing it:
+
+- **Adding realms buys no extra area, and adding area buys no extra realms.** One knob governs both.
+- **A single realm can announce at most `MaxParcels − 4` parcels** — 4092 at the default. The knob
+  is a budget in parcel-equivalents, not a per-realm parcel count.
+- **Overlapping rects are budgeted by sum, not union.** Clients should announce disjoint rects; the
+  expanded set dedups, but the budget does not.
+- Raise `MaxParcels` if a legitimate cohosting fleet needs more realms than it admits.
 
 ### DisconnectReason values
 
@@ -329,12 +368,24 @@ server's own configured realm size, not a per-defense knob).
 | `INVALID_INPUT_FIELD = 11` | PlayerStateInput carried an out-of-range parcel index. |
 | `INVALID_EMOTE_FIELD = 12` | EmoteStart had excessive DurationMs or invalid parcel index. |
 | `INVALID_TELEPORT_FIELD = 13` | TeleportRequest had an empty or oversized Realm, or invalid parcel index. |
+| `INVALID_HANDSHAKE_FIELD = 15` | `HandshakeRequest.PlayerInitialState` was malformed, or a `SceneListenerHandshake` carried an invalid AoI (see the budget above). Refused before the peer reaches `AUTHENTICATED`. |
+| `INVALID_SCENE_LISTENER_FIELD = 19` | `SceneListenerUpdate` carried an invalid AoI — empty realm list, a realm with no rects, a repeated realm, an inverted or out-of-range rect, or an announcement over `SceneListener:MaxParcels`. The AoI in force when the bad update arrived is left untouched; it is the connection that goes, not the previous announcement. |
+
+`INVALID_SCENE_LISTENER_FIELD` is deliberately distinct from `INVALID_HANDSHAKE_FIELD = 15` even
+though the two run the same validation: the reason code tells an operator which message carried the
+bad AoI, and therefore whether the client's bug is in its connect path or in its scene load/unload
+path.
 
 ### Client recovery
 
-All three are **terminal, not retryable** — a well-formed client never produces invalid
+All of them are **terminal, not retryable** — a well-formed client never produces invalid
 fields. Same client guidance as the rate-limit codes: do not auto-reconnect, log the reason,
 surface to telemetry.
+
+For `INVALID_SCENE_LISTENER_FIELD` specifically: the update never partially applied, so there is
+nothing to roll back client-side, and re-sending the same AoI on a fresh connection will be refused
+identically. Fix the announcement — most often an announcement that outgrew the budget as scenes
+loaded, which the client should detect before sending by applying the formula above.
 
 ### Metrics to watch
 
@@ -816,13 +867,20 @@ a schema change.
 
 ### Sizing `SceneListenerMaxConcurrency`
 
-A listener's reach is bounded by `SceneListener:MaxParcels` (default 4096 parcels per connection).
+A listener's reach **at any one moment** is bounded by `SceneListener:MaxParcels` (default 4096
+parcel-equivalents per announcement, minus 4 per announced realm — see
+[the budget](#scenelistenermaxparcels--one-budget-over-realms-and-parcels)). It is per announcement
+rather than per connection because `SceneListenerUpdate` replaces the AoI in place: a listener can
+move its 4092 parcels anywhere over time, so the cap bounds simultaneous coverage, not lifetime
+coverage. The sizing below is therefore about how much a fleet can watch *at once*.
 `ParcelEncoder` widens the `ParcelEncoderOptions` bounds of x ∈ [-150, 163], z ∈ [-150, 158] by
 `Padding` (2 per side) in its constructor, and `FieldValidator.ValidateSceneListenerHandshake`
 accepts rects against those *padded* bounds via `IsValidCoordinate` — so the encodable area is
 x ∈ [-152, 165] (318 columns) × z ∈ [-152, 160] (313 rows) = **99,534 parcels**. One listener
-connection therefore covers at most 4096 / 99,534 ≈ **4.1%** of it, and whole-map coverage needs
-99,534 / 4096 ≈ 24.3 → **25** concurrent connections.
+connection therefore covers at most 4092 / 99,534 ≈ **4.1%** of it at a time, and simultaneous
+whole-map coverage needs 99,534 / 4092 ≈ 24.3 → **25** concurrent connections. A single listener
+sweeping the map by re-announcing needs no extra connections but sees only 4.1% of it per
+announcement, so it is not a substitute for coverage.
 
 **Raising this cap is the wrong way to pay for that — whitelist the fleet instead.**
 `SceneListenerMaxConcurrency` is a **global** knob: it is the per-IP listener cap applied to *every*

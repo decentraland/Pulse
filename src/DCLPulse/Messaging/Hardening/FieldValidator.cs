@@ -20,12 +20,24 @@ public sealed class FieldValidator(
     IOptions<FieldValidatorOptions> options,
     IOptions<SceneListenerOptions> sceneListenerOptions,
     ParcelEncoder parcelEncoder,
+    SceneListenerCellMapper cellMapper,
     ITransport transport)
     : PeerDefense(transport, PulseMetrics.Hardening.FIELD_VALIDATION_FAILED)
 {
+    /// <summary>
+    ///     What one announced realm costs against <see cref="SceneListenerOptions.MaxParcels" />,
+    ///     on top of its rect areas. A realm carries fixed overhead a parcel count cannot see — a
+    ///     retained name of up to <see cref="FieldValidatorOptions.MaxRealmLength" /> chars, a
+    ///     dictionary entry and a set header — which measures at roughly six parcel slots. Charging
+    ///     four keeps one knob governing both dimensions, so an announcement cannot spend a
+    ///     parcel-shaped budget on realm-shaped memory. Raise <c>MaxParcels</c> if a legitimate
+    ///     fleet needs more realms.
+    /// </summary>
+    private const int REALM_BUDGET_COST = 4;
+
     private readonly int maxRealmLength = options.Value.MaxRealmLength;
     private readonly uint maxEmoteDurationMs = options.Value.MaxEmoteDurationMs;
-    private readonly int maxSceneListenerParcels = sceneListenerOptions.Value.MaxParcels;
+    private readonly int maxSceneListenerBudget = sceneListenerOptions.Value.MaxParcels;
 
     public bool ValidatePlayerStateInput(PeerIndex from, PeerState state, PlayerStateInput input)
     {
@@ -114,45 +126,43 @@ public sealed class FieldValidator(
     /// <summary>
     ///     Validates a scene-listener handshake: realm rules identical to
     ///     <see cref="ValidateTeleport" />, every announced rect well-formed and fully in
-    ///     encodable bounds, and the Σ nominal rect area within
+    ///     encodable bounds, and the whole announcement within
     ///     <see cref="SceneListenerOptions.MaxParcels" /> — rejected, never clamped. On success
-    ///     <paramref name="parcels" /> holds the deduped union of expanded parcel indices.
+    ///     <paramref name="listener" /> is the descriptor to stamp onto the peer.
     /// </summary>
     public bool ValidateSceneListenerHandshake(PeerIndex from, PeerState state, SceneListenerHandshakeRequest request,
-        [NotNullWhen(true)] out Dictionary<string, HashSet<int>>? parcelsByRealm) =>
-        ValidateSceneListenerAoi(from, state, request.Aoi, DisconnectReason.INVALID_HANDSHAKE_FIELD, out parcelsByRealm);
+        [NotNullWhen(true)] out SceneListenerState? listener) =>
+        ValidateSceneListenerAoi(from, state, request.Aoi, DisconnectReason.INVALID_HANDSHAKE_FIELD, out listener);
 
     /// <summary>
     ///     Validates a <see cref="SceneListenerUpdate" />: the same rules and budget as the
     ///     handshake's announcement, which this replaces wholesale.
     /// </summary>
     public bool ValidateSceneListenerUpdate(PeerIndex from, PeerState state, SceneListenerUpdate update,
-        [NotNullWhen(true)] out Dictionary<string, HashSet<int>>? parcelsByRealm) =>
-        ValidateSceneListenerAoi(from, state, update.Aoi, DisconnectReason.INVALID_SCENE_LISTENER_FIELD, out parcelsByRealm);
+        [NotNullWhen(true)] out SceneListenerState? listener) =>
+        ValidateSceneListenerAoi(from, state, update.Aoi, DisconnectReason.INVALID_SCENE_LISTENER_FIELD, out listener);
 
     /// <summary>
     ///     Shared gate for both scene-listener announcements: checks every realm, bounds-checks
-    ///     every rect, and expands each realm's rects to parcel indices. The
-    ///     <see cref="SceneListenerOptions.MaxParcels" /> budget spans the whole announcement, not
-    ///     one realm of it, so adding realms cannot buy extra area. <paramref name="reason" /> is
+    ///     every rect, expands each realm's rects to parcel indices, accumulates the covering grid
+    ///     cells, and returns the finished descriptor. The
+    ///     <see cref="SceneListenerOptions.MaxParcels" /> budget spans the whole announcement —
+    ///     realms and parcels alike, see <see cref="REALM_BUDGET_COST" /> — so neither extra realms
+    ///     nor extra area can be bought by adding more of the other. <paramref name="reason" /> is
     ///     the message-specific disconnect reason, so a rejection still names the message that
     ///     carried the bad AoI.
     /// </summary>
     private bool ValidateSceneListenerAoi(PeerIndex from, PeerState state, IReadOnlyList<SceneListenerAoi> aoi,
-        DisconnectReason reason, [NotNullWhen(true)] out Dictionary<string, HashSet<int>>? parcelsByRealm)
+        DisconnectReason reason, [NotNullWhen(true)] out SceneListenerState? listener)
     {
-        parcelsByRealm = null;
+        listener = null;
 
         if (aoi.Count == 0)
             return Reject(from, state, reason);
 
-        // Nominal-area budget: Σ (w×h) over every realm ≤ MaxParcels, enforced before any
-        // expansion so a hostile payload can't buy CPU/memory with huge or heavily overlapping
-        // rects. The deduped union is necessarily ≤ the sum, so no post-expansion cap is needed.
-        // Trade-off: overlapping rects are budgeted by sum, not union — clients should announce
-        // disjoint rects.
-        long nominalArea = 0;
-        var expanded = new Dictionary<string, HashSet<int>>();
+        long budget = 0;
+        var expanded = new Dictionary<string, HashSet<int>>(aoi.Count);
+        var cellKeys = new HashSet<long>();
 
         foreach (SceneListenerAoi realmAoi in aoi)
         {
@@ -170,6 +180,18 @@ public sealed class FieldValidator(
             if (realmAoi.ParcelRects.Count == 0)
                 return Reject(from, state, reason);
 
+            budget += REALM_BUDGET_COST;
+
+            if (budget > maxSceneListenerBudget)
+                return Reject(from, state, reason);
+
+            // First pass: bounds-check and price the realm's rects before expanding any of them, so
+            // a hostile payload cannot buy expansion work on its way to being rejected. The deduped
+            // union is necessarily <= the nominal area, so no post-expansion cap is needed.
+            // Trade-off: overlapping rects are budgeted by sum, not union — clients should announce
+            // disjoint rects.
+            long realmArea = 0;
+
             foreach (ParcelRect rect in realmAoi.ParcelRects)
             {
                 if (rect.MinX > rect.MaxX || rect.MinZ > rect.MaxZ)
@@ -179,16 +201,23 @@ public sealed class FieldValidator(
                     || !parcelEncoder.IsValidCoordinate(rect.MaxX, rect.MaxZ))
                     return Reject(from, state, reason);
 
-                nominalArea += (long)(rect.MaxX - rect.MinX + 1) * (rect.MaxZ - rect.MinZ + 1);
+                long area = (long)(rect.MaxX - rect.MinX + 1) * (rect.MaxZ - rect.MinZ + 1);
+                realmArea += area;
+                budget += area;
 
-                if (nominalArea > maxSceneListenerParcels)
+                if (budget > maxSceneListenerBudget)
                     return Reject(from, state, reason);
             }
 
-            var deduped = new HashSet<int>();
+            // Second pass, now that the realm is priced: size the set from the area the first pass
+            // measured instead of growing it through a dozen reallocations, and take the covering
+            // cells off each rect — this is the only point that holds both a rect and its set.
+            var deduped = new HashSet<int>((int)realmArea);
 
             foreach (ParcelRect rect in realmAoi.ParcelRects)
             {
+                cellMapper.AddCoveringCells(cellKeys, rect.MinX, rect.MinZ, rect.MaxX, rect.MaxZ);
+
                 for (int z = rect.MinZ; z <= rect.MaxZ; z++)
                     for (int x = rect.MinX; x <= rect.MaxX; x++)
                         deduped.Add(parcelEncoder.Encode(x, z));
@@ -197,7 +226,10 @@ public sealed class FieldValidator(
             expanded[realmAoi.Realm] = deduped;
         }
 
-        parcelsByRealm = expanded;
+        var keys = new long[cellKeys.Count];
+        cellKeys.CopyTo(keys);
+
+        listener = new SceneListenerState(expanded, keys);
         return true;
     }
 

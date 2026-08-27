@@ -50,10 +50,13 @@ public class SceneListenerHandshakeHandlerTests
         var timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(10_000u);
 
+        // The budget is cumulative over realms and parcels: one realm costs 4 on top of its rect
+        // areas, so 16 admits a single realm of up to 12 parcels.
         var fieldValidator = new FieldValidator(
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),
-            Options.Create(new SceneListenerOptions { MaxParcels = 8 }),
+            Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
             parcelEncoder,
+            new SceneListenerCellMapper(spatialGrid, parcelOptions),
             transport);
 
         ipLimiter = BuildIpLimiter();
@@ -76,7 +79,6 @@ public class SceneListenerHandshakeHandlerTests
                 Substitute.For<ITransport>()),
             banList: new BanList(),
             fieldValidator: fieldValidator,
-            cellMapper: new SceneListenerCellMapper(parcelEncoder, spatialGrid, parcelOptions),
             ipLimiter: ipLimiter,
             logger: Substitute.For<ILogger<SceneListenerHandshakeHandler>>());
 
@@ -135,8 +137,8 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_OverCapParcels_RejectsBeforeAuthenticated()
     {
-        // Fixture MaxParcels = 8; a single 3×3 rect nominally covers 9 parcels.
-        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 12, 12)));
+        // Fixture budget 16; one realm (4) plus a 4×4 rect (16 parcels) is 20.
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 13, 13)));
 
         Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
         transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);

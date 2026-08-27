@@ -24,10 +24,24 @@ public sealed class SceneListenerState(Dictionary<string, HashSet<int>> parcelsB
     /// </summary>
     public long[] CellKeys { get; } = cellKeys;
 
-    /// <summary>Total announced parcels across all realms — logging and metrics only.</summary>
-    public int ParcelCount => ParcelsByRealm.Values.Sum(parcels => parcels.Count);
+    /// <summary>
+    ///     Total announced parcels across all realms — logging and metrics only. Summed once here
+    ///     rather than per read: the reads are log-statement arguments, which are evaluated whether
+    ///     or not the level is enabled.
+    /// </summary>
+    public int ParcelCount { get; } = SumParcels(parcelsByRealm);
 
     /// <summary>Whether a subject standing in <paramref name="parcel" /> of <paramref name="realm" /> is observed.</summary>
     public bool Observes(string? realm, int parcel) =>
         realm != null && ParcelsByRealm.TryGetValue(realm, out HashSet<int>? parcels) && parcels.Contains(parcel);
+
+    private static int SumParcels(Dictionary<string, HashSet<int>> parcelsByRealm)
+    {
+        int total = 0;
+
+        foreach (HashSet<int> parcels in parcelsByRealm.Values)
+            total += parcels.Count;
+
+        return total;
+    }
 }

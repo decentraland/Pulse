@@ -176,9 +176,10 @@ public sealed class PeerSimulation : IPeerSimulation
     }
 
     /// <summary>
-    ///     Scene listeners have no snapshot of their own — their interest set is the fixed
-    ///     parcel set announced at handshake, always at TIER_0, positional messages only.
-    ///     Everything downstream (views, diffs, resync, sweeps) is the shared pipeline.
+    ///     Scene listeners have no snapshot of their own — their interest set is the per-realm
+    ///     parcel set the peer announced, always at TIER_0, positional messages only. The
+    ///     descriptor is re-read every tick, so a <c>SceneListenerUpdate</c> takes effect on the
+    ///     next one. Everything downstream (views, diffs, resync, sweeps) is the shared pipeline.
     /// </summary>
     private void SimulateSceneListenerObserver(PeerIndex observerId, PeerState observerState, SceneListenerState listener, uint tickCounter)
     {

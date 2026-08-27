@@ -33,7 +33,7 @@ public class SceneListenerUpdateHandlerTests
         IOptions<ParcelEncoderOptions> parcelOptions = Options.Create(new ParcelEncoderOptions());
         parcelEncoder = new ParcelEncoder(parcelOptions);
         transport = Substitute.For<ITransport>();
-        cellMapper = new SceneListenerCellMapper(parcelEncoder, new SpatialGrid(100, 100), parcelOptions);
+        cellMapper = new SceneListenerCellMapper(new SpatialGrid(100, 100), parcelOptions);
 
         var timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(10_000u);
@@ -47,10 +47,10 @@ public class SceneListenerUpdateHandlerTests
                 Substitute.For<ITransport>()),
             new FieldValidator(
                 Options.Create(new FieldValidatorOptions()),
-                Options.Create(new SceneListenerOptions { MaxParcels = 8 }),
+                Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
                 parcelEncoder,
-                transport),
-            cellMapper);
+                cellMapper,
+                transport));
 
         peer = new PeerIndex(1);
         peers = new Dictionary<PeerIndex, PeerState> { [peer] = ListenerAt(0, 0) };
@@ -66,7 +66,9 @@ public class SceneListenerUpdateHandlerTests
         Assert.Multiple(() =>
         {
             Assert.That(listener.ParcelsByRealm[REALM], Is.EquivalentTo(Encode((5, 5), (6, 5), (5, 6), (6, 6))));
-            Assert.That(listener.CellKeys, Is.EquivalentTo(cellMapper.ComputeCellKeys(listener.ParcelsByRealm)));
+            Assert.That(listener.ParcelCount, Is.EqualTo(4));
+            Assert.That(listener.CellKeys, Is.EquivalentTo(Cover(5, 5, 6, 6)),
+                "The cover must be recomputed for the new rects, not carried over.");
             transport.DidNotReceive().Disconnect(Arg.Any<PeerIndex>(), Arg.Any<DisconnectReason>());
         });
     }
@@ -155,10 +157,10 @@ public class SceneListenerUpdateHandlerTests
                 throttleTransport),
             new FieldValidator(
                 Options.Create(new FieldValidatorOptions()),
-                Options.Create(new SceneListenerOptions { MaxParcels = 8 }),
+                Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
                 parcelEncoder,
-                transport),
-            cellMapper);
+                cellMapper,
+                transport));
 
         throttled.Handle(peers, peer, Update(Rect(5, 5, 5, 5)));
         throttled.Handle(peers, peer, Update(Rect(7, 7, 7, 7)));
@@ -180,8 +182,16 @@ public class SceneListenerUpdateHandlerTests
 
         return new PeerState(PeerConnectionState.AUTHENTICATED)
         {
-            SceneListener = new SceneListenerState(parcels, cellMapper.ComputeCellKeys(parcels)),
+            SceneListener = new SceneListenerState(parcels, Cover(x, z, x, z)),
         };
+    }
+
+    private long[] Cover(int minX, int minZ, int maxX, int maxZ)
+    {
+        var keys = new HashSet<long>();
+        cellMapper.AddCoveringCells(keys, minX, minZ, maxX, maxZ);
+
+        return keys.ToArray();
     }
 
     private int[] Encode(params (int X, int Z)[] parcels) =>

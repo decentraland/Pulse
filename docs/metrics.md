@@ -281,7 +281,7 @@ Counter of connections that were over the per-IP cap but admitted because the so
 
 ### Field Validation Failed
 
-Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`). `dcl_pulse_field_validation_failed_total`.
+Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`, a scene-listener AoI that is malformed or over `SceneListener:MaxParcels`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`, `INVALID_HANDSHAKE_FIELD`, `INVALID_SCENE_LISTENER_FIELD`). `dcl_pulse_field_validation_failed_total`.
 
 | Signal | Meaning |
 |---|---|
@@ -332,13 +332,23 @@ Gauge of currently connected scene listeners. `dcl_pulse_scene_listener_connecte
 
 ### Forbidden Dropped
 
-Counter of messages dropped from scene listeners that attempted a forbidden operation. `dcl_pulse_scene_listener_forbidden_messages_dropped_total`.
+Counter of messages dropped by the scene-listener message policy. Two cases share it, in both
+directions of the role check:
+
+- a **scene listener** sent something other than `Resync` or `SceneListenerUpdate` (the choke point
+  in `PeersManager.IsForbiddenForSceneListener`);
+- a **player** sent `SceneListenerUpdate`, which only a listener has an AoI to replace. This is
+  counted rather than logged per packet on purpose: the message is dropped ahead of the rate
+  limiter so it cannot spend a player's discrete-event budget, which leaves the counter as the only
+  unthrottled thing on that path.
+
+`dcl_pulse_scene_listener_forbidden_messages_dropped_total`.
 
 | Signal | Meaning |
 |---|---|
-| Zero | Normal — well-behaved scene listeners only send permitted messages |
-| Sporadic | A buggy scene-listener client sending disallowed messages |
-| Sustained | Misconfigured or misbehaving scene service — inspect the offending peer |
+| Zero | Normal — clients on both sides of the role boundary only send messages their role permits |
+| Sporadic | A buggy client sending disallowed messages. Check the server log for the peer: a listener sending player messages, or a player sending `SceneListenerUpdate` |
+| Sustained | Misconfigured or misbehaving service — inspect the offending peer. Non-zero does **not** on its own point at the listener fleet |
 
 ### Visible Subjects
 

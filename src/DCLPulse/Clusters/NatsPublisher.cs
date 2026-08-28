@@ -399,11 +399,15 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
                 if (pendingChangeBySubject.Count >= options.ChannelCapacity && changeOrder.TryDequeue(out string? evicted))
                 {
-                    // Taken out with its message in one step, for the same reason.
+                    // Taken out with its message in one step, for the same reason. The counter follows
+                    // the removal rather than the dequeue, so it can only ever report an assignment that
+                    // was really lost — the drain loop tolerates an order entry with no message, and
+                    // counting one of those would send an operator after capacity for a non-event.
                     if (pendingChangeBySubject.Remove(evicted, out PeerClusterChange? lost))
+                    {
                         changePool.Push(lost);
-
-                    dropped = true;
+                        dropped = true;
+                    }
                 }
 
                 pendingChangeBySubject[subject] = change;

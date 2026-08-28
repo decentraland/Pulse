@@ -42,7 +42,7 @@ public class PreAuthAdmissionLifecycleTests
         }));
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
@@ -55,10 +55,11 @@ public class PreAuthAdmissionLifecycleTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(8),
+            new ClientMessageCounters(),
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
-            admission);
+            admission,
+            DisabledIpLimiter());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();
@@ -108,5 +109,14 @@ public class PreAuthAdmissionLifecycleTests
 
         Assert.That(admission.InFlight, Is.EqualTo(1),
             "Disconnecting an already-promoted peer must not decrement — the promotion path already did");
+    }
+
+    // Cap switched off: connections are still counted, none refused — the release path in isolation.
+    private static IpLimiter DisabledIpLimiter()
+    {
+        IOptionsMonitor<IpLimiterOptions> optionsMonitor = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
+        optionsMonitor.CurrentValue.Returns(new IpLimiterOptions { Enabled = false, MaxConcurrency = 0 });
+        optionsMonitor.OnChange(Arg.Any<Action<IpLimiterOptions, string?>>()).Returns(Substitute.For<IDisposable>());
+        return new IpLimiter(optionsMonitor, Substitute.For<ILogger<IpLimiter>>());
     }
 }

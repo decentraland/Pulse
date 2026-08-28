@@ -248,6 +248,37 @@ Counter of corrupted packets observed per peer — combines two trigger points: 
 | Sustained > `MaxPerMinute` per peer | Fuzzer or broken client — bucket exhausts and the peer is dropped with `PACKET_CORRUPTED` |
 | Spike across many peers | Coordinated probing or protocol drift between client and server builds |
 
+### IP Limit Tracked IPs
+
+Gauge of distinct source IPs currently holding at least one connection — the size of `IpLimiter`'s per-IP count table. Entries are removed at zero, so this is bounded by concurrent connections, not by distinct IPs ever seen. `dcl_pulse_ip_limit_tracked_ips`.
+
+| Signal | Meaning |
+|---|---|
+| Tracks Active Peers closely | Normal — roughly one connection per IP |
+| Far below Active Peers | Heavy NAT/CGNAT sharing, or a single host holding many connections — compare against `IP Limit Refused` |
+| Flat while Active Peers drops to zero | Counter leak — a release path was missed; file a bug |
+
+### IP Limit Refused
+
+Counter of connections refused by the hard per-source-IP concurrent-connection cap (`Transport:Hardening:IpLimiter:MaxConcurrency`). Refused before a `PeerIndex` is allocated, so a flooding IP never reaches the allocator, a worker, or `PENDING_AUTH`. Distinct from **Per-IP Limit Refused** above, which only counts peers in `PENDING_AUTH` — see `docs/hardening.md` for how the two interact. `dcl_pulse_ip_limit_refused_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No IP is at its concurrent-connection cap |
+| Sporadic from known CGNAT / corporate egress | Legitimate shared IP — raise `MaxConcurrency` or whitelist the IP |
+| Sustained from one IP | Connection flood; the cap is doing its job. Consider an infrastructure-level block |
+| Rises immediately after lowering `MaxConcurrency` | Expected — existing connections are not evicted, so the counter refuses new ones until the population drains |
+
+### IP Limit Whitelisted
+
+Counter of connections that were over the per-IP cap but admitted because the source IP is in `Transport:Hardening:IpLimiter:Whitelist`. This is the metric that tells you whether a whitelist entry is load-bearing or vestigial. `dcl_pulse_ip_limit_whitelist_bypass_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero for a whitelisted IP | The entry is vestigial — that IP never exceeds the cap, so the exemption can be removed |
+| Steady non-zero | The entry is load-bearing — removing it would start refusing that IP immediately |
+| Spiking | A whitelisted IP is flooding. Whitelisting bypasses the cap entirely, so this traffic is unbounded — verify the entry is still trusted |
+
 ### Field Validation Failed
 
 Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`Realm`, excessive `DurationMs`, out-of-range `ParcelIndex`). The offending peer is disconnected with a message-type-specific reason (`INVALID_INPUT_FIELD`, `INVALID_EMOTE_FIELD`, `INVALID_TELEPORT_FIELD`). `dcl_pulse_field_validation_failed_total`.
@@ -359,6 +390,143 @@ Two failures are indistinguishable from something else in the table above and ca
 
 - **A rejected credential.** The connection never opens, so `connected` stays 0 and reads exactly like an unreachable broker. `Authentication error: …` from the client, and `NATS server error (AuthorizationViolation): …` from the publisher, are what separate the two. Pulse sets `IgnoreAuthErrorAbort`, so the client keeps retrying rather than giving up permanently: the feed recovers on its own once the credential is fixed, and stays down until then.
 - **A rejected publish.** The client raises this from its read loop without closing the socket, so `connected` stays 1 and `published` keeps climbing while nothing reaches a subscriber — a publish is not acknowledged, so the broker refusing it does not fail the call, and `publish_failed` stays zero too. `NATS server error (PermissionsViolation): …` is the only signal.
+## Feature flags — no metrics
+
+Runtime configuration polled from the remote `pulse.json` document has **no Prometheus series and no
+dashboard group**. Its health is carried by logs and by `/about`; see
+[feature-flags.md](feature-flags.md).
+
+- **Applied and in force** — one `Information` line per *change*, not per poll:
+  `Feature flag overrides changed; 3 key(s) now applied: Transport:Hardening:IpLimiter:Enabled, …`.
+  A steady-state poller is silent, so the line appears exactly when a flag takes effect.
+- **Failures** — every path logs: a failed fetch (`Feature flags poll failed`), a malformed payload,
+  a key skipped by the type or shape check (`skipping that key`), a document a consumer refused
+  (`rolled back to the previous overrides`).
+- **What is actually applied right now** — `/about`, which returns the overrides themselves keyed
+  exactly as `dynamicconfig.json` names them:
+
+```json
+{"commitHash":"…","featureFlagOverrides":{"Transport:Hardening:IpLimiter:Enabled":"True","Transport:Hardening:IpLimiter:MaxConcurrency":"10"}}
+```
+
+It needs no bearer token, and nothing filters it: the remote document may set any configuration key,
+so whoever authors the Unleash payload decides what this endpoint publishes. When two tasks in one
+environment disagree, `/about` is what tells you which key differs.
+
+---
+
+## Scene Listener metrics
+
+Observability for scene listeners — server-side observers that subscribe to a bounded set of parcels (capped by `SceneListener:MaxParcels`).
+
+### Connected
+
+Gauge of currently connected scene listeners. `dcl_pulse_scene_listener_connected`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No scene listeners attached |
+| Stable low | Normal — a handful of scene services observing parcels |
+| Climbing unexpectedly | Scene listeners connecting without disconnecting — check for a leak or reconnect storm |
+
+### Forbidden Dropped
+
+Counter of messages dropped from scene listeners that attempted a forbidden operation. `dcl_pulse_scene_listener_forbidden_messages_dropped_total`.
+
+| Signal | Meaning |
+|---|---|
+| Zero | Normal — well-behaved scene listeners only send permitted messages |
+| Sporadic | A buggy scene-listener client sending disallowed messages |
+| Sustained | Misconfigured or misbehaving scene service — inspect the offending peer |
+
+### Visible Subjects
+
+Histogram of the number of visible subjects per scene-listener observation. Exported as `dcl_pulse_scene_listener_visible_subjects_sum` and `dcl_pulse_scene_listener_visible_subjects_count`; the dashboard shows the mean.
+
+| Signal | Meaning |
+|---|---|
+| Zero | No subjects visible to any scene listener |
+| Stable | Normal — reflects average population within observed parcels |
+| Spiking | Crowd forming in an observed scene — expect higher fan-out |
+
+---
+
+## Latency metrics
+
+Histogram-backed timing metrics for the simulation and outbound-drain hot paths. The collector holds raw per-bucket counts; the dashboard's percentile columns describe the **value distribution** (ms/µs) — Window over the buckets that filled since the previous 500 ms snapshot, Lifetime over the cumulative buckets — not a rate. The sparkline plots the window P99, the tail we care about.
+
+### Δ Staleness T0 / T1 / T2 (ms)
+
+Publish→fan-out staleness of `STATE_DELTA` per AoI tier — `MonotonicTime − target.ServerTick` measured at `SendDelta`. Each tier gets its own histogram because tiers fan out on different cadences (`tierDivisor`: T0 every tick, T1 every 2nd, T2 every 4th).
+
+**Expected**: bounded by `tierDivisor × BaseTickMs` plus fan-out compute. T0 p99 is the **KR1.1 SLI**. Resync-path deltas are excluded by design — their target can be arbitrarily old when a subject idled after the client lost packets, which would pollute the histogram.
+
+| Signal | Meaning |
+|---|---|
+| P99 within the tier budget | Normal — deltas fan out promptly after publish |
+| Sustained P99 above the tier budget | Tick overrun or input backlog — cross-check Tick Duration and Incoming Queue |
+| T0 climbing while T1/T2 flat | Every-tick fan-out is the bottleneck — AoI set for the hot tier grew |
+
+### Tick Duration (µs)
+
+`SimulateTick` wall time across workers, recorded per tick in `PeersManager.RecordTickDuration`.
+
+**Expected**: well under `BaseTickMs × 1000`.
+
+| Signal | Meaning |
+|---|---|
+| Flat, well under budget | Healthy — plenty of headroom in the tick |
+| Creeping toward `BaseTickMs × 1000` | CPU saturation or AoI fan-out growth — precursor to Tick Overruns |
+
+### Tick Overruns
+
+Count of ticks that exceeded `BaseTickMs`. Rendered as a rate row (per-second), not a histogram.
+
+**Expected**: 0. Any sustained rate is an SLO breach — the simulation is not keeping tick cadence.
+
+### Drain Cycle (µs)
+
+Outbound drain-cycle duration on the ENet thread, non-empty cycles only (empty cycles are not recorded). Upper-bounds how long an outgoing message can wait for the ENet thread to service the queue.
+
+| Signal | Meaning |
+|---|---|
+| Low, stable | ENet thread drains each burst well within a service loop |
+| Growth alongside Outgoing Queue depth | ENet thread saturated — outbound is falling behind; reduce fan-out or serialization cost |
+
+**Prometheus**: these are exposed as native histograms — `dcl_pulse_delta_staleness_ms{tier="0|1|2"}`, `dcl_pulse_tick_duration_us`, `dcl_pulse_outgoing_drain_cycle_us` (Tick Overruns is the `dcl_pulse_tick_overruns_total` counter). Use `histogram_quantile()` over the `_bucket` series for fleet-level percentiles; the dashboard percentile columns show the local value distribution (window / lifetime), not rate percentiles.
+
+### Peer RTT (ms)
+
+Distribution of connected peers' smoothed round-trip time, bucketed by peer continent. ENet maintains `peer->roundTripTime` automatically from the reliable-channel ACK flow — no probe packets, no client cooperation. A sweep on the ENet thread samples **every connected peer every 5 s** (`RTT_SAMPLE_INTERVAL_MS`) and records each peer's current RTT into its region's histogram, so the distribution is **peer-weighted**: a region with more connected peers contributes proportionally more samples.
+
+The `region` label is the continent resolved from the peer's IP against the geo-whois-asn-country (IP-allocation-registry) database described below. `unknown` folds together private/loopback IPs (local dev), addresses outside the loaded ranges or carrying unassigned country codes, and — when the database is absent from the image — every peer.
+
+**500 ms seed caveat**: ENet seeds `roundTripTime` at 500 ms until the first reliable-channel ACK sample lands. A peer connected for less than one ACK round can therefore contribute that 500 ms seed to its first sweep entry — accepted noise at a 5 s cadence rather than a reason to track per-peer connect ages.
+
+The console dashboard shows a single **Peer RTT (ms)** row that merges all seven per-continent histograms (`HistogramSnapshots.Merge`); the per-region breakdown is Grafana-only.
+
+**Prometheus**: exposed as a native histogram `dcl_pulse_peer_rtt_ms` with one `region` label per continent (`af`, `as`, `eu`, `na`, `oc`, `sa`, `unknown`). Per-region percentile:
+
+```promql
+histogram_quantile(0.5, sum by (le) (rate(dcl_pulse_peer_rtt_ms_bucket{region="as"}[5m])))
+```
+
+| Signal | Meaning |
+|---|---|
+| A region's p50 stable and low | Peers there are close to the deployment — healthy |
+| One region's p50 ≫ the others | Distance-dominated latency — a case for a closer regional deployment |
+| A region's p99 ≫ its own p50 | Tail of poorly-connected peers (mobile, congested last mile) in that region |
+| `unknown` dominating with a real player population | Geo database missing from the image, or peers behind private/CGNAT egress the DB can't place |
+| Everything near 500 ms right after a connect burst | The ENet seed showing through before ACK samples arrive — transient, ignore |
+
+**Data source**: two inputs, both fetched fresh at build time. IP-range → country comes from [geo-whois-asn-country](https://github.com/sapics/ip-location-db) (CC0, public domain), the `-num` CSV variants. Country → continent comes from [GeoNames `countryInfo.txt`](https://download.geonames.org/export/dump/countryInfo.txt) (CC-BY 4.0 — *"Contains data from GeoNames (geonames.org), licensed under CC BY 4.0"*), keyed on the ISO 3166-1 alpha-2 code with the continent read from the file's continent column (Antarctica folds to `unknown`). `ContinentResolver` loads all three once at startup from `Transport:GeoDbDirectory` (default `geodb`, resolved against the app base directory; absolute paths are used as-is). A missing mapping file or IPv4 CSV is tolerated — every peer then reports under `region="unknown"`.
+
+The downloads are deliberately unpinned (no checksum, no version tag) so every image build ships current IP-allocation data, which is a stated requirement — geo ranges churn constantly and a stale pin would silently misplace peers. The risk of an unpinned fetch is contained on three fronts: the files are data-only, parsed into a lookup table with no execution path; the parser skips-and-counts malformed rows rather than throwing (see `ContinentResolver.ParseInto`); and an unusable or empty dataset — including a fetch that failed or returned garbage — degrades to `region="unknown"` with a warning rather than crashing startup.
+
+Two ways the files get to that directory:
+
+- **Docker**: each of the three Dockerfiles fetches the fresh IPv4 CSV, IPv6 CSV, and `countryInfo.txt` into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. These freshly-fetched copies are authoritative for images.
+- **Local (non-Docker) builds**: the `DCLPulse.csproj` `FetchGeoDb` target predownloads the three files into the gitignored `packages/geodb/` cache (once) and copies them next to the build output, so local runs resolve regions without a Docker image. Delete `packages/geodb` to force a refresh. Offline builds warn and continue — the app then degrades to `region="unknown"`. The download is skipped in Docker builds and containers (`FetchGeoDb=false`) and on CI (`CI=true`), so it never runs where the `ADD`-provided or in-memory test copies already apply.
 
 ---
 
@@ -406,7 +574,8 @@ Per-message-type rates for `ServerMessage` variants. Shows the server's output c
 
 ## Adding new metrics
 
-See the `/add-metric` skill (`/.claude/skills/add-metric/SKILL.md`) for step-by-step instructions covering three patterns:
+See the `/add-metric` skill (`/.claude/skills/add-metric/SKILL.md`) for step-by-step instructions covering four patterns:
 - **Pattern A**: Counter-based (System.Diagnostics.Metrics) — for hot-path values
 - **Pattern B**: Sampled (direct read) — for queue depths and gauges
 - **Pattern C**: Per-enum collection — for counting by message type or enum variant
+- **Pattern D**: Histogram — for latency/duration value distributions (percentiles over buckets)

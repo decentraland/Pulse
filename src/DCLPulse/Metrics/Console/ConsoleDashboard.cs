@@ -75,6 +75,7 @@ public sealed class ConsoleDashboard(
         (ClientMessage.MessageOneofCase.EmoteStart, "EmoteStart", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.EmoteStop, "EmoteStop", STYLE_INBOUND),
         (ClientMessage.MessageOneofCase.Teleport, "Teleport", STYLE_INBOUND),
+        (ClientMessage.MessageOneofCase.SceneListenerHandshake, "SceneListenerHandshake", STYLE_INBOUND),
     ]);
 
     private static readonly MessageTableConfig<ServerMessage.MessageOneofCase> OUTGOING_MESSAGES_CONFIG = new ("Outgoing Messages",
@@ -113,6 +114,23 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker handshakeReplayRejectedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker bannedRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker corruptedPacketTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker ipLimitRefusedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker ipLimitWhitelistBypassTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker ipLimitTrackedIpsTracker = new (SPARKLINE_MAX_SAMPLES);
+
+    // Scene-listener trackers.
+    private readonly GaugeTracker sceneListenersConnectedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker sceneListenerForbiddenDroppedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly GaugeTracker sceneListenerVisibleSubjectsTracker = new (SPARKLINE_MAX_SAMPLES);
+
+    // Latency trackers — histogram-backed; percentile columns show value distribution (ms/µs).
+    private readonly HistogramTracker deltaStalenessT0Tracker = new ();
+    private readonly HistogramTracker deltaStalenessT1Tracker = new ();
+    private readonly HistogramTracker deltaStalenessT2Tracker = new ();
+    private readonly HistogramTracker tickDurationTracker = new ();
+    private readonly HistogramTracker drainCycleTracker = new ();
+    private readonly HistogramTracker peerRttTracker = new ();
+    private readonly RateTracker tickOverrunsTracker = new (SPARKLINE_MAX_SAMPLES);
 
     private readonly GaugeTracker clusterCountTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker clusterSizeMeanTracker = new (SPARKLINE_MAX_SAMPLES);
@@ -155,6 +173,19 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView handshakeReplayRejected = new ();
     private readonly RateStatsView bannedRefused = new ();
     private readonly RateStatsView corruptedPacket = new ();
+    private readonly RateStatsView ipLimitRefused = new ();
+    private readonly RateStatsView ipLimitWhitelistBypass = new ();
+    private readonly RateStatsView ipLimitTrackedIps = new ();
+    private readonly RateStatsView sceneListenersConnected = new ();
+    private readonly RateStatsView sceneListenerForbiddenDropped = new ();
+    private readonly RateStatsView sceneListenerVisibleSubjects = new ();
+    private readonly RateStatsView deltaStalenessT0 = new ();
+    private readonly RateStatsView deltaStalenessT1 = new ();
+    private readonly RateStatsView deltaStalenessT2 = new ();
+    private readonly RateStatsView tickDuration = new ();
+    private readonly RateStatsView drainCycle = new ();
+    private readonly RateStatsView peerRtt = new ();
+    private readonly RateStatsView tickOverruns = new ();
 
     private readonly RateStatsView clusterCount = new ();
     private readonly RateStatsView clusterSizeMean = new ();
@@ -187,6 +218,19 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline handshakeReplayRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline bannedRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline corruptedPacketSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline ipLimitRefusedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline ipLimitWhitelistBypassSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline ipLimitTrackedIpsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenersConnectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenerForbiddenDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline sceneListenerVisibleSubjectsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline deltaStalenessT0Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline deltaStalenessT1Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline deltaStalenessT2Sparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline tickDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline drainCycleSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline peerRttSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline tickOverrunsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private readonly Sparkline clusterCountSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline clusterSizeMeanSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -328,6 +372,52 @@ public sealed class ConsoleDashboard(
         ShiftSample(corruptedPacketSparkline.Values, corruptedPacketRate.PerSec);
 
         UpdateClusterViews(snap, elapsed);
+        UpdateIpLimit(snap.Hardening, elapsed);
+
+        // Scene-listener gauge + rate + histogram mean.
+        RateStats connectedStats = sceneListenersConnectedTracker.Record(snap.SceneListener.Connected);
+        RateStats forbiddenDroppedRate = sceneListenerForbiddenDroppedTracker.Update(snap.SceneListener.TotalForbiddenMessagesDropped, elapsed);
+        double visibleSubjectsMean = snap.SceneListener.VisibleSubjectsCount > 0
+            ? (double)snap.SceneListener.VisibleSubjectsSum / snap.SceneListener.VisibleSubjectsCount
+            : 0.0;
+        RateStats visibleSubjectsStats = sceneListenerVisibleSubjectsTracker.Record(visibleSubjectsMean);
+
+        sceneListenersConnected.Apply(connectedStats, v => v.ToString("N0"));
+        sceneListenerForbiddenDropped.Apply(forbiddenDroppedRate, v => v.ToString("N0"));
+        sceneListenerVisibleSubjects.Apply(visibleSubjectsStats, v => v.ToString("N1"));
+
+        ShiftSample(sceneListenersConnectedSparkline.Values, snap.SceneListener.Connected);
+        ShiftSample(sceneListenerForbiddenDroppedSparkline.Values, forbiddenDroppedRate.PerSec);
+        ShiftSample(sceneListenerVisibleSubjectsSparkline.Values, visibleSubjectsMean);
+
+        // Latency histograms.
+        RateStats stalenessT0Stats = deltaStalenessT0Tracker.Update(snap.Simulation.DeltaStalenessTier0Ms, elapsed);
+        RateStats stalenessT1Stats = deltaStalenessT1Tracker.Update(snap.Simulation.DeltaStalenessTier1Ms, elapsed);
+        RateStats stalenessT2Stats = deltaStalenessT2Tracker.Update(snap.Simulation.DeltaStalenessTier2Ms, elapsed);
+        RateStats tickDurationStats = tickDurationTracker.Update(snap.Simulation.TickDurationUs, elapsed);
+        RateStats drainCycleStats = drainCycleTracker.Update(snap.Transport.OutgoingDrainCycleUs, elapsed);
+        RateStats tickOverrunsRate = tickOverrunsTracker.Update(snap.Simulation.TotalTickOverruns, elapsed);
+
+        deltaStalenessT0.Apply(stalenessT0Stats, v => v.ToString("N0"));
+        deltaStalenessT1.Apply(stalenessT1Stats, v => v.ToString("N0"));
+        deltaStalenessT2.Apply(stalenessT2Stats, v => v.ToString("N0"));
+        tickDuration.Apply(tickDurationStats, v => v.ToString("N0"));
+        drainCycle.Apply(drainCycleStats, v => v.ToString("N0"));
+        tickOverruns.Apply(tickOverrunsRate, v => v.ToString("N0"));
+
+        // Latency sparklines plot window P99 (the tail we care about), not the rate.
+        ShiftSample(deltaStalenessT0Sparkline.Values, stalenessT0Stats.Window.P99);
+        ShiftSample(deltaStalenessT1Sparkline.Values, stalenessT1Stats.Window.P99);
+        ShiftSample(deltaStalenessT2Sparkline.Values, stalenessT2Stats.Window.P99);
+        ShiftSample(tickDurationSparkline.Values, tickDurationStats.Window.P99);
+        ShiftSample(drainCycleSparkline.Values, drainCycleStats.Window.P99);
+        ShiftSample(tickOverrunsSparkline.Values, tickOverrunsRate.PerSec);
+
+        // Peer RTT — aggregate across continents; the per-region breakdown lives in Grafana,
+        // the TUI shows a single merged row.
+        RateStats peerRttStats = peerRttTracker.Update(HistogramSnapshots.Merge(snap.Transport.PeerRttMs), elapsed);
+        peerRtt.Apply(peerRttStats, v => v.ToString("N0"));
+        ShiftSample(peerRttSparkline.Values, peerRttStats.Window.P99);
 
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
@@ -398,6 +488,21 @@ public sealed class ConsoleDashboard(
         ShiftSample(natsConnectedSparkline.Values, snap.Clusters.NatsConnected);
     }
 
+    private void UpdateIpLimit(MetricsSnapshot.HardeningSnapshot hardening, double elapsed)
+    {
+        RateStats refusedRate = ipLimitRefusedTracker.Update(hardening.TotalIpLimitRefused, elapsed);
+        RateStats bypassRate = ipLimitWhitelistBypassTracker.Update(hardening.TotalIpLimitWhitelistBypass, elapsed);
+        RateStats trackedIpsStats = ipLimitTrackedIpsTracker.Record(hardening.IpLimitTrackedIps);
+
+        ipLimitRefused.Apply(refusedRate, v => v.ToString("N0"));
+        ipLimitWhitelistBypass.Apply(bypassRate, v => v.ToString("N0"));
+        ipLimitTrackedIps.Apply(trackedIpsStats, v => v.ToString("N0"));
+
+        ShiftSample(ipLimitRefusedSparkline.Values, refusedRate.PerSec);
+        ShiftSample(ipLimitWhitelistBypassSparkline.Values, bypassRate.PerSec);
+        ShiftSample(ipLimitTrackedIpsSparkline.Values, hardening.IpLimitTrackedIps);
+    }
+
     private Visual BuildVisualTree()
     {
         var pipelineTable = new Table(
@@ -431,6 +536,9 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Handshake Replay Rejected", handshakeReplayRejected, handshakeReplayRejectedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Banned Refused", bannedRefused, bannedRefusedSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Corrupted Packets", corruptedPacket, corruptedPacketSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("IP Limit Tracked IPs", ipLimitTrackedIps, ipLimitTrackedIpsSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("IP Limit Refused", ipLimitRefused, ipLimitRefusedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("IP Limit Whitelisted", ipLimitWhitelistBypass, ipLimitWhitelistBypassSparkline.Style(STYLE_BACKPRESSURE)),
             ]);
 
         var hardening = new Group("Hardening", hardeningTable);
@@ -452,6 +560,29 @@ public sealed class ConsoleDashboard(
             ]);
 
         var clusters = new Group("Clusters", clustersTable);
+        var sceneListenerTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Connected", sceneListenersConnected, sceneListenersConnectedSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Forbidden Dropped", sceneListenerForbiddenDropped, sceneListenerForbiddenDroppedSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("Visible Subjects", sceneListenerVisibleSubjects, sceneListenerVisibleSubjectsSparkline.Style(STYLE_INBOUND)),
+            ]);
+
+        var sceneListener = new Group("Scene Listener", sceneListenerTable);
+
+        var latencyTable = new Table(
+            TableHeaders(),
+            [
+                RateStatsRow("Δ Staleness T0 (ms)", deltaStalenessT0, deltaStalenessT0Sparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Δ Staleness T1 (ms)", deltaStalenessT1, deltaStalenessT1Sparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Δ Staleness T2 (ms)", deltaStalenessT2, deltaStalenessT2Sparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Tick Duration (µs)", tickDuration, tickDurationSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Drain Cycle (µs)", drainCycle, drainCycleSparkline.Style(STYLE_OUTBOUND)),
+                RateStatsRow("Peer RTT (ms)", peerRtt, peerRttSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Tick Overruns", tickOverruns, tickOverrunsSparkline.Style(STYLE_ERROR)),
+            ]);
+
+        var latency = new Group("Latency", latencyTable);
 
         Group logs = new Group("Logs",
                 logControl.FollowTail(true).MaxCapacity(1000).Stretch()
@@ -464,6 +595,8 @@ public sealed class ConsoleDashboard(
                 webTransportGroup,
                 hardening,
                 clusters,
+                sceneListener,
+                latency,
                 incomingMessagesState.BuildGroup(),
                 outgoingMessagesState.BuildGroup()
             ).Spacing(1)

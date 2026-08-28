@@ -116,6 +116,28 @@ public class IdentityBoardTests
     }
 
     /// <summary>
+    ///     Duplicate-session eviction flow: wallet W is bound to O, then a second connection
+    ///     rebinds W to N (handshake handler evicts O and calls Set(N, W)). O's DISCONNECTING
+    ///     cleanup runs ~5s later and calls Remove(O) — that removal must not delete the live
+    ///     W → N mapping, or a third handshake with W would no longer detect N as a duplicate.
+    /// </summary>
+    [Test]
+    public void Remove_OldPeerAfterWalletRebound_KeepsLiveForwardMapping()
+    {
+        var board = new IdentityBoard(MAX_PEERS);
+        board.Set(new PeerIndex(7), "0xABC");
+        board.Set(new PeerIndex(12), "0xABC"); // eviction rebinds the wallet to the new peer
+
+        board.Remove(new PeerIndex(7)); // delayed cleanup of the evicted peer
+
+        Assert.That(board.GetWalletIdByPeerIndex(new PeerIndex(7)), Is.Null,
+            "the evicted slot must be cleared");
+        Assert.That(board.TryGetPeerIndexByWallet("0xABC", out PeerIndex pi), Is.True,
+            "cleanup of the evicted peer must not delete the live wallet binding");
+        Assert.That(pi, Is.EqualTo(new PeerIndex(12)));
+    }
+
+    /// <summary>
     ///     Core invariant for the "same wallet → same PeerIndex" refactor: after a clean
     ///     disconnect (Remove), re-authenticating the same wallet must be able to discover
     ///     that the wallet has no live binding, so the allocator can decide whether to reuse

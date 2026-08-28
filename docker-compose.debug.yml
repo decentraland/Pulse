@@ -16,6 +16,7 @@ services:
       # reconnect, which a flapping broker turns into a stream through the console dashboard.
       Logging__LogLevel__Default: Debug
       Peers__ResyncWithDelta: false
+      Transport__GeoDbDirectory: /app/geodb
       WebTransport__Enabled: true
       # Off by default in appsettings; the debug stack turns clustering on and points it at the
       # sidecar broker. Drop Nats__Url for stats-only mode (tracker runs, nothing published).

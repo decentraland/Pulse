@@ -27,8 +27,8 @@ public class PrometheusFormatterTests
                 TotalDatagramsDroppedStale = 7,
                 TotalDatagramsDroppedOversize = 9,
             },
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
         });
 
         Assert.That(output, Does.Contain("dcl_pulse_peers_connected_total{transport=\"enet\"} 3"));
@@ -50,8 +50,8 @@ public class PrometheusFormatterTests
                 TotalDatagramsDroppedStale = 7,
                 TotalDatagramsDroppedOversize = 9,
             },
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
         });
 
         Assert.That(output, Does.Contain("dcl_pulse_wt_datagrams_dropped_stale_total 7"));
@@ -77,8 +77,8 @@ public class PrometheusFormatterTests
                 TotalNatsPublishFailed = 6,
                 TotalNatsDropped = 4,
             },
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
         });
 
         Assert.That(output, Does.Contain("dcl_pulse_nats_published_total 11"));
@@ -199,8 +199,8 @@ public class PrometheusFormatterTests
         {
             Transport = new MetricsSnapshot.TransportSnapshot { ByTransport = new MetricsSnapshot.PerTransportCounters[2] },
             Clusters = clusters,
-            IncomingMessages = new ClientMessageCounters(8),
-            OutgoingMessages = new ServerMessageCounters(10),
+            IncomingMessages = new ClientMessageCounters(),
+            OutgoingMessages = new ServerMessageCounters(),
         };
 
     private static string Format(MetricsSnapshot snap)

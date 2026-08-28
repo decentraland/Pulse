@@ -221,6 +221,24 @@ BotSession.cs                       Per-bot state (position, rotation, seq track
 └── ParcelEncoder                   Global ↔ parcel-relative position conversion
 ```
 
+## Deployments
+
+`pulse-server` is the instance the client talks to. It ships automatically from `main` (**CI/CD on main branch**) and can be pushed to an environment by hand with **Manual Deploy**.
+
+`pulse-archipelago` is a second instance in `.zone`, for hands-on Archipelago testing. It is entirely manual in both directions, through the **Manual Deploy (pulse-archipelago)** action:
+
+| Action | What it does |
+| --- | --- |
+| `up` | Deploys `quay.io/decentraland/pulse-server:<tag>` and runs one task |
+| `down` | Deploys the `parked` sentinel tag, which drops the service to zero tasks |
+
+Two things to know before relying on it:
+
+- **`down` is not a `pulumi destroy`.** The stack, the target group and the Cloudflare record survive — only the Fargate task goes away. Since the NLB and the ALB are shared across services, a parked instance costs essentially nothing. A real destroy means running `ops/services-pipeline` in GitLab with `PULUMI_ACTION=destroy`.
+- **The `parked` string is coupled across two repos.** It lives in this repo's workflow and in `src/services/pulse-archipelago.ts` in `decentraland/definitions`. Changing one without the other silently breaks the switch. The tag carries the switch because the GitHub deploy path forwards a fixed set of pipeline variables, and `SERVICE_IMAGE` is the only one a workflow controls freely.
+
+`pulse-archipelago` runs without WebTransport: the exportable WT certificate is issued for `pulse-server.<domain>` only, so that instance is UDP/ENet on 7777.
+
 ## Debugging
 
 Local debugging uses `docker-compose.debug.yml` with Rider attaching via the Docker socket. Remote debugging against the dev environment uses `Dockerfile.dev-debug` (Debug build + vsdbg + sshd + pre-installed JetBrains RiderRemoteDebugger) deployed via the **Deploy Dev (Debug)** GitHub Action, with Rider attaching over SSH through the bastion.

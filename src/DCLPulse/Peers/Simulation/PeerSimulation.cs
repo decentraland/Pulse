@@ -2,6 +2,7 @@ using Decentraland.Common;
 using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Transport;
 using static Pulse.Messaging.MessagePipe;
 
@@ -125,7 +126,7 @@ public sealed class PeerSimulation : IPeerSimulation
             {
                 if (timeProvider.MonotonicTime - observerState.TransportState.DisconnectionTime >= disconnectionCleanTimeoutMs)
                 {
-                    CleanupDisconnectedPeer(observerId);
+                    CleanupDisconnectedPeer(observerId, observerState);
                     continue;
                 }
             }
@@ -133,27 +134,10 @@ public sealed class PeerSimulation : IPeerSimulation
             if (observerState.ConnectionState != PeerConnectionState.AUTHENTICATED)
                 continue;
 
-            if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
-                continue;
-
-            if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
-            {
-                views = new Dictionary<PeerIndex, PeerToPeerView>();
-                observerViews[observerId] = views;
-            }
-
-            collector.Clear();
-            areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
-            AddSelfMirror(observerId, in observerSnapshot);
-
-            string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
-
-            ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter);
-
-            observerState.ResyncRequests?.Clear();
-
-            if (tickCounter % SWEEP_INTERVAL == 0)
-                SweepStaleViews(observerId, views, tickCounter);
+            if (observerState.SceneListener is { } listener)
+                SimulateSceneListenerObserver(observerId, observerState, listener, tickCounter);
+            else
+                SimulatePlayerObserver(observerId, observerState, tickCounter);
         }
 
         foreach (PeerIndex pi in peersToBeRemoved)
@@ -168,6 +152,107 @@ public sealed class PeerSimulation : IPeerSimulation
     public void RemoveObserver(PeerIndex observerId)
     {
         observerViews.Remove(observerId);
+    }
+
+    // ── Per-observer simulation paths ───────────────────────────────
+
+    /// <summary>
+    ///     Player observers are subjects too: the radius AoI query is centered on their own
+    ///     published snapshot, so until the handshake seed or a teleport lands one there is
+    ///     nothing to query from and the tick is skipped. Full message surface, distance tiers,
+    ///     optional self-mirror.
+    /// </summary>
+    private void SimulatePlayerObserver(PeerIndex observerId, PeerState observerState, uint tickCounter)
+    {
+        if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
+            return;
+
+        collector.Clear();
+        areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
+
+        AddSelfMirror(observerId, in observerSnapshot);
+
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false);
+    }
+
+    /// <summary>
+    ///     Scene listeners have no snapshot of their own — their interest set is the fixed
+    ///     parcel set announced at handshake, always at TIER_0, positional messages only.
+    ///     Everything downstream (views, diffs, resync, sweeps) is the shared pipeline.
+    /// </summary>
+    private void SimulateSceneListenerObserver(PeerIndex observerId, PeerState observerState, SceneListenerState listener, uint tickCounter)
+    {
+        collector.Clear();
+        CollectSceneListenerSubjects(observerId, listener);
+
+        PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
+
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: true);
+    }
+
+    /// <summary>
+    ///     Shared tail of both observer paths: resolve the observer's view map, walk the freshly
+    ///     filled collector via <see cref="ProcessVisibleSubjects" />, drop unconsumed resync
+    ///     requests (AoI enforcement — see <see cref="Messaging.ResyncRequestHandler" />), and
+    ///     periodically sweep views whose subjects left the interest set.
+    /// </summary>
+    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly)
+    {
+        if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
+        {
+            views = new Dictionary<PeerIndex, PeerToPeerView>();
+            observerViews[observerId] = views;
+        }
+
+        string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
+
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly);
+
+        observerState.ResyncRequests?.Clear();
+
+        if (tickCounter % SWEEP_INTERVAL == 0)
+            SweepStaleViews(observerId, views, tickCounter);
+    }
+
+    // ── Scene-listener interest collection ──────────────────────────
+
+    /// <summary>
+    ///     Fills the collector with subjects standing inside the listener's parcels: union the
+    ///     occupants of the precomputed covering cells, then filter parcel-exact — the covering cells
+    ///     over-approximate, since a 100-unit cell holds ~6x6 parcels. Every accepted subject is
+    ///     TIER_0: a parcel set has no distance to tier by.
+    ///     <para />
+    ///     The realm needs no test of its own. A listener announces its parcels for one realm and grids
+    ///     are per realm, so every occupant of these cells is already same-realm.
+    /// </summary>
+    private void CollectSceneListenerSubjects(PeerIndex observerId, SceneListenerState listener)
+    {
+        SpatialGrid? grid = realmGrids.GetGrid(listener.Realm);
+
+        if (grid == null)
+            return;
+
+        foreach (long cellKey in listener.CellKeys)
+        {
+            HashSet<PeerIndex>? cellPeers = grid.GetPeers(cellKey);
+
+            if (cellPeers == null)
+                continue;
+
+            foreach (PeerIndex subject in cellPeers)
+            {
+                if (subject == observerId)
+                    continue;
+
+                if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
+                    continue;
+
+                if (!listener.Parcels.Contains(subjectSnapshot.Parcel))
+                    continue;
+
+                collector.Add(subject, PeerViewSimulationTier.TIER_0);
+            }
+        }
     }
 
     /// <summary>
@@ -194,7 +279,8 @@ public sealed class PeerSimulation : IPeerSimulation
         string? observerWallet,
         Dictionary<PeerIndex, PeerToPeerView> views,
         Dictionary<PeerIndex, uint>? resyncRequests,
-        uint tickCounter)
+        uint tickCounter,
+        bool positionalOnly)
     {
         for (var i = 0; i < collector.Count; i++)
         {
@@ -245,16 +331,17 @@ public sealed class PeerSimulation : IPeerSimulation
 
             if (isNew)
             {
-                view = HandleNewSubject(observerId, entry.Subject, latestSnapshot, isSelfMirror, resyncRequests);
+                view = HandleNewSubject(observerId, entry.Subject, latestSnapshot, isSelfMirror, resyncRequests, positionalOnly);
                 view.LastSeenTick = tickCounter;
                 views[entry.Subject] = view;
                 continue;
             }
 
-            TryAnnounceProfile(observerId, entry.Subject, ref view);
+            if (!positionalOnly)
+                TryAnnounceProfile(observerId, entry.Subject, ref view);
 
             PeerSnapshot lastSentState = ProcessExistingSubject(
-                observerId, entry, ref view, latestSnapshot, resyncRequests);
+                observerId, entry, ref view, latestSnapshot, resyncRequests, positionalOnly);
 
             view.LastSentSnapshot = lastSentState;
             view.LastSeenTick = tickCounter;
@@ -306,7 +393,8 @@ public sealed class PeerSimulation : IPeerSimulation
     private PeerToPeerView HandleNewSubject(
         PeerIndex observerId, PeerIndex subjectId,
         PeerSnapshot latestSnapshot, bool isSelfMirror,
-        Dictionary<PeerIndex, uint>? resyncRequests)
+        Dictionary<PeerIndex, uint>? resyncRequests,
+        bool positionalOnly)
     {
         resyncRequests?.Remove(subjectId);
 
@@ -344,7 +432,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // so the observer can scrub the animation forward instead of staying idle. Treated as
         // the eviction case: we only know the emote through the ledger-carried latest snapshot,
         // not a real EmoteStart event, so the tripwire should warn (not error) on seq collisions.
-        if (latestSnapshot.Emote is { EmoteId: not null } activeEmote)
+        if (!positionalOnly && latestSnapshot.Emote is { EmoteId: not null } activeEmote)
         {
             SendEmoteStarted(observerId, ref view, subjectId, latestSnapshot, activeEmote, fromEviction: true);
             view.LastSentEmote = activeEmote;
@@ -369,7 +457,8 @@ public sealed class PeerSimulation : IPeerSimulation
         InterestEntry entry,
         ref PeerToPeerView view,
         PeerSnapshot latestSnapshot,
-        Dictionary<PeerIndex, uint>? resyncRequests)
+        Dictionary<PeerIndex, uint>? resyncRequests,
+        bool positionalOnly)
     {
         PeerSnapshot lastSentState = view.LastSentSnapshot;
         var discreteEventSent = false;
@@ -395,6 +484,7 @@ public sealed class PeerSimulation : IPeerSimulation
                                      && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
 
         if (emoteStartIsEffective
+            && !positionalOnly
             && lastEmoteStart!.Value.Emote is { EmoteId: not null } emote
             && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartSeq == view.LastSentEmote?.StartSeq))
         {
@@ -687,12 +777,30 @@ public sealed class PeerSimulation : IPeerSimulation
         if (baseline.Seq == target.Seq)
             return;
 
+        if (!fromResync)
+            RecordDeltaStaleness(in target, tier);
+
         PlayerStateDeltaTier0 delta = PeerViewDiff.CreateMessage(subjectId, baseline, target, tier);
 
         SendTracked(observerId, ref view, target.Seq, new ServerMessage
         {
             PlayerStateDelta = delta,
         }, packetMode, fromResync: fromResync);
+    }
+
+    /// <summary>
+    ///     KR1.1 measurement: publish→fan-out staleness of the delta target, per AoI tier.
+    ///     Unsigned subtraction is wrap-safe across the ~49.7-day uint clock rollover — do not
+    ///     cast to signed before subtracting. Resync-path deltas are excluded by the caller:
+    ///     their target can be arbitrarily old when the subject idled after the client lost
+    ///     packets, which would pollute the histogram. The steady-state path only reaches here
+    ///     when the seq advanced, i.e. the target is a genuinely fresh publish.
+    /// </summary>
+    private void RecordDeltaStaleness(in PeerSnapshot target, PeerViewSimulationTier tier)
+    {
+        uint stalenessMs = timeProvider.MonotonicTime - target.ServerTick;
+        int tierIndex = Math.Min(tier.Value, PulseMetrics.Simulation.DELTA_STALENESS_MS.Length - 1);
+        PulseMetrics.Simulation.DELTA_STALENESS_MS[tierIndex].Record(stalenessMs);
     }
 
     private void TryAnnounceProfile(PeerIndex observerId, PeerIndex subjectId, ref PeerToPeerView view)
@@ -719,8 +827,14 @@ public sealed class PeerSimulation : IPeerSimulation
 
     // ── Cleanup ─────────────────────────────────────────────────────
 
-    private void CleanupDisconnectedPeer(PeerIndex peerId)
+    private void CleanupDisconnectedPeer(PeerIndex peerId, PeerState peerState)
     {
+        // A scene listener owns a CONNECTED gauge slot but no board entries — decrement it
+        // here so the inc at handshake and this dec stay symmetric. Read the descriptor
+        // before the boards are wiped below.
+        if (peerState.SceneListener != null)
+            PulseMetrics.SceneListener.CONNECTED.Add(-1);
+
         snapshotBoard.ClearActive(peerId);
         realmGrids.Remove(peerId);
         identityBoard.Remove(peerId);

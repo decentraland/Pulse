@@ -6,6 +6,8 @@ public readonly record struct MetricsSnapshot
     public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
     public ClustersSnapshot Clusters { get; init; }
+    public SceneListenerSnapshot SceneListener { get; init; }
+    public SimulationSnapshot Simulation { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
     public ServerMessageCounters OutgoingMessages { get; init; }
 
@@ -18,6 +20,15 @@ public readonly record struct MetricsSnapshot
         // both transports, so they are not attributable to one transport.
         public int IncomingQueueDepth { get; init; }
         public int OutgoingQueueDepth { get; init; }
+
+        /// <summary>ENet outbound drain-cycle duration (µs), non-empty cycles only.</summary>
+        public HistogramSnapshot OutgoingDrainCycleUs { get; init; }
+
+        /// <summary>
+        ///     Peer RTT histograms indexed by (int)Continent — see Continents.LABELS.
+        ///     Sampled from ENet peers (ENet maintains RTT via reliable-channel ACKs).
+        /// </summary>
+        public HistogramSnapshot[]? PeerRttMs { get; init; }
     }
 
     public readonly record struct PerTransportCounters
@@ -86,5 +97,49 @@ public readonly record struct MetricsSnapshot
         public long TotalHandshakeReplayRejected { get; init; }
         public long TotalBannedRefused { get; init; }
         public long TotalCorruptedPacket { get; init; }
+        public long TotalIpLimitWhitelistBypass { get; init; }
+        public int IpLimitTrackedIps { get; init; }
+
+        /// <summary>
+        ///     Per-IP-cap refusals indexed by <c>(int)ConnectionClass</c> — labels in
+        ///     <c>ConnectionClasses.LABELS</c>. Null on a snapshot no collector populated, such as
+        ///     a default-constructed one.
+        /// </summary>
+        public long[]? IpLimitRefusedByClass { get; init; }
+
+        /// <summary>Refusals summed over every connection class, for single-number consumers.</summary>
+        public long TotalIpLimitRefused
+        {
+            get
+            {
+                long total = 0;
+
+                foreach (long refused in IpLimitRefusedByClass ?? [])
+                    total += refused;
+
+                return total;
+            }
+        }
+    }
+
+    public readonly record struct SceneListenerSnapshot
+    {
+        public int Connected { get; init; }
+        public long TotalForbiddenMessagesDropped { get; init; }
+
+        // Histogram summary for pulse.scene_listener.visible_subjects — running sum and
+        // sample count. Consumers divide sum by count for the mean; Prometheus emits both
+        // as the standard _sum / _count decomposition.
+        public long VisibleSubjectsSum { get; init; }
+        public long VisibleSubjectsCount { get; init; }
+    }
+
+    public readonly record struct SimulationSnapshot
+    {
+        public HistogramSnapshot DeltaStalenessTier0Ms { get; init; }
+        public HistogramSnapshot DeltaStalenessTier1Ms { get; init; }
+        public HistogramSnapshot DeltaStalenessTier2Ms { get; init; }
+        public HistogramSnapshot TickDurationUs { get; init; }
+        public long TotalTickOverruns { get; init; }
     }
 }

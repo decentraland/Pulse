@@ -16,8 +16,6 @@ namespace DCLPulseTests;
 [NonParallelizable]
 public class ENetHostedServiceShutdownTests
 {
-    // Each test grabs a unique high port so parallel/repeated runs don't collide on the socket.
-    private static int portOffset;
 
     [OneTimeSetUp]
     public void OneTimeSetUp()
@@ -71,8 +69,26 @@ public class ENetHostedServiceShutdownTests
             ENetHostedService.ShutdownGracefully(Array.Empty<Peer>(), Substitute.For<ILogger>()));
     }
 
-    private static ushort AllocatePort() =>
-        (ushort)(40000 + Interlocked.Increment(ref portOffset));
+    /// <summary>
+    ///     Asks the OS for a free UDP port instead of hardcoding a range. A fixed range is not
+    ///     safe on Windows: Docker Desktop's port forwarder holds wide UDP ranges that appear in
+    ///     neither <c>netstat</c> nor the excluded-port list, so a hardcoded port fails to bind
+    ///     with no visible owner.
+    /// </summary>
+    private static ushort AllocatePort()
+    {
+        using var probe = new System.Net.Sockets.Socket(
+            System.Net.Sockets.AddressFamily.InterNetworkV6,
+            System.Net.Sockets.SocketType.Dgram,
+            System.Net.Sockets.ProtocolType.Udp);
+
+        probe.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.IPv6Any, 0));
+
+        if (probe.LocalEndPoint is not System.Net.IPEndPoint bound)
+            throw new InvalidOperationException("UDP probe socket reported no local endpoint.");
+
+        return (ushort)bound.Port;
+    }
 
     /// <summary>
     ///     Polls both hosts until the server's Service loop reports a Connect event, then

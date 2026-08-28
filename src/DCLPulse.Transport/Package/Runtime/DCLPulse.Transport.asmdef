@@ -1,5 +1,5 @@
 {
-    "name": "DCLPulse.Transport.Shared",
+    "name": "DCLPulse.Transport",
     "rootNamespace": "Pulse.Transport",
     "references": [],
     "includePlatforms": [],

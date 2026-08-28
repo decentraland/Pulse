@@ -156,6 +156,13 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 - Sent when a received STATE_DELTA can't be applied (gap in seq)
 - Server responds with STATE_FULL (or targeted delta when `Peers.ResyncWithDelta` is enabled)
 
+**SCENE_LISTENER_HANDSHAKE** (ch0, reliable)
+- Alternative to `HANDSHAKE`: same Decentraland ECDSA auth chain, plus a required `realm` (same rules as `TeleportRequest.realm`) and an immutable set of inclusive parcel-coordinate rects (`repeated ParcelRect`, a single parcel is `min == max`) announced once at connect. The server validates the rects and expands them to the internal parcel set; the Σ of nominal rect areas is capped at `SceneListener:MaxParcels` (default 4096) and rejected — never clamped — when exceeded
+- Authenticates a **receive-only listener**: it never becomes a subject (no snapshot/grid registration, so players can never see it) and observes only players inside its announced parcels, in the given realm
+- Receives the positional stream only — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`; emote and profile-version messages are suppressed for listener observers
+- `RESYNC_REQUEST` remains allowed (client-driven gap recovery); every other inbound message from a listener is silently dropped and counted
+- The parcel set cannot be changed without reconnecting; re-announcing requires a fresh connection
+
 ### Server → Client
 
 **PLAYER_JOINED** (ch0, reliable, broadcast to interest set)
@@ -310,6 +317,14 @@ Concrete consequences:
 ## PeerSimulation — method decoupling
 
 `PeerSimulation` is on the hot path and already long. New logic added to it must go into its own private method — do not inline new behavior into existing methods. Keep each method focused on a single concern (e.g. tier gating, delta computation, aliasing detection, profile announcement). The orchestrator `ProcessVisibleSubjects` should read as a short sequence of named calls, not a wall of conditionals. This keeps the per-subject control flow legible and makes it possible to test or reason about each concern in isolation.
+
+## Hardening & Runtime Configuration
+
+Network-level defenses live in `src/DCLPulse/Transport/Hardening/` and `src/DCLPulse/Messaging/Hardening/`, organized as one group per threat. [docs/hardening.md](docs/hardening.md) is the operator reference — threat model, config keys, `DisconnectReason` values, client-recovery contract and metrics for each group.
+
+Hardening knobs are boot-time `appsettings.json` values, with one exception: `Transport:Hardening:IpLimiter` is reconfigurable on a running server from the remote Unleash document. [docs/feature-flags.md](docs/feature-flags.md) covers that mechanism — the `pulse.json` endpoint, `dynamicconfig.json` as the offline defaults and type schema for the remote values, and the procedure for adding a dynamic knob (`IOptionsMonitor<T>`, never `IOptions<T>`).
+
+---
 
 ## Docker — Deployment & Debugging
 

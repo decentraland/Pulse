@@ -30,7 +30,7 @@ public class WorkerAsyncTests
         var snapshotBoard = new SnapshotBoard(100, 10);
 
         manager = new PeersManager(
-            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters(10)),
+            new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
@@ -43,13 +43,14 @@ public class WorkerAsyncTests
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
             Substitute.For<ITransport>(),
             new ProfileBoard(100),
-            new ClientMessageCounters(8),
+            new ClientMessageCounters(),
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
-            })));
+            })),
+            DisabledIpLimiter());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         signal = new ManualResetEventSlim();
@@ -134,5 +135,14 @@ public class WorkerAsyncTests
                   .SimulateTick(
                        Arg.Any<Dictionary<PeerIndex, PeerState>>(),
                        Arg.Any<uint>());
+    }
+
+    // Cap switched off: connections are still counted, none refused — the release path in isolation.
+    private static IpLimiter DisabledIpLimiter()
+    {
+        IOptionsMonitor<IpLimiterOptions> optionsMonitor = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
+        optionsMonitor.CurrentValue.Returns(new IpLimiterOptions { Enabled = false, MaxConcurrency = 0 });
+        optionsMonitor.OnChange(Arg.Any<Action<IpLimiterOptions, string?>>()).Returns(Substitute.For<IDisposable>());
+        return new IpLimiter(optionsMonitor, Substitute.For<ILogger<IpLimiter>>());
     }
 }

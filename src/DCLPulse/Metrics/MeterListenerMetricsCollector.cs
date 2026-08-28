@@ -1,6 +1,8 @@
 using System.Diagnostics.Metrics;
 using Pulse.Messaging;
 using Pulse.Transport;
+using Pulse.Transport.Geo;
+using Pulse.Transport.Hardening;
 
 namespace Pulse.Metrics;
 
@@ -35,6 +37,10 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private readonly long[] unauthMessagesSkipped = new long[TRANSPORT_COUNT];
     private readonly long[] sendFailures = new long[TRANSPORT_COUNT];
 
+    // Per-connection-class per-IP refusals, indexed by (int)ConnectionClass — the counter carries a
+    // class tag, so the callback buckets each measurement the way transport totals are bucketed.
+    private readonly long[] ipLimitRefused = new long[ConnectionClasses.COUNT];
+
     // WebTransport-specific totals (no ENet analogue, so not per-transport).
     private long datagramsDroppedStale;
     private long datagramsDroppedOversize;
@@ -50,6 +56,35 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long handshakeReplayRejected;
     private long bannedRefused;
     private long corruptedPacket;
+    private long ipLimitWhitelistBypass;
+    private int ipLimitTrackedIps;
+
+    // Scene-listener totals.
+    private int sceneListenersConnected;
+    private long sceneListenerForbiddenMessagesDropped;
+    private long sceneListenerVisibleSubjectsSum;
+    private long sceneListenerVisibleSubjectsCount;
+
+    // Latency histograms — bucketed by the measurement callbacks on recording threads.
+    private readonly BucketHistogram deltaStalenessTier0 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram deltaStalenessTier1 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram deltaStalenessTier2 = new (PulseMetrics.Simulation.STALENESS_BUCKETS_MS);
+    private readonly BucketHistogram tickDurationUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
+    private readonly BucketHistogram outgoingDrainCycleUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
+    private long tickOverruns;
+
+    // Per-continent peer RTT histograms — indexed by (int)Continent.
+    private readonly BucketHistogram[] peerRttMs = CreatePeerRttHistograms();
+
+    private static BucketHistogram[] CreatePeerRttHistograms()
+    {
+        var histograms = new BucketHistogram[Continents.COUNT];
+
+        for (var i = 0; i < histograms.Length; i++)
+            histograms[i] = new BucketHistogram(PulseMetrics.Transport.RTT_BUCKETS_MS);
+
+        return histograms;
+    }
 
     // Cluster derivation and feed totals — recorded once per pass on the tracker thread.
     private int clusterCount;
@@ -126,6 +161,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 ByTransport = byTransport,
                 IncomingQueueDepth = messagePipe.IncomingQueueDepth,
                 OutgoingQueueDepth = messagePipe.OutgoingQueueDepth,
+                OutgoingDrainCycleUs = outgoingDrainCycleUs.Snapshot(),
+                PeerRttMs = SnapshotPeerRtt(),
             },
             WebTransport = new MetricsSnapshot.WebTransportSnapshot
             {
@@ -144,6 +181,24 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalHandshakeReplayRejected = Interlocked.Read(ref handshakeReplayRejected),
                 TotalBannedRefused = Interlocked.Read(ref bannedRefused),
                 TotalCorruptedPacket = Interlocked.Read(ref corruptedPacket),
+                IpLimitRefusedByClass = SnapshotIpLimitRefused(),
+                TotalIpLimitWhitelistBypass = Interlocked.Read(ref ipLimitWhitelistBypass),
+                IpLimitTrackedIps = Volatile.Read(ref ipLimitTrackedIps),
+            },
+            SceneListener = new MetricsSnapshot.SceneListenerSnapshot
+            {
+                Connected = Volatile.Read(ref sceneListenersConnected),
+                TotalForbiddenMessagesDropped = Interlocked.Read(ref sceneListenerForbiddenMessagesDropped),
+                VisibleSubjectsSum = Interlocked.Read(ref sceneListenerVisibleSubjectsSum),
+                VisibleSubjectsCount = Interlocked.Read(ref sceneListenerVisibleSubjectsCount),
+            },
+            Simulation = new MetricsSnapshot.SimulationSnapshot
+            {
+                DeltaStalenessTier0Ms = deltaStalenessTier0.Snapshot(),
+                DeltaStalenessTier1Ms = deltaStalenessTier1.Snapshot(),
+                DeltaStalenessTier2Ms = deltaStalenessTier2.Snapshot(),
+                TickDurationUs = tickDurationUs.Snapshot(),
+                TotalTickOverruns = Interlocked.Read(ref tickOverruns),
             },
             Clusters = new MetricsSnapshot.ClustersSnapshot
             {
@@ -180,6 +235,26 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             buckets[i] = Interlocked.Read(ref clusterSizeBuckets[i]);
 
         return buckets;
+    }
+
+    private HistogramSnapshot[] SnapshotPeerRtt()
+    {
+        var snapshots = new HistogramSnapshot[peerRttMs.Length];
+
+        for (var i = 0; i < peerRttMs.Length; i++)
+            snapshots[i] = peerRttMs[i].Snapshot();
+
+        return snapshots;
+    }
+
+    private long[] SnapshotIpLimitRefused()
+    {
+        var byClass = new long[ipLimitRefused.Length];
+
+        for (var i = 0; i < byClass.Length; i++)
+            byClass[i] = Interlocked.Read(ref ipLimitRefused[i]);
+
+        return byClass;
     }
 
     private void OnLongMeasurement(
@@ -271,6 +346,54 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.nats.reconnects":
                 Interlocked.Add(ref natsReconnects, value);
                 break;
+            case "pulse.hardening.ip_limit_refused":
+                Interlocked.Add(ref ipLimitRefused[ConnectionClassIndex(tags)], value);
+                break;
+            case "pulse.hardening.ip_limit_whitelist_bypass":
+                Interlocked.Add(ref ipLimitWhitelistBypass, value);
+                break;
+            case "pulse.scene_listener.forbidden_messages_dropped":
+                Interlocked.Add(ref sceneListenerForbiddenMessagesDropped, value);
+                break;
+            case "pulse.sim.delta_staleness_tier0_ms":
+                deltaStalenessTier0.Record(value);
+                break;
+            case "pulse.sim.delta_staleness_tier1_ms":
+                deltaStalenessTier1.Record(value);
+                break;
+            case "pulse.sim.delta_staleness_tier2_ms":
+                deltaStalenessTier2.Record(value);
+                break;
+            case "pulse.sim.tick_duration_us":
+                tickDurationUs.Record(value);
+                break;
+            case "pulse.sim.tick_overruns":
+                Interlocked.Add(ref tickOverruns, value);
+                break;
+            case "pulse.transport.outgoing_drain_cycle_us":
+                outgoingDrainCycleUs.Record(value);
+                break;
+            case "pulse.transport.peer_rtt_af_ms":
+                peerRttMs[0].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_as_ms":
+                peerRttMs[1].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_eu_ms":
+                peerRttMs[2].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_na_ms":
+                peerRttMs[3].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_oc_ms":
+                peerRttMs[4].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_sa_ms":
+                peerRttMs[5].Record(value);
+                break;
+            case "pulse.transport.peer_rtt_unknown_ms":
+                peerRttMs[6].Record(value);
+                break;
         }
     }
 
@@ -303,6 +426,16 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.nats.connected":
                 Interlocked.Add(ref natsConnected, value);
                 break;
+            case "pulse.hardening.ip_limit_tracked_ips":
+                Interlocked.Add(ref ipLimitTrackedIps, value);
+                break;
+            case "pulse.scene_listener.connected":
+                Interlocked.Add(ref sceneListenersConnected, value);
+                break;
+            case "pulse.scene_listener.visible_subjects":
+                Interlocked.Add(ref sceneListenerVisibleSubjectsSum, value);
+                Interlocked.Increment(ref sceneListenerVisibleSubjectsCount);
+                break;
         }
     }
 
@@ -318,6 +451,20 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 return (int)transport;
 
         return (int)TransportId.ENet;
+    }
+
+    /// <summary>
+    ///     Resolves the connection-class bucket from a measurement's tags. Defaults to
+    ///     <see cref="ConnectionClass.PLAYER" /> for an untagged measurement — every recording site
+    ///     tags itself, so the default only guards against an accidentally-untagged site.
+    /// </summary>
+    private static int ConnectionClassIndex(ReadOnlySpan<KeyValuePair<string, object?>> tags)
+    {
+        foreach (KeyValuePair<string, object?> tag in tags)
+            if (tag.Key == PulseMetrics.Hardening.CONNECTION_CLASS_TAG_KEY && tag.Value is ConnectionClass connectionClass)
+                return (int)connectionClass;
+
+        return (int)ConnectionClass.PLAYER;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

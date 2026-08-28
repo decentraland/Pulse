@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
 using Pulse.Transport;
+using Pulse.Transport.Geo;
+using Pulse.Transport.Hardening;
 
 namespace Pulse.Metrics;
 
@@ -21,6 +23,7 @@ internal static class PrometheusFormatter
         ClientMessage.MessageOneofCase.EmoteStart,
         ClientMessage.MessageOneofCase.EmoteStop,
         ClientMessage.MessageOneofCase.Teleport,
+        ClientMessage.MessageOneofCase.SceneListenerHandshake,
     ];
 
     private static readonly ServerMessage.MessageOneofCase[] OUTGOING_MESSAGE_TYPES =
@@ -64,6 +67,35 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_handshake_replay_rejected_total", "Handshakes rejected because the (wallet, timestamp) pair was already accepted within the anti-replay window", snap.Hardening.TotalHandshakeReplayRejected);
         WriteCounter(writer, "dcl_pulse_banned_refused_total", "Handshake rejections and active-peer evictions triggered by the platform ban list", snap.Hardening.TotalBannedRefused);
         WriteCounter(writer, "dcl_pulse_corrupted_packet_total", "Corrupted packets observed per peer (oversized + protobuf parse failures). Sustained rate above the per-peer cap triggers PACKET_CORRUPTED disconnect.", snap.Hardening.TotalCorruptedPacket);
+        WriteLabeledCounter(writer, "dcl_pulse_ip_limit_refused_total", "Connections refused by the hard per-source-IP concurrent-connection cap, by connection-class budget", PulseMetrics.Hardening.CONNECTION_CLASS_TAG_KEY, ConnectionClasses.LABELS, snap.Hardening.IpLimitRefusedByClass);
+        WriteCounter(writer, "dcl_pulse_ip_limit_whitelist_bypass_total", "Connections over the per-IP cap that were admitted because the source IP is whitelisted", snap.Hardening.TotalIpLimitWhitelistBypass);
+        WriteGauge(writer, "dcl_pulse_ip_limit_tracked_ips", "Distinct source IPs currently holding at least one connection", snap.Hardening.IpLimitTrackedIps);
+
+        WriteGauge(writer, "dcl_pulse_scene_listener_connected", "Currently connected scene listeners", snap.SceneListener.Connected);
+        WriteCounter(writer, "dcl_pulse_scene_listener_forbidden_messages_dropped_total", "Messages dropped from scene listeners that attempted a forbidden operation", snap.SceneListener.TotalForbiddenMessagesDropped);
+        WriteCounter(writer, "dcl_pulse_scene_listener_visible_subjects_sum", "Sum of visible subjects observed across scene-listener announcements (histogram _sum)", snap.SceneListener.VisibleSubjectsSum);
+        WriteCounter(writer, "dcl_pulse_scene_listener_visible_subjects_count", "Number of scene-listener visible-subject observations (histogram _count)", snap.SceneListener.VisibleSubjectsCount);
+
+        WriteHistogramHeader(writer, "dcl_pulse_delta_staleness_ms", "Publish-to-fanout staleness of STATE_DELTA in ms, by AoI tier");
+        WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier0Ms, "tier=\"0\"");
+        WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier1Ms, "tier=\"1\"");
+        WriteHistogramSeries(writer, "dcl_pulse_delta_staleness_ms", snap.Simulation.DeltaStalenessTier2Ms, "tier=\"2\"");
+
+        WriteHistogramHeader(writer, "dcl_pulse_tick_duration_us", "Simulation tick wall time in microseconds");
+        WriteHistogramSeries(writer, "dcl_pulse_tick_duration_us", snap.Simulation.TickDurationUs, labels: null);
+
+        WriteCounter(writer, "dcl_pulse_tick_overruns_total", "Simulation ticks that exceeded the base tick budget", snap.Simulation.TotalTickOverruns);
+
+        WriteHistogramHeader(writer, "dcl_pulse_outgoing_drain_cycle_us", "Outgoing queue drain-cycle duration in microseconds (non-empty cycles only)");
+        WriteHistogramSeries(writer, "dcl_pulse_outgoing_drain_cycle_us", snap.Transport.OutgoingDrainCycleUs, labels: null);
+
+        WriteHistogramHeader(writer, "dcl_pulse_peer_rtt_ms", "ENet smoothed peer RTT in ms by peer continent, sampled every few seconds");
+
+        for (var i = 0; i < Continents.COUNT; i++)
+        {
+            HistogramSnapshot series = snap.Transport.PeerRttMs is { } rtt && i < rtt.Length ? rtt[i] : default(HistogramSnapshot);
+            WriteHistogramSeries(writer, "dcl_pulse_peer_rtt_ms", series, "region=\"" + Continents.LABELS[i] + "\"");
+        }
 
         WriteGauge(writer, "dcl_pulse_clusters", "Clusters currently derived by the clustering pass", snap.Clusters.ClusterCount);
         WriteGauge(writer, "dcl_pulse_cluster_peers", "Peers placed in a cluster by the last pass. Divide by dcl_pulse_clusters for the mean cluster size.", snap.Clusters.ClusterPeers);
@@ -146,6 +178,37 @@ internal static class PrometheusFormatter
         writer.Write(name);
         writer.Write(' ');
         writer.WriteLine(value);
+    }
+
+    /// <summary>
+    ///     Emits one counter as a series per label value — <paramref name="labels" /> supplies the
+    ///     label text for index <c>i</c> of <paramref name="values" />. A null or short
+    ///     <paramref name="values" /> still produces the full label set at zero, so a collector that
+    ///     never recorded a class exposes a well-formed series rather than a missing one (Prometheus
+    ///     rate() over an appearing series reads as a step, not as traffic).
+    /// </summary>
+    private static void WriteLabeledCounter(
+        StreamWriter writer, string name, string help,
+        string labelKey, string[] labels, long[]? values)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.WriteLine(" counter");
+
+        for (var i = 0; i < labels.Length; i++)
+        {
+            writer.Write(name);
+            writer.Write('{');
+            writer.Write(labelKey);
+            writer.Write("=\"");
+            writer.Write(labels[i]);
+            writer.Write("\"} ");
+            writer.WriteLine(values is not null && i < values.Length ? values[i] : 0);
+        }
     }
 
     private static void WriteGauge(StreamWriter writer, string name, string help, long value)
@@ -268,6 +331,73 @@ internal static class PrometheusFormatter
             writer.Write("\"} ");
             writer.WriteLine(counters.Read(type));
         }
+    }
+
+    private static void WriteHistogramHeader(StreamWriter writer, string name, string help)
+    {
+        writer.Write("# HELP ");
+        writer.Write(name);
+        writer.Write(' ');
+        writer.WriteLine(help);
+        writer.Write("# TYPE ");
+        writer.Write(name);
+        writer.WriteLine(" histogram");
+    }
+
+    /// <summary>
+    ///     Emits one labeled series of a histogram: cumulative _bucket lines per Prometheus
+    ///     le semantics, then _sum and _count. Tolerates a default snapshot (null arrays) by
+    ///     emitting a zeroed +Inf bucket, so a collector that never recorded still exposes
+    ///     a well-formed series.
+    /// </summary>
+    private static void WriteHistogramSeries(StreamWriter writer, string name, in HistogramSnapshot histogram, string? labels)
+    {
+        long[] bounds = histogram.UpperBounds ?? [];
+        long[] counts = histogram.Counts ?? new long[bounds.Length + 1];
+        string bucketPrefix = labels is null ? "{le=\"" : "{" + labels + ",le=\"";
+        long cumulative = 0;
+
+        for (var i = 0; i < bounds.Length; i++)
+        {
+            cumulative += counts[i];
+            writer.Write(name);
+            writer.Write("_bucket");
+            writer.Write(bucketPrefix);
+            writer.Write(bounds[i]);
+            writer.Write("\"} ");
+            writer.WriteLine(cumulative);
+        }
+
+        cumulative += counts[bounds.Length];
+        writer.Write(name);
+        writer.Write("_bucket");
+        writer.Write(bucketPrefix);
+        writer.Write("+Inf\"} ");
+        writer.WriteLine(cumulative);
+
+        writer.Write(name);
+        writer.Write("_sum");
+        WriteLabelsAndValue(writer, labels, histogram.Sum);
+
+        writer.Write(name);
+        writer.Write("_count");
+        WriteLabelsAndValue(writer, labels, cumulative);
+    }
+
+    private static void WriteLabelsAndValue(StreamWriter writer, string? labels, long value)
+    {
+        if (labels is null)
+        {
+            writer.Write(' ');
+        }
+        else
+        {
+            writer.Write('{');
+            writer.Write(labels);
+            writer.Write("} ");
+        }
+
+        writer.WriteLine(value);
     }
 
     private static string ToSnakeCase(string pascalCase)

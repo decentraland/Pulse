@@ -11,15 +11,85 @@ namespace Pulse.Transport;
 /// </summary>
 public sealed partial class ENetHostedService
 {
+    // How often at most a per-IP refusal is reported. Touched only from the ENet thread.
+    private const int IP_LIMIT_LOG_INTERVAL_MS = 10_000;
+
+    private readonly RefusalLogThrottle ipLimitRefusalLog = new (IP_LIMIT_LOG_INTERVAL_MS);
+
     /// <summary>
-    ///     Runs pre-auth admission control on a freshly-allocated peer. On refusal, rolls back
-    ///     the PeerIndex pool allocation and disconnects the peer with the specific reason so
-    ///     the client can distinguish retryable transients from terminal failures.
+    ///     Whole admission sequence for an inbound ENet connection, cheapest gate first. The
+    ///     per-source-IP cap runs before <c>TryAllocate</c>, so a refused connection draws no
+    ///     <see cref="PeerIndex" />, leaves the allocator's pending-recycle window untouched and
+    ///     never reaches <c>OnPeerConnected</c>. Owns every rollback — only an admitted peer is
+    ///     released from a worker, so a refusal after the slot was reserved hands it back with
+    ///     <see cref="IpLimiter.Abandon" />; <see cref="IpLimiter.Bind" /> commits it on the way out.
+    ///     The address is read once and threaded through, so no gate sees a different string than
+    ///     <see cref="IpLimiter.TryAcquire" /> counted.
+    /// </summary>
+    /// <returns>
+    ///     <c>true</c> when admitted, <paramref name="peerIndex" /> holding the allocated index;
+    ///     <c>false</c> when refused and disconnected.
+    /// </returns>
+    private bool TryAdmitConnection(ref Event netEvent, out PeerIndex peerIndex)
+    {
+        peerIndex = default;
+        string peerIp = netEvent.Peer.IP;
+
+        if (!ipLimiter.TryAcquire(peerIp, ConnectionClass.PLAYER))
+        {
+            LogIpLimitRefusal(peerIp, netEvent.Peer.Port);
+            netEvent.Peer.DisconnectNow((uint)DisconnectReason.IP_CONNECTION_LIMIT_EXCEEDED);
+            return false;
+        }
+
+        // Allocate a slot stamped as ENet-owned; the stamp rides on the PeerIndex through every
+        // store it lands in (slotToPeerIndex, connectedPeers, the worker's peerStates, IdentityBoard).
+        if (!peerIndexAllocator.TryAllocate(TransportId.ENet, out peerIndex))
+        {
+            // Pool exhausted — refuse the connection. This can happen if the pool is the
+            // same size as ENet's max peers and every pending-recycle slot is still in grace.
+            // Operator should raise the pool size or shorten the grace window.
+            ipLimiter.Abandon(peerIp, ConnectionClass.PLAYER);
+
+            logger.LogWarning("PeerIndex pool exhausted — refusing connection from {IP}:{Port}",
+                peerIp, netEvent.Peer.Port);
+
+            netEvent.Peer.DisconnectNow((uint)DisconnectReason.SERVER_FULL);
+            return false;
+        }
+
+        if (!TryAdmitOrRefuse(ref netEvent, peerIndex, peerIp))
+            return false;
+
+        // Commit: keyed by PeerIndex from here, released by the worker on Disconnected.
+        ipLimiter.Bind(peerIndex, peerIp, ConnectionClass.PLAYER);
+        return true;
+    }
+
+    /// <summary>
+    ///     Reports a per-IP refusal at a bounded rate — the refusal is the cheapest gate on the
+    ///     connect path and its rate is attacker-controlled. <c>ip_limit_refused</c> carries the
+    ///     volume, this carries the address. See <see cref="RefusalLogThrottle" />.
+    /// </summary>
+    private void LogIpLimitRefusal(string peerIp, ushort port)
+    {
+        if (!ipLimitRefusalLog.ShouldEmit(out long suppressed))
+            return;
+
+        logger.LogWarning(
+            "Per-IP connection limit exceeded — refusing connection from {IP}:{Port} ({Suppressed} further refusal(s) suppressed since the previous message; see the ip_limit_refused counter for the full rate).",
+            peerIp, port, suppressed);
+    }
+
+    /// <summary>
+    ///     Runs pre-auth admission control on a freshly-allocated peer. On refusal, rolls back both
+    ///     reservations taken for this connection — the PeerIndex pool allocation and the
+    ///     per-source-IP slot — and disconnects with the specific reason so the client can
+    ///     distinguish retryable transients from terminal failures.
     /// </summary>
     /// <returns><c>true</c> if the peer is admitted; <c>false</c> if refused and disconnected.</returns>
-    private bool TryAdmitOrRefuse(ref Event netEvent, PeerIndex peerIndex)
+    private bool TryAdmitOrRefuse(ref Event netEvent, PeerIndex peerIndex, string peerIp)
     {
-        string peerIp = netEvent.Peer.IP;
         PreAuthAdmission.AdmitResult result = preAuthAdmission.TryAdmit(peerIndex, peerIp);
 
         if (result == PreAuthAdmission.AdmitResult.OK)
@@ -28,6 +98,9 @@ public sealed partial class ENetHostedService
         // Rollback pool allocation — slot returns to the free list for the next connect.
         peerIndexAllocator.MarkPending(peerIndex);
         peerIndexAllocator.Release(peerIndex);
+
+        // No lifecycle event ever fires for a peer refused here, so the IP slot goes back inline.
+        ipLimiter.Abandon(peerIp, ConnectionClass.PLAYER);
 
         DisconnectReason reason = result == PreAuthAdmission.AdmitResult.IP_LIMIT_EXHAUSTED
             ? DisconnectReason.PRE_AUTH_IP_LIMIT_EXHAUSTED

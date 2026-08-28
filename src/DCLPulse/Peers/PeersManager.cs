@@ -5,6 +5,7 @@ using Pulse.Metrics;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
+using System.Diagnostics;
 using System.Threading.Channels;
 using static Pulse.Messaging.MessagePipe;
 
@@ -52,6 +53,7 @@ public sealed class PeersManager : BackgroundService
     private readonly EmoteCompleter emoteCompleter;
     private readonly IPeerIndexAllocator peerIndexAllocator;
     private readonly PreAuthAdmission preAuthAdmission;
+    private readonly IpLimiter ipLimiter;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -70,7 +72,8 @@ public sealed class PeersManager : BackgroundService
         ClientMessageCounters incomingMessageCounters,
         EmoteCompleter emoteCompleter,
         IPeerIndexAllocator peerIndexAllocator,
-        PreAuthAdmission preAuthAdmission)
+        PreAuthAdmission preAuthAdmission,
+        IpLimiter ipLimiter)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -89,6 +92,7 @@ public sealed class PeersManager : BackgroundService
         this.peerOptions = peerOptions;
         this.peerIndexAllocator = peerIndexAllocator;
         this.preAuthAdmission = preAuthAdmission;
+        this.ipLimiter = ipLimiter;
 
         workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
@@ -250,6 +254,12 @@ public sealed class PeersManager : BackgroundService
             // PENDING_AUTH; no-op if the handshake path already released them on promotion.
             preAuthAdmission.ReleaseOnDisconnect(from);
 
+            // Idempotent, and the only release path for a peer that reached OnPeerConnected.
+            // Connections refused at the transport seam — pool exhausted, or pre-auth admission —
+            // never produce a lifecycle event, so the transport hands their reservation back inline
+            // with IpLimiter.Abandon instead.
+            ipLimiter.Release(from);
+
             peerState.ConnectionState = PeerConnectionState.DISCONNECTING;
 
             peerState.TransportState = peerState.TransportState with
@@ -269,10 +279,33 @@ public sealed class PeersManager : BackgroundService
 
         incomingMessageCounters.Increment(message.MessageCase);
 
+        if (IsForbiddenForSceneListener(peers, evt.From, message))
+            return;
+
         if (messageHandlers.TryGetValue(message.MessageCase, out IMessageHandler? handler))
             handler.Handle(peers, evt.From, message);
         else
             logger.LogWarning("No handler found for message {MessageCase}, skipped processing", message.MessageCase);
+    }
+
+    /// <summary>
+    ///     Post-auth choke point for scene listeners: only <c>Resync</c> is processed — a
+    ///     listener never mutates state, so <c>Input</c>/emotes/<c>Teleport</c>/profile
+    ///     announcements and repeat handshakes are dropped silently (mirrors the pre-auth
+    ///     "non-handshake silently dropped" convention; no disconnect — a buggy listener
+    ///     degrades to noise, not connection churn). The parcel set is immutable by
+    ///     construction: no message can change it.
+    /// </summary>
+    internal static bool IsForbiddenForSceneListener(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
+    {
+        if (!peers.TryGetValue(from, out PeerState? state) || state.SceneListener == null)
+            return false;
+
+        if (message.MessageCase == ClientMessage.MessageOneofCase.Resync)
+            return false;
+
+        PulseMetrics.SceneListener.FORBIDDEN_MESSAGES_DROPPED.Add(1);
+        return true;
     }
 
     private long RunSimulationTick(
@@ -282,6 +315,8 @@ public sealed class PeersManager : BackgroundService
         long now,
         int workerIndex)
     {
+        long tickStart = Stopwatch.GetTimestamp();
+
         try { simulation.SimulateTick(peers, tickCounter); }
         catch (Exception ex)
         {
@@ -289,9 +324,25 @@ public sealed class PeersManager : BackgroundService
                 tickCounter, workerIndex);
         }
 
+        RecordTickDuration(tickStart, simulation.BaseTickMs);
+
         tickCounter++;
         long nextTickTime = now + simulation.BaseTickMs;
         return nextTickTime;
+    }
+
+    /// <summary>
+    ///     KR1.2 measurement: simulation tick wall time (µs) plus an overrun counter when
+    ///     the tick exceeded its budget. Internal static so the timing math is testable
+    ///     without spinning up a worker loop.
+    /// </summary>
+    internal static void RecordTickDuration(long startTimestamp, uint baseTickMs)
+    {
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        PulseMetrics.Simulation.TICK_DURATION_US.Record((long)elapsed.TotalMicroseconds);
+
+        if (elapsed.TotalMilliseconds > baseTickMs)
+            PulseMetrics.Simulation.TICK_OVERRUNS.Add(1);
     }
 
     public override void Dispose()

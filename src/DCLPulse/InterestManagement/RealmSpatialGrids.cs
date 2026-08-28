@@ -135,6 +135,15 @@ public sealed class RealmSpatialGrids(float cellSize, int maxPeers)
         z = CellCoord(position.Z);
     }
 
+    /// <summary>
+    ///     The key of the cell containing a world position. Realm-independent — cell size is global —
+    ///     so a caller that only needs to name cells, such as the scene-listener parcel mapper, does not
+    ///     need a grid to do it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public long ComputeCellKey(float x, float z) =>
+        SpatialGrid.PackKey(CellCoord(x), CellCoord(z));
+
     private void RemoveFromRealm(string realm, PeerIndex peer, long cellKey)
     {
         if (!gridsByRealm.TryGetValue(realm, out SpatialGrid? grid)) return;

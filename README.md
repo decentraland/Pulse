@@ -227,7 +227,10 @@ Two things to know before relying on it:
 - **`down` is not a `pulumi destroy`.** The stack, the target group and the Cloudflare record survive — only the Fargate task goes away. Since the NLB and the ALB are shared across services, a parked instance costs essentially nothing. A real destroy means running `ops/services-pipeline` in GitLab with `PULUMI_ACTION=destroy`.
 - **The `parked` string is coupled across two repos.** It lives in this repo's workflow and in `src/services/pulse-archipelago.ts` in `decentraland/definitions`. Changing one without the other silently breaks the switch. The tag carries the switch because the GitHub deploy path forwards a fixed set of pipeline variables, and `SERVICE_IMAGE` is the only one a workflow controls freely.
 
-`pulse-archipelago` runs without WebTransport: the exportable WT certificate is issued for `pulse-server.<domain>` only, so that instance is UDP/ENet on 7777.
+Two differences from `pulse-server` worth knowing when you point a client at it:
+
+- **It answers on UDP `7778`, not `7777`** — `pulse-archipelago.decentraland.zone:7778`. The NLB is shared per environment and its listeners are L4, one per port, so `pulse-server` already owns 7777 there. The definition sets `Transport__Port` to match, since the NLB maps its port straight through to the container.
+- **No WebTransport.** The exportable WT certificate is issued for `pulse-server.<domain>` only, so this instance is UDP/ENet only.
 
 ## Debugging
 

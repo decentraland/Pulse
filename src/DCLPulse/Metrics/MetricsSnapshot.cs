@@ -64,15 +64,8 @@ public readonly record struct MetricsSnapshot
         /// <summary>Largest cluster; the histogram cannot recover it from its top bucket.</summary>
         public int ClusterSizeMax { get; init; }
 
-        /// <summary>
-        ///     Cluster-size histogram: per-bucket observation counts laid out by
-        ///     <see cref="ClusterSizeHistogram" />, non-cumulative, plus the sum/count pair. Null when a
-        ///     snapshot carries no histogram, which the exposition renders as an unobserved histogram
-        ///     rather than omitting the series.
-        /// </summary>
-        public long[]? ClusterSizeBuckets { get; init; }
-        public long ClusterSizeSum { get; init; }
-        public long ClusterSizeCount { get; init; }
+        /// <summary>Cluster-size histogram: one observation per cluster per pass.</summary>
+        public HistogramSnapshot ClusterSize { get; init; }
 
         public long TotalPasses { get; init; }
         public long TotalPassDurationUs { get; init; }

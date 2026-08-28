@@ -42,7 +42,14 @@ public static partial class PulseMetrics
             METER.CreateUpDownCounter<int>("pulse.clusters.peers");
 
         /// <summary>
-        ///     One observation per cluster per pass, bucketed by <see cref="ClusterSizeHistogram" /> so
+        ///     Inclusive upper bounds for <see cref="SIZE" />. Exponential over the reachable range —
+        ///     a cluster cannot exceed <c>Transport.MaxPeers</c> — so resolution is fine where nearly
+        ///     every cluster lands and coarse at the top, where only a collapsed partition reaches.
+        /// </summary>
+        public static readonly long[] SIZE_BUCKETS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+
+        /// <summary>
+        ///     One observation per cluster per pass, bucketed by <see cref="SIZE_BUCKETS" /> so
         ///     quantiles are computed at query time. A pre-computed quantile could not be aggregated —
         ///     the mean of medians is not the median of the union, and no window but the pass itself
         ///     could be asked about.

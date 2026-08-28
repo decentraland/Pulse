@@ -87,24 +87,16 @@ public class PrometheusFormatterTests
     }
 
     /// <summary>
-    ///     Buckets reach the formatter non-cumulative and must leave it cumulative, because <c>le</c>
-    ///     means "at most this bound". Emitting the raw per-bucket counts would make every
-    ///     <c>histogram_quantile</c> silently wrong rather than fail.
+    ///     Buckets leave the formatter cumulative, because <c>le</c> means "at most this bound".
+    ///     Emitting per-bucket counts would make every <c>histogram_quantile</c> silently wrong.
     /// </summary>
     [Test]
     public void Write_ClusterSizeHistogram_BucketsAreCumulative()
     {
-        // One cluster of size 1, two of size 2, one of size 5 (which lands in le="8").
-        long[] buckets = new long[ClusterSizeHistogram.BUCKET_COUNT];
-        buckets[0] = 1;
-        buckets[1] = 2;
-        buckets[3] = 1;
-
+        // One cluster of 1, two of 2, one of 5 — the last lands in le="8".
         string output = Format(WithClusters(new MetricsSnapshot.ClustersSnapshot
         {
-            ClusterSizeBuckets = buckets,
-            ClusterSizeSum = 10,
-            ClusterSizeCount = 4,
+            ClusterSize = HistogramOf(1, 2, 2, 5),
         }));
 
         Assert.Multiple(() =>
@@ -114,44 +106,41 @@ public class PrometheusFormatterTests
             Assert.That(output, Does.Contain("dcl_pulse_cluster_size_bucket{le=\"2\"} 3"));
             Assert.That(output, Does.Contain("dcl_pulse_cluster_size_bucket{le=\"4\"} 3"));
             Assert.That(output, Does.Contain("dcl_pulse_cluster_size_bucket{le=\"8\"} 4"));
-            Assert.That(output, Does.Contain("dcl_pulse_cluster_size_bucket{le=\"+Inf\"} 4"));
             Assert.That(output, Does.Contain("dcl_pulse_cluster_size_sum 10"));
             Assert.That(output, Does.Contain("dcl_pulse_cluster_size_count 4"));
         });
     }
 
     /// <summary>
-    ///     The <c>+Inf</c> bucket holds every observation including any that overflowed the top bound,
-    ///     so it is the count rather than the running total of the labelled buckets.
+    ///     A cluster larger than the top bound still has to be counted, in the <c>+Inf</c> bucket.
+    ///     Nothing should reach it in practice, since a cluster cannot exceed <c>Transport.MaxPeers</c>.
     /// </summary>
     [Test]
-    public void Write_ClusterSizeHistogram_InfiniteBucketCarriesOverflow()
+    public void Write_ClusterSizeHistogram_OverflowLandsInInfiniteBucket()
     {
-        long[] buckets = new long[ClusterSizeHistogram.BUCKET_COUNT];
-        buckets[0] = 3;
-        buckets[ClusterSizeHistogram.BOUNDS.Length] = 2; // above the top bound
+        long top = PulseMetrics.Clusters.SIZE_BUCKETS[^1];
 
         string output = Format(WithClusters(new MetricsSnapshot.ClustersSnapshot
         {
-            ClusterSizeBuckets = buckets,
-            ClusterSizeCount = 5,
+            ClusterSize = HistogramOf(1, top + 1),
         }));
 
         Assert.Multiple(() =>
         {
-            Assert.That(output, Does.Contain($"dcl_pulse_cluster_size_bucket{{le=\"{ClusterSizeHistogram.BOUNDS[^1]}\"}} 3"));
-            Assert.That(output, Does.Contain("dcl_pulse_cluster_size_bucket{le=\"+Inf\"} 5"));
+            Assert.That(output, Does.Contain($"dcl_pulse_cluster_size_bucket{{le=\"{top}\"}} 1"));
+            Assert.That(output, Does.Contain("dcl_pulse_cluster_size_bucket{le=\"+Inf\"} 2"));
+            Assert.That(output, Does.Contain("dcl_pulse_cluster_size_count 2"));
         });
     }
 
     /// <summary>
-    ///     A snapshot with no histogram — every pre-existing test builds one — must still expose the
-    ///     series, or a scrape reads as though the metric vanished. It must also not throw.
+    ///     A pass that recorded nothing must still expose the series, or a scrape reads as though the
+    ///     metric vanished.
     /// </summary>
     [Test]
-    public void Write_ClusterSizeHistogram_AbsentBuckets_EmitZeroes()
+    public void Write_ClusterSizeHistogram_NoObservations_EmitsZeroes()
     {
-        string output = Format(WithClusters(new MetricsSnapshot.ClustersSnapshot()));
+        string output = Format(WithClusters(new MetricsSnapshot.ClustersSnapshot { ClusterSize = HistogramOf() }));
 
         Assert.Multiple(() =>
         {
@@ -164,10 +153,11 @@ public class PrometheusFormatterTests
     [Test]
     public void Write_ClusterSizeHistogram_EmitsOneSeriesPerBoundPlusInf()
     {
-        string output = Format(WithClusters(new MetricsSnapshot.ClustersSnapshot()));
-        int emitted = output.Split('\n').Count(line => line.Contains("dcl_pulse_cluster_size_bucket{le="));
+        string output = Format(WithClusters(new MetricsSnapshot.ClustersSnapshot { ClusterSize = HistogramOf() }));
+        string[] emittedLines = output.Split((char)10);
+        int emitted = emittedLines.Count(line => line.Contains("dcl_pulse_cluster_size_bucket{le="));
 
-        Assert.That(emitted, Is.EqualTo(ClusterSizeHistogram.BOUNDS.Length + 1));
+        Assert.That(emitted, Is.EqualTo(PulseMetrics.Clusters.SIZE_BUCKETS.Length + 1));
     }
 
     /// <summary>
@@ -192,6 +182,20 @@ public class PrometheusFormatterTests
             Assert.That(output, Does.Not.Contain("dcl_pulse_cluster_size_p50"),
                 "pre-computed quantiles cannot be aggregated; the histogram replaced them");
         });
+    }
+
+    /// <summary>
+    ///     Builds the snapshot through the real <see cref="BucketHistogram" /> rather than hand-rolling
+    ///     bucket arrays, so the test exercises the same bucketing the collector uses.
+    /// </summary>
+    private static HistogramSnapshot HistogramOf(params long[] clusterSizes)
+    {
+        var histogram = new BucketHistogram(PulseMetrics.Clusters.SIZE_BUCKETS);
+
+        foreach (long size in clusterSizes)
+            histogram.Record(size);
+
+        return histogram.Snapshot();
     }
 
     private static MetricsSnapshot WithClusters(MetricsSnapshot.ClustersSnapshot clusters) =>

@@ -269,6 +269,16 @@ public sealed class PeersManager : BackgroundService
 
             peers[from] = peerState;
 
+            // Phase 1 of disconnect: the peer stops being an active subject and leaves the grid
+            // right now, so from the next tick on it is in no observer's interest set.
+            //
+            // The lifecycle event is the seam because it is delivered on the owning worker,
+            // exactly once, and behind every data event this peer had queued — so nothing of its
+            // own can republish after it. Must not move to the ENet thread: that would race the
+            // owning worker's simulation.
+            snapshotBoard.ClearActive(from);
+            spatialGrid.Remove(from);
+
             logger.LogInformation("Peer disconnected {Peer}", from);
         }
     }

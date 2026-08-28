@@ -166,7 +166,7 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 **SCENE_LISTENER_UPDATE** (ch0, reliable)
 - Replaces a listener's announced AoI in place, on a live connection: same `repeated SceneListenerAoi` rules and the same cumulative `SceneListener:MaxParcels` budget, no re-authentication. Realms absent from the update are no longer observed. Only valid from a peer that authenticated with `SCENE_LISTENER_HANDSHAKE`; from anyone else it is dropped
 - Rides the shared discrete-event token bucket (expansion is O(Σ rect area)); a malformed AoI disconnects with `INVALID_SCENE_LISTENER_FIELD` and never partially applies — the previous set stays in force until a valid update lands
-- Takes effect on the next simulation tick. Subjects that enter the new set are joined like any newly visible peer; subjects the listener has dropped stop being collected and their views age out through the ordinary stale-view sweep, exactly as for a player who walks out of range — so `PlayerLeft` for them trails the update by up to two sweep intervals
+- Takes effect on the next simulation tick. Subjects that enter the new set are joined like any newly visible peer; subjects the listener has dropped stop being collected and their views age out through the ordinary stale-view sweep, exactly as for a player who walks out of range — so `PlayerLeft` for them trails the update by up to `VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL` ticks (≈4 s)
 
 ### Server → Client
 
@@ -316,7 +316,7 @@ All cross-worker coordination goes through the one existing channel: the ENet th
 
 Concrete consequences:
 - Same-wallet reconnect always gets a **fresh** server-allocated `PeerIndex` today. We do not rekey the transport to reuse the prior `PeerIndex` — doing so would require cross-worker rekey, which this rule forbids.
-- Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~2 × `SWEEP_INTERVAL` × `BaseTickMs` ≈ 10 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
+- Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~(`VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL`) × `BaseTickMs` ≈ 4 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
 - Different-wallet on a recycled ENet slot: the allocator's pending-recycle already prevents the server from issuing the same `PeerIndex` to a different wallet within the grace window, so this case does not produce aliased observer views; the original bug is fixed.
 
 ## PeerSimulation — method decoupling

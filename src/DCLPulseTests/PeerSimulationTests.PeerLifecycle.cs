@@ -67,7 +67,7 @@ public partial class PeerSimulationTests
 
         // ENet recycles peer A's ID. A new peer B lands on the same PeerIndex with a different
         // wallet. Re-register identity and republish the snapshot — the observer's stale view
-        // for this PeerIndex has NOT been swept (tick 2 is well before the next SWEEP_INTERVAL).
+        // for this PeerIndex has NOT been swept (tick 2 is well inside VIEW_STALE_TICKS).
         identityBoard.Set(subject, "0xNEW_WALLET");
         PublishSnapshot(subject, seq: 1);
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
@@ -226,10 +226,10 @@ public partial class PeerSimulationTests
     ///     Pins the documented reconnect-without-rekey behavior: when a wallet reconnects at a
     ///     DIFFERENT PeerIndex (the normal allocator outcome), the observer emits
     ///     <c>PlayerJoined</c> for the new index but the view for the prior index remains intact
-    ///     until the periodic stale-view sweep fires. This window is the documented ~10 s UX
-    ///     blemish (see <c>CLAUDE.md</c> § "Worker-shard isolation rule") — if a future "fix"
-    ///     tries to smooth it by introducing cross-worker rekey or synchronous cross-observer
-    ///     cleanup, this test will fail and force the conversation.
+    ///     until the periodic stale-view sweep fires. This window is the documented UX blemish (see
+    ///     <c>CLAUDE.md</c> § "Worker-shard isolation rule") — if a future "fix" tries to smooth it
+    ///     by introducing cross-worker rekey or synchronous cross-observer cleanup, this test will
+    ///     fail and force the conversation.
     /// </summary>
     [Test]
     public void SameWalletReconnect_AtDifferentPeerIndex_FreshPlayerJoinedFires_StaleViewSurvivesUntilSweep()

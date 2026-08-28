@@ -18,9 +18,11 @@ public struct PeerToPeerView
     public PeerSnapshot LastSentSnapshot;
 
     /// <summary>
-    ///     Tick counter when this view was last touched by the simulation.
-    ///     Used for epoch-based pruning — views with a stale tick are either
-    ///     reset on re-entry (STATE_FULL) or swept periodically for memory cleanup.
+    ///     Tick counter of the last tick on which this view's subject was in the observer's
+    ///     interest set. It means "still visible as of this tick", not "last updated on this tick":
+    ///     an already-existing view is re-stamped before the tier gate and before the snapshot
+    ///     read, so a coarsely tiered or quiet subject never looks stale. A view created on this
+    ///     tick is stamped after both, once it has been seeded.
     /// </summary>
     public uint LastSeenTick;
 

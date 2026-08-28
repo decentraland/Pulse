@@ -209,8 +209,8 @@ public partial class PeerSimulationTests
         // Subject moves far away — different cell, different parcel.
         PublishSubjectInParcel(subject, seq: 3, parcel: 900, worldPos: new Vector3(500f, 0f, 500f));
 
-        // Advance past the sweep interval.
-        for (uint tick = 2; tick <= SWEEP_INTERVAL * 2 + 1; tick++)
+        // Advance to the sweep that catches the view stamped on tick 1.
+        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
             simulation.SimulateTick(peers, tick);
 
         Assert.That(DrainAllMessages()
@@ -265,8 +265,8 @@ public partial class PeerSimulationTests
     /// <summary>
     ///     A subject the reassignment dropped is not told goodbye by the update itself: it simply
     ///     stops being collected, and its view ages out through the ordinary stale-view sweep —
-    ///     the same path as a player walking out of range — so PlayerLeft trails the update by up
-    ///     to two sweep intervals.
+    ///     the same path as a player walking out of range — so PlayerLeft trails the update by at
+    ///     most VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL ticks.
     /// </summary>
     [Test]
     public void SceneListener_AoiReassigned_DroppedSubjectSweptWithPlayerLeft()
@@ -281,7 +281,7 @@ public partial class PeerSimulationTests
         // The subject stays put; the listener stops observing its parcel.
         ReassignSceneListenerAoi(listener, parcels: [6]);
 
-        for (uint tick = 2; tick <= SWEEP_INTERVAL * 2 + 1; tick++)
+        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
             simulation.SimulateTick(peers, tick);
 
         Assert.That(DrainAllMessages()

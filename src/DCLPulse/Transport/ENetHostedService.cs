@@ -21,7 +21,8 @@ public sealed partial class ENetHostedService(
     PreAuthAdmission preAuthAdmission,
     IpLimiter ipLimiter,
     CorruptedPacketLimiter corruptedPacketLimiter,
-    ContinentResolver continentResolver
+    ContinentResolver continentResolver,
+    ILoggerFactory loggerFactory
 ) : BackgroundService
 {
     private const int RTT_SAMPLE_INTERVAL_MS = 5000;
@@ -29,7 +30,15 @@ public sealed partial class ENetHostedService(
     // The transport dimension attached to every transport counter this service records.
     private static readonly KeyValuePair<string, object?> TRANSPORT_TAG = PulseMetrics.Transport.Tag(TransportId.ENet);
 
+    private static readonly EventId PEER_IP_DIAGNOSTIC = new (9101, "PeerIpDiagnostic");
+
     private readonly ENetTransportOptions options = options.Value;
+
+    // Dedicated category for the peer-IP diagnostic, kept off the service's own logger so it can
+    // be switched independently of everything else this class logs. Peer IPs are personal data:
+    // the category is silent under the global Warning default, and dev surfaces opt in
+    // explicitly via Logging:LogLevel:Pulse.Diagnostics.
+    private readonly ILogger peerIpLog = loggerFactory.CreateLogger("Pulse.Diagnostics.PeerIp");
 
     // Keyed by the server-allocated PeerIndex; each entry pairs the ENet peer handle with the
     // continent resolved from its IP at connect, so both share one lifecycle. Maintained
@@ -277,7 +286,14 @@ public sealed partial class ENetHostedService(
 
                 netEvent.Peer.Timeout(0, options.PeerTimeoutMs, options.PeerTimeoutMs);
                 slotToPeerIndex[slotId] = peerIndex;
-                connectedPeers[peerIndex] = new ConnectedPeer(netEvent.Peer, continentResolver.Resolve(netEvent.Peer.IP));
+
+                Continent continent = continentResolver.Resolve(netEvent.Peer.IP);
+                connectedPeers[peerIndex] = new ConnectedPeer(netEvent.Peer, continent);
+
+                if (peerIpLog.IsEnabled(LogLevel.Information))
+                    peerIpLog.LogInformation(PEER_IP_DIAGNOSTIC,
+                        "Peer IP diagnostic: {IP}:{Port} -> region {Continent} (slot={Slot}, peerIndex={PeerIndex}).",
+                        netEvent.Peer.IP, netEvent.Peer.Port, continent, slotId, peerIndex);
 
                 messagePipe.OnPeerConnected(peerIndex);
 

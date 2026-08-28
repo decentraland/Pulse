@@ -1,0 +1,61 @@
+# Second Pulse instance in .zone, dedicated to hands-on Archipelago testing.
+# It runs only while someone is using it, so both directions are manual.
+#
+#   up   -> deploys quay.io/decentraland/pulse-server:<tag> and runs one task
+#   down -> deploys the `parked` sentinel tag, which src/services/pulse-archipelago.ts
+#           in decentraland/definitions reads out of SERVICE_IMAGE to drop the
+#           service to zero tasks
+#
+# Why the tag carries the switch: the GitHub deploy path ends in
+# webhooks-receiver's `triggerServiceDeployment`, which rebuilds a fixed map of
+# six pipeline variables and drops the rest of the payload. SERVICE_IMAGE is the
+# only one this workflow controls freely, so it is the only channel available.
+#
+# `down` is NOT a `pulumi destroy` — the stack, the target group and the
+# Cloudflare record all survive, only the Fargate task goes away. A real destroy
+# means running ops/services-pipeline in GitLab with PULUMI_ACTION=destroy.
+#
+# The `parked` string below is coupled to pulse-archipelago.ts in
+# decentraland/definitions. Changing it here means changing it there too.
+
+name: Manual Deploy (pulse-archipelago)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        required: true
+        type: choice
+        options:
+          - up
+          - down
+        default: up
+        description: "up = run one task, down = park at zero tasks"
+      tag:
+        required: true
+        default: "latest"
+        type: string
+        description: "Docker tag (quay.io/decentraland/pulse-server). Ignored when action is down."
+
+permissions:
+  contents: read
+
+jobs:
+  deployment:
+    name: "pulse-archipelago: ${{ inputs.action }}"
+    runs-on: ubuntu-latest
+    # Hardcoded on purpose: this instance only ever exists in .zone, and pinning
+    # the environment keeps it from being created in production by accident.
+    environment: dev
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Trigger deployment
+        id: deploy
+        uses: decentraland/dcl-deploy-action@main
+        with:
+          dockerImage: "quay.io/decentraland/pulse-server:${{ inputs.action == 'down' && 'parked' || inputs.tag }}"
+          serviceName: "pulse-archipelago"
+          env: dev
+          token: ${{ secrets.GITHUB_TOKEN }}

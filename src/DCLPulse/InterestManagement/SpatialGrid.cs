@@ -82,15 +82,22 @@ public sealed class SpatialGrid(float cellSize, int maxPeers)
     public long ComputeCellKey(float x, float z) =>
         PackKey(CellCoord(x), CellCoord(z));
 
+    /// <summary>
+    ///     Cell coordinate containing the world coordinate <paramref name="v" /> on one axis.
+    ///     Paired with <see cref="PackKey" /> this decomposes <see cref="ComputeCellKey" />, so a
+    ///     caller covering a contiguous world region can walk cell coordinates directly instead of
+    ///     probing every point inside it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int CellCoord(float v) =>
+        (int)MathF.Floor(v * inverseCellSize);
+
+    /// <summary>Packs a cell coordinate pair into the key <see cref="GetPeersByCell" /> takes.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static long PackKey(int x, int z) =>
+        ((long)x << (sizeof(int) * 8)) | (uint)z;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long ComputeKey(Vector3 position) =>
         PackKey(CellCoord(position.X), CellCoord(position.Z));
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private int CellCoord(float v) =>
-        (int)MathF.Floor(v * inverseCellSize);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static long PackKey(int x, int z) =>
-        ((long)x << (sizeof(int) * 8)) | (uint)z;
 }

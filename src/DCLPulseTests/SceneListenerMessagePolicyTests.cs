@@ -10,7 +10,8 @@ public class SceneListenerMessagePolicyTests
     private static PeerState Listener() =>
         new (PeerConnectionState.AUTHENTICATED)
         {
-            SceneListener = new SceneListenerState("main", new HashSet<int> { 1 }, new long[] { 0L }),
+            SceneListener = new SceneListenerState(
+                new Dictionary<string, HashSet<int>> { ["main"] = new () { 1 } }, new long[] { 0L }),
         };
 
     private static Dictionary<PeerIndex, PeerState> Peers(PeerIndex peer, PeerState state) =>
@@ -36,6 +37,15 @@ public class SceneListenerMessagePolicyTests
     {
         var peer = new PeerIndex(1);
         var message = new ClientMessage { Resync = new ResyncRequest() };
+
+        Assert.That(PeersManager.IsForbiddenForSceneListener(Peers(peer, Listener()), peer, message), Is.False);
+    }
+
+    [Test]
+    public void SceneListenerUpdate_IsAllowed()
+    {
+        var peer = new PeerIndex(1);
+        var message = new ClientMessage { SceneListenerUpdate = new SceneListenerUpdate() };
 
         Assert.That(PeersManager.IsForbiddenForSceneListener(Peers(peer, Listener()), peer, message), Is.False);
     }

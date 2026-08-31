@@ -33,7 +33,26 @@ public sealed class ENetTransportOptions
     public int ServiceTimeoutMs { get; set; } = 1000;
     public int BufferSize { get; set; } = 4096;
 
-    public uint PeerTimeoutMs { get; set; } = 30000;
+    /// <summary>
+    ///     Per-peer inactivity deadline in milliseconds, applied on the ENet <c>Connect</c> event as
+    ///     <c>Peer.Timeout(0, PeerTimeoutMs, PeerTimeoutMs)</c> — this one value becomes both of
+    ///     ENet's <c>timeoutMinimum</c> and <c>timeoutMaximum</c>.
+    ///     <para />
+    ///     ENet measures the deadline from the send time of the oldest unacknowledged reliable
+    ///     packet, and its keepalive ping (~500 ms, ENet's default — <c>PingInterval</c> is never
+    ///     called) guarantees such a packet exists within half a second of a peer falling silent, so
+    ///     a peer that dies is detected roughly this long afterwards rather than anywhere up to it.
+    ///     Passing minimum equal to maximum also neutralizes ENet's retransmission-count early path
+    ///     (<c>timeoutLimit</c>, which the <c>0</c> argument leaves at ENet's default of 32), so the
+    ///     rule collapses to a single flat deadline.
+    ///     <para />
+    ///     Tradeoff: a network stall longer than this drops the peer — absorbed by the reconnect
+    ///     flow, which re-seeds state from <c>HandshakeRequest.PlayerInitialState</c>.
+    ///     <para />
+    ///     <c>appsettings.Development.json</c> deliberately overrides this to 300000: a paused
+    ///     debugger must not drop peers. That override is intentional, not stale.
+    /// </summary>
+    public uint PeerTimeoutMs { get; set; } = 5000;
 
     /// <summary>
     ///     Directory containing the geo-whois-asn-country "-num" CSVs used to resolve peer

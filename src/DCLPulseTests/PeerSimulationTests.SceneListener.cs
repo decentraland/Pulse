@@ -14,13 +14,23 @@ public partial class PeerSimulationTests
     ///     directly from those positions (default: the cell containing the origin) rather than
     ///     through SceneListenerCellMapper — the mapper has its own tests in Task 2.
     /// </summary>
-    private void MakeSceneListener(PeerIndex listener, string realm = "main", int[]? parcels = null, long[]? cellKeys = null)
+    private void MakeSceneListener(PeerIndex listener, string realm = "main", int[]? parcels = null, long[]? cellKeys = null) =>
+        MakeSceneListener(listener, new Dictionary<string, int[]> { [realm] = parcels ?? [] }, cellKeys);
+
+    /// <summary>
+    ///     Multi-realm variant: the shape a server cohosting several worlds announces, where the
+    ///     same parcel index means a different place in each realm.
+    /// </summary>
+    private void MakeSceneListener(PeerIndex listener, Dictionary<string, int[]> parcelsByRealm, long[]? cellKeys = null)
     {
+        var expanded = new Dictionary<string, HashSet<int>>();
+
+        foreach ((string realm, int[] parcels) in parcelsByRealm)
+            expanded[realm] = new HashSet<int>(parcels);
+
         peers[listener] = new PeerState(PeerConnectionState.AUTHENTICATED)
         {
-            SceneListener = new SceneListenerState(realm,
-                new HashSet<int>(parcels ?? []),
-                cellKeys ?? [spatialGrid.ComputeCellKey(0f, 0f)]),
+            SceneListener = new SceneListenerState(expanded, cellKeys ?? [spatialGrid.ComputeCellKey(0f, 0f)]),
         };
 
         identityBoard.Set(listener, "0xLISTENER_WALLET");
@@ -199,14 +209,191 @@ public partial class PeerSimulationTests
         // Subject moves far away — different cell, different parcel.
         PublishSubjectInParcel(subject, seq: 3, parcel: 900, worldPos: new Vector3(500f, 0f, 500f));
 
-        // Advance past the sweep interval.
-        for (uint tick = 2; tick <= SWEEP_INTERVAL * 2 + 1; tick++)
+        // Advance to the sweep that catches the view stamped on tick 1.
+        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
             simulation.SimulateTick(peers, tick);
 
         Assert.That(DrainAllMessages()
                 .Where(m => m.To == listener)
                 .Select(m => m.Message.MessageCase),
             Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerLeft));
+    }
+
+    /// <summary>
+    ///     AoI reassignment as the simulation sees it: swapping the descriptor (what
+    ///     <c>SceneListenerUpdateHandler</c> does) changes what the very next tick collects.
+    /// </summary>
+    [Test]
+    public void SceneListener_AoiReassigned_JoinsSubjectInTheNewParcels()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+        PublishSubjectInParcel(subject, seq: 2, parcel: 6, worldPos: new Vector3(20f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        Assert.That(DrainAllMessages().Where(m => m.To == listener), Is.Empty, "parcel 6 is outside the announced set");
+
+        ReassignSceneListenerAoi(listener, parcels: [6]);
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
+    }
+
+    [Test]
+    public void SceneListener_AoiReassigned_StopsSendingForDroppedParcels()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+        PublishSubjectInParcel(subject, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        DrainAllMessages(); // PlayerJoined
+
+        ReassignSceneListenerAoi(listener, parcels: [6]);
+        PublishSubjectInParcel(subject, seq: 3, parcel: 5, worldPos: new Vector3(9f, 0f, 8f));
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.None.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
+    }
+
+    /// <summary>
+    ///     A subject the reassignment dropped is not told goodbye by the update itself: it simply
+    ///     stops being collected, and its view ages out through the ordinary stale-view sweep —
+    ///     the same path as a player walking out of range — so PlayerLeft trails the update by at
+    ///     most VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL ticks.
+    /// </summary>
+    [Test]
+    public void SceneListener_AoiReassigned_DroppedSubjectSweptWithPlayerLeft()
+    {
+        var listener = new PeerIndex(9);
+        MakeSceneListener(listener, realm: "main", parcels: [5]);
+        PublishSubjectInParcel(subject, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f));
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        DrainAllMessages(); // PlayerJoined
+
+        // The subject stays put; the listener stops observing its parcel.
+        ReassignSceneListenerAoi(listener, parcels: [6]);
+
+        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
+            simulation.SimulateTick(peers, tick);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerLeft));
+    }
+
+    /// <summary>
+    ///     Mirrors the handler's swap: a whole fresh descriptor rather than a mutation. The cover
+    ///     is carried over because this fixture derives cell keys from test-chosen world positions
+    ///     rather than through SceneListenerCellMapper; that the handler recomputes it for the new
+    ///     rects is pinned in SceneListenerUpdateHandlerTests.
+    /// </summary>
+    private void ReassignSceneListenerAoi(PeerIndex listener, int[] parcels)
+    {
+        SceneListenerState previous = peers[listener].SceneListener!;
+        string realm = previous.ParcelsByRealm.Keys.Single();
+
+        peers[listener].SceneListener = new SceneListenerState(
+            new Dictionary<string, HashSet<int>> { [realm] = new (parcels) }, previous.CellKeys);
+    }
+
+    /// <summary>
+    ///     Two cohosted worlds both number their parcels from 0,0, so a parcel index alone cannot
+    ///     say where a subject is standing. A listener that announced parcel 5 for one realm must
+    ///     not be handed the subject standing in parcel 5 of the other — even though both sit in
+    ///     the same grid cell and the covering-cell filter accepts both.
+    /// </summary>
+    [Test]
+    public void SceneListener_MultipleRealms_FiltersPerRealmNotJustPerParcel()
+    {
+        var listener = new PeerIndex(9);
+        var inWorldA = new PeerIndex(2);
+        var inWorldB = new PeerIndex(3);
+
+        identityBoard.Set(inWorldA, "0xWORLD_A_SUBJECT");
+        identityBoard.Set(inWorldB, "0xWORLD_B_SUBJECT");
+
+        // Parcel 5 is announced for world-a only; world-a's own announcement covers a different
+        // index (7), so nothing about parcel 5 is observable in world-b.
+        MakeSceneListener(listener, new Dictionary<string, int[]>
+        {
+            ["world-a"] = [5],
+            ["world-b"] = [7],
+        });
+
+        PublishSubjectInParcel(inWorldA, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f), realm: "world-a");
+        PublishSubjectInParcel(inWorldB, seq: 2, parcel: 5, worldPos: new Vector3(9f, 0f, 9f), realm: "world-b");
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<string> joined = DrainAllMessages()
+                             .Where(m => m.To == listener && m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined)
+                             .Select(m => m.Message.PlayerJoined.UserId)
+                             .ToList();
+
+        Assert.That(joined, Is.EqualTo(new[] { "0xWORLD_A_SUBJECT" }),
+            "Only the subject in the realm that parcel was announced for may be collected.");
+    }
+
+    [Test]
+    public void SceneListener_MultipleRealms_CollectsFromEveryAnnouncedRealm()
+    {
+        var listener = new PeerIndex(9);
+        var inWorldA = new PeerIndex(2);
+        var inWorldB = new PeerIndex(3);
+
+        identityBoard.Set(inWorldA, "0xWORLD_A_SUBJECT");
+        identityBoard.Set(inWorldB, "0xWORLD_B_SUBJECT");
+
+        MakeSceneListener(listener, new Dictionary<string, int[]>
+        {
+            ["world-a"] = [5],
+            ["world-b"] = [5],
+        });
+
+        PublishSubjectInParcel(inWorldA, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f), realm: "world-a");
+        PublishSubjectInParcel(inWorldB, seq: 2, parcel: 5, worldPos: new Vector3(9f, 0f, 9f), realm: "world-b");
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<string> joined = DrainAllMessages()
+                             .Where(m => m.To == listener && m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerJoined)
+                             .Select(m => m.Message.PlayerJoined.UserId)
+                             .ToList();
+
+        Assert.That(joined, Is.EquivalentTo(new[] { "0xWORLD_A_SUBJECT", "0xWORLD_B_SUBJECT" }),
+            "The same parcel index announced for two realms observes both of them.");
+    }
+
+    [Test]
+    public void SceneListener_AoiReassigned_CanReplaceTheRealmSet()
+    {
+        var listener = new PeerIndex(9);
+        var inWorldB = new PeerIndex(3);
+        identityBoard.Set(inWorldB, "0xWORLD_B_SUBJECT");
+
+        MakeSceneListener(listener, new Dictionary<string, int[]> { ["world-a"] = [5] });
+        PublishSubjectInParcel(inWorldB, seq: 2, parcel: 5, worldPos: new Vector3(8f, 0f, 8f), realm: "world-b");
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+        Assert.That(DrainAllMessages().Where(m => m.To == listener), Is.Empty, "world-b is not announced yet");
+
+        // A cohosting server that loaded a scene from another world announces it in place.
+        MakeSceneListener(listener, new Dictionary<string, int[]> { ["world-b"] = [5] });
+        simulation.SimulateTick(peers, tickCounter: 2);
+
+        Assert.That(DrainAllMessages()
+                .Where(m => m.To == listener)
+                .Select(m => m.Message.MessageCase),
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));
     }
 
     [Test]

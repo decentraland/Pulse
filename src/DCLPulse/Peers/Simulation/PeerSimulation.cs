@@ -18,9 +18,24 @@ public sealed class PeerSimulation : IPeerSimulation
 {
     public const string SELF_MIRROR_WALLET_ID = "self_mirror";
     /// <summary>
-    ///     Sweep stale views every N ticks to reclaim memory from subjects that left the interest set.
+    ///     How often <see cref="SweepStaleViews" /> runs, in ticks — 1 s at a 50 ms base tick.
+    ///     Paired with <see cref="VIEW_STALE_TICKS" /> it bounds eviction latency: a view is swept
+    ///     between <c>VIEW_STALE_TICKS + 1</c> and <c>VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL</c>
+    ///     ticks after it was last stamped — 3.05 s to 4.0 s. That sum × <c>BaseTickMs</c> must
+    ///     stay below <see cref="PeerOptions.DisconnectionCleanTimeoutMs" /> for <c>PlayerLeft</c>
+    ///     to precede slot reuse; that property's doc covers why the ordering is a margin at the
+    ///     default configuration rather than a guarantee.
     /// </summary>
-    private const uint SWEEP_INTERVAL = 100;
+    private const uint SWEEP_CHECK_INTERVAL = 20;
+
+    /// <summary>
+    ///     How many ticks a view may go unstamped before <see cref="SweepStaleViews" /> evicts it —
+    ///     3 s at a 50 ms base tick. Tier period and publish rate do not enter into it:
+    ///     <see cref="PeerToPeerView.LastSeenTick" /> is re-stamped on every tick the subject is
+    ///     collected, ahead of the tier gate and the snapshot read, so only a subject that
+    ///     actually left the interest set goes stale.
+    /// </summary>
+    private const uint VIEW_STALE_TICKS = 60;
 
     /// <summary>
     ///     Per-observer views: observer PeerIndex → (subject PeerIndex → view).
@@ -103,6 +118,15 @@ public sealed class PeerSimulation : IPeerSimulation
 
         for (var i = 0; i < simulationSteps.Length; i++)
             tierDivisors[i] = simulationSteps[i] / BaseTickMs;
+
+        uint sweepWorstCaseMs = (VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL) * BaseTickMs;
+
+        // Both halves of this ordering are configurable and measured on different clocks — ticks
+        // versus wall time — so a configuration that inverts it has to be visible at boot.
+        if (sweepWorstCaseMs >= disconnectionCleanTimeoutMs)
+            logger.LogWarning(
+                "Stale-view sweep worst case {SweepWorstCaseMs} ms is not below DisconnectionCleanTimeoutMs {DisconnectionCleanTimeoutMs} ms — a PeerIndex may be reused before its observers receive PlayerLeft",
+                sweepWorstCaseMs, disconnectionCleanTimeoutMs);
     }
 
     /// <summary>
@@ -176,9 +200,10 @@ public sealed class PeerSimulation : IPeerSimulation
     }
 
     /// <summary>
-    ///     Scene listeners have no snapshot of their own — their interest set is the fixed
-    ///     parcel set announced at handshake, always at TIER_0, positional messages only.
-    ///     Everything downstream (views, diffs, resync, sweeps) is the shared pipeline.
+    ///     Scene listeners have no snapshot of their own — their interest set is the per-realm
+    ///     parcel set the peer announced, always at TIER_0, positional messages only. The
+    ///     descriptor is re-read every tick, so a <c>SceneListenerUpdate</c> takes effect on the
+    ///     next one. Everything downstream (views, diffs, resync, sweeps) is the shared pipeline.
     /// </summary>
     private void SimulateSceneListenerObserver(PeerIndex observerId, PeerState observerState, SceneListenerState listener, uint tickCounter)
     {
@@ -210,17 +235,19 @@ public sealed class PeerSimulation : IPeerSimulation
 
         observerState.ResyncRequests?.Clear();
 
-        if (tickCounter % SWEEP_INTERVAL == 0)
+        if (tickCounter % SWEEP_CHECK_INTERVAL == 0)
             SweepStaleViews(observerId, views, tickCounter);
     }
 
     // ── Scene-listener interest collection ──────────────────────────
 
     /// <summary>
-    ///     Fills the collector with subjects standing inside the listener's parcels: union the
-    ///     occupants of the precomputed covering cells, then filter parcel-exact (the covering
-    ///     cells over-approximate — a 100-unit cell holds ~6×6 parcels) and by realm. Every
-    ///     accepted subject is TIER_0: a parcel set has no distance to tier by.
+    ///     Fills the collector with subjects standing inside the listener's AoI: union the
+    ///     occupants of the precomputed covering cells, then filter on (realm, parcel) exactly.
+    ///     Neither filter is redundant — the covering cells over-approximate (a 100-unit cell
+    ///     holds ~6×6 parcels), and every realm numbers its parcels from 0,0, so two cohosted
+    ///     worlds share both cells and parcel indices. Every accepted subject is TIER_0: a
+    ///     parcel set has no distance to tier by.
     /// </summary>
     private void CollectSceneListenerSubjects(PeerIndex observerId, SceneListenerState listener)
     {
@@ -239,10 +266,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
                     continue;
 
-                if (!string.Equals(subjectSnapshot.Realm, listener.Realm, StringComparison.Ordinal))
-                    continue;
-
-                if (!listener.Parcels.Contains(subjectSnapshot.Parcel))
+                if (!listener.Observes(subjectSnapshot.Realm, subjectSnapshot.Parcel))
                     continue;
 
                 collector.Add(subject, PeerViewSimulationTier.TIER_0);
@@ -822,6 +846,16 @@ public sealed class PeerSimulation : IPeerSimulation
 
     // ── Cleanup ─────────────────────────────────────────────────────
 
+    /// <summary>
+    ///     Phase 2 of disconnect, gated on <see cref="PeerOptions.DisconnectionCleanTimeoutMs" />:
+    ///     wipes the identity and profile boards, drops this peer's own observer views, removes it
+    ///     from the worker's peer set and returns its <see cref="PeerIndex" /> to the allocator.
+    ///     Phase 1 — <c>PeersManager</c>'s <c>Disconnected</c> lifecycle handling, the one place
+    ///     the DISCONNECTING state is entered — has already done the
+    ///     <see cref="SnapshotBoard.ClearActive" /> and <see cref="SpatialGrid.Remove" /> calls
+    ///     repeated here; both are idempotent, and keeping them leaves the whole teardown legible
+    ///     in one place.
+    /// </summary>
     private void CleanupDisconnectedPeer(PeerIndex peerId, PeerState peerState)
     {
         // A scene listener owns a CONNECTED gauge slot but no board entries — decrement it
@@ -846,8 +880,11 @@ public sealed class PeerSimulation : IPeerSimulation
     }
 
     /// <summary>
-    ///     Periodic sweep — removes views not touched in recent ticks. Runs every <see cref="SWEEP_INTERVAL" /> ticks
-    ///     to reclaim memory from subjects that left the interest set. Not on the hot path.
+    ///     Periodic sweep — removes views left unstamped for more than
+    ///     <see cref="VIEW_STALE_TICKS" /> ticks and emits <c>PlayerLeft</c> for each, reclaiming
+    ///     memory from subjects that left the interest set. Runs every
+    ///     <see cref="SWEEP_CHECK_INTERVAL" /> ticks, early-returns on an empty view map, and is
+    ///     off the per-subject hot path.
     /// </summary>
     private void SweepStaleViews(PeerIndex observerId, Dictionary<PeerIndex, PeerToPeerView> views, uint tickCounter)
     {
@@ -858,7 +895,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         foreach ((PeerIndex subjectId, PeerToPeerView view) in views)
         {
-            if (tickCounter - view.LastSeenTick > SWEEP_INTERVAL)
+            if (tickCounter - view.LastSeenTick > VIEW_STALE_TICKS)
                 sweepBuffer.Add(subjectId);
         }
 

@@ -50,10 +50,13 @@ public class SceneListenerHandshakeHandlerTests
         var timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(10_000u);
 
+        // The budget is cumulative over realms and parcels: one realm costs 4 on top of its rect
+        // areas, so 16 admits a single realm of up to 12 parcels.
         var fieldValidator = new FieldValidator(
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),
-            Options.Create(new SceneListenerOptions { MaxParcels = 8 }),
+            Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
             parcelEncoder,
+            new SceneListenerCellMapper(spatialGrid, parcelOptions),
             transport);
 
         ipLimiter = BuildIpLimiter();
@@ -76,7 +79,6 @@ public class SceneListenerHandshakeHandlerTests
                 Substitute.For<ITransport>()),
             banList: new BanList(),
             fieldValidator: fieldValidator,
-            cellMapper: new SceneListenerCellMapper(parcelEncoder, spatialGrid, parcelOptions),
             ipLimiter: ipLimiter,
             logger: Substitute.For<ILogger<SceneListenerHandshakeHandler>>());
 
@@ -95,8 +97,9 @@ public class SceneListenerHandshakeHandlerTests
         PeerState state = peers[peer];
         Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
         Assert.That(state.SceneListener, Is.Not.Null);
-        Assert.That(state.SceneListener!.Realm, Is.EqualTo("main"));
-        Assert.That(state.SceneListener.Parcels, Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10), parcelEncoder.Encode(11, 10) }));
+        Assert.That(state.SceneListener!.ParcelsByRealm.Keys, Is.EquivalentTo(new[] { "main" }));
+        Assert.That(state.SceneListener.ParcelsByRealm["main"],
+            Is.EquivalentTo(new[] { parcelEncoder.Encode(10, 10), parcelEncoder.Encode(11, 10) }));
         Assert.That(state.SceneListener.CellKeys, Is.Not.Empty);
         Assert.That(state.WalletId, Is.EqualTo(WALLET).IgnoreCase);
     }
@@ -134,8 +137,8 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_OverCapParcels_RejectsBeforeAuthenticated()
     {
-        // Fixture MaxParcels = 8; a single 3×3 rect nominally covers 9 parcels.
-        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 12, 12)));
+        // Fixture budget 16; one realm (4) plus a 4×4 rect (16 parcels) is 20.
+        handler.Handle(peers, peer, BuildListenerHandshake("main", (10, 10, 13, 13)));
 
         Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.PENDING_DISCONNECT));
         transport.Received(1).Disconnect(peer, DisconnectReason.INVALID_HANDSHAKE_FIELD);
@@ -177,12 +180,10 @@ public class SceneListenerHandshakeHandlerTests
     [Test]
     public void Handle_InvalidAuthChainJson_RespondsWithError()
     {
-        var request = new SceneListenerHandshakeRequest
-        {
-            AuthChain = ByteString.CopyFromUtf8("not json"),
-            Realm = "main",
-        };
-        request.ParcelRects.Add(new ParcelRect { MinX = 10, MinZ = 10, MaxX = 10, MaxZ = 10 });
+        var request = new SceneListenerHandshakeRequest { AuthChain = ByteString.CopyFromUtf8("not json") };
+        var aoi = new SceneListenerAoi { Realm = "main" };
+        aoi.ParcelRects.Add(new ParcelRect { MinX = 10, MinZ = 10, MaxX = 10, MaxZ = 10 });
+        request.Aoi.Add(aoi);
 
         handler.Handle(peers, peer, new ClientMessage { SceneListenerHandshake = request });
 
@@ -257,11 +258,14 @@ public class SceneListenerHandshakeHandlerTests
         var request = new SceneListenerHandshakeRequest
         {
             AuthChain = ByteString.CopyFromUtf8(JsonSerializer.Serialize(headers)),
-            Realm = realm,
         };
 
+        var aoi = new SceneListenerAoi { Realm = realm };
+
         foreach ((int minX, int minZ, int maxX, int maxZ) in rects)
-            request.ParcelRects.Add(new ParcelRect { MinX = minX, MinZ = minZ, MaxX = maxX, MaxZ = maxZ });
+            aoi.ParcelRects.Add(new ParcelRect { MinX = minX, MinZ = minZ, MaxX = maxX, MaxZ = maxZ });
+
+        request.Aoi.Add(aoi);
 
         return new ClientMessage { SceneListenerHandshake = request };
     }

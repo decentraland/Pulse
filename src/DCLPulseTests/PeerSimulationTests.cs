@@ -18,12 +18,20 @@ public partial class PeerSimulationTests
     private const int MAX_PEERS = 100;
     private const int RING_CAPACITY = 10;
 
-    /// <summary>
-    ///     SWEEP_INTERVAL is a private const in PeerSimulation (100).
-    ///     Tests that depend on sweep timing use this value.
-    /// </summary>
-    private const uint SWEEP_INTERVAL = 100;
     private const string REALM = "realm-a";
+
+    /// <summary>
+    ///     Mirrors PeerSimulation's private SWEEP_CHECK_INTERVAL — how often the stale-view sweep
+    ///     runs. Tests that depend on sweep timing derive their ticks from this and
+    ///     <see cref="VIEW_STALE_TICKS" /> rather than hardcoding tick numbers.
+    /// </summary>
+    private const uint SWEEP_CHECK_INTERVAL = 20;
+
+    /// <summary>
+    ///     Mirrors PeerSimulation's private VIEW_STALE_TICKS — how long a view may go unstamped
+    ///     before the sweep evicts it.
+    /// </summary>
+    private const uint VIEW_STALE_TICKS = 60;
 
     private static readonly uint[] SimulationSteps = [50u, 100u, 200u];
 
@@ -99,6 +107,20 @@ public partial class PeerSimulationTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    ///     First tick on which the sweep evicts a view last stamped at
+    ///     <paramref name="stampedTick" />: the earliest multiple of
+    ///     <see cref="SWEEP_CHECK_INTERVAL" /> that is more than <see cref="VIEW_STALE_TICKS" />
+    ///     ticks later — the sweep's worst case for that view.
+    /// </summary>
+    private static uint FirstSweepTickAfter(uint stampedTick)
+    {
+        uint earliest = stampedTick + VIEW_STALE_TICKS + 1;
+        uint remainder = earliest % SWEEP_CHECK_INTERVAL;
+
+        return remainder == 0 ? earliest : earliest + (SWEEP_CHECK_INTERVAL - remainder);
+    }
 
     private void PublishSnapshot(PeerIndex peer, uint seq, Vector3? position = null)
     {

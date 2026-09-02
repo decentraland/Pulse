@@ -157,11 +157,16 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 - Server responds with STATE_FULL (or targeted delta when `Peers.ResyncWithDelta` is enabled)
 
 **SCENE_LISTENER_HANDSHAKE** (ch0, reliable)
-- Alternative to `HANDSHAKE`: same Decentraland ECDSA auth chain, plus a required `realm` (same rules as `TeleportRequest.realm`) and an immutable set of inclusive parcel-coordinate rects (`repeated ParcelRect`, a single parcel is `min == max`) announced once at connect. The server validates the rects and expands them to the internal parcel set; the Σ of nominal rect areas is capped at `SceneListener:MaxParcels` (default 4096) and rejected — never clamped — when exceeded
-- Authenticates a **receive-only listener**: it never becomes a subject (no snapshot/grid registration, so players can never see it) and observes only players inside its announced parcels, in the given realm
-- Receives the positional stream only — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`; emote and profile-version messages are suppressed for listener observers
-- `RESYNC_REQUEST` remains allowed (client-driven gap recovery); every other inbound message from a listener is silently dropped and counted
-- The parcel set cannot be changed without reconnecting; re-announcing requires a fresh connection
+- Alternative to `HANDSHAKE`: same Decentraland ECDSA auth chain, plus an area of interest announced at connect as `repeated SceneListenerAoi` — one entry per realm, each with a non-empty `realm` (same rules as `TeleportRequest.realm`) and its inclusive parcel-coordinate rects (`repeated ParcelRect`, a single parcel is `min == max`). The server validates and expands each realm's rects to its own parcel set. `SceneListener:MaxParcels` (default 4096) is **one cumulative budget over realms and parcels alike** — Σ over realms of (a fixed per-realm charge + Σ nominal rect areas) — so extra realms buy no extra area and extra area buys no extra realms; over budget is rejected, never clamped. A realm may appear once
+- **Per realm, not per connection**, because parcels only mean anything within a realm: every world numbers its parcels from 0,0, so an authoritative server cohosting scenes from several worlds would otherwise need a connection per world — which the wallet-unique session rule and the per-IP listener cap both forbid
+- Authenticates a **receive-only listener**: it never becomes a subject (no snapshot/grid registration, so players can never see it) and observes only players standing in an announced parcel *of the realm that parcel was announced for*
+- Receives the positional stream only — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`; emote and profile-version messages are suppressed for listener observers. `PlayerJoined` and `Teleported` carry the subject's realm, which is what lets a multi-realm listener tell two identically-numbered parcels apart
+- `RESYNC_REQUEST` and `SCENE_LISTENER_UPDATE` remain allowed; every other inbound message from a listener is silently dropped and counted
+
+**SCENE_LISTENER_UPDATE** (ch0, reliable)
+- Replaces a listener's announced AoI in place, on a live connection: same `repeated SceneListenerAoi` rules and the same cumulative `SceneListener:MaxParcels` budget, no re-authentication. Realms absent from the update are no longer observed. Only valid from a peer that authenticated with `SCENE_LISTENER_HANDSHAKE`; from anyone else it is dropped
+- Rides the shared discrete-event token bucket (expansion is O(Σ rect area)); a malformed AoI disconnects with `INVALID_SCENE_LISTENER_FIELD` and never partially applies — the previous set stays in force until a valid update lands
+- Takes effect on the next simulation tick. Subjects that enter the new set are joined like any newly visible peer; subjects the listener has dropped stop being collected and their views age out through the ordinary stale-view sweep, exactly as for a player who walks out of range — so `PlayerLeft` for them trails the update by up to `VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL` ticks (≈4 s)
 
 ### Server → Client
 
@@ -311,7 +316,7 @@ All cross-worker coordination goes through the one existing channel: the ENet th
 
 Concrete consequences:
 - Same-wallet reconnect always gets a **fresh** server-allocated `PeerIndex` today. We do not rekey the transport to reuse the prior `PeerIndex` — doing so would require cross-worker rekey, which this rule forbids.
-- Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~2 × `SWEEP_INTERVAL` × `BaseTickMs` ≈ 10 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
+- Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~(`VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL`) × `BaseTickMs` ≈ 4 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
 - Different-wallet on a recycled ENet slot: the allocator's pending-recycle already prevents the server from issuing the same `PeerIndex` to a different wallet within the grace window, so this case does not produce aliased observer views; the original bug is fixed.
 
 ## PeerSimulation — method decoupling

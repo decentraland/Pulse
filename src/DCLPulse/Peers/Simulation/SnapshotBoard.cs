@@ -208,14 +208,31 @@ public sealed class SnapshotBoard
     }
 
     /// <summary>
-    ///     It should be called when the Peer disconnects/about to disconnect
+    ///     It should be called when the Peer disconnects/about to disconnect.
+    ///     <para />
+    ///     Resets the slot's history under the write side of the seqlock — the same odd/even
+    ///     protocol <see cref="Publish" /> uses — so the clear is never observable half-applied:
+    ///     a read that overlaps it fails its version re-check instead of returning a torn snapshot
+    ///     or the ring slot that <c>uint.MaxValue</c> wraps onto.
     /// </summary>
     public void ClearActive(PeerIndex id)
     {
         var index = (int)id.Value;
         Volatile.Write(ref active[index], false);
+
+        // Increment to odd (write in progress)
+        Volatile.Write(ref versions[index], Volatile.Read(ref versions[index]) + 1);
+
         lastSeqs[index] = uint.MaxValue;
         Array.Clear(rings[index]);
+
+        // Full fence: ensure data writes are globally visible before the version goes even.
+        // Volatile.Write alone only prevents reordering of that store with later stores —
+        // on ARM, preceding stores (rings, lastSeqs) could still be reordered past it.
+        Thread.MemoryBarrier();
+
+        // Increment to even (write complete)
+        Volatile.Write(ref versions[index], Volatile.Read(ref versions[index]) + 1);
     }
 
     /// <summary>

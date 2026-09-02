@@ -32,6 +32,7 @@ public class SceneListenerRealSceneTests
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 255, MaxEmoteDurationMs = 60_000 }),
             Options.Create(new SceneListenerOptions()),
             encoder,
+            SceneListenerTestFactory.CellMapper(),
             Substitute.For<ITransport>());
 
         state = new PeerState(PeerConnectionState.PENDING_AUTH);
@@ -49,18 +50,23 @@ public class SceneListenerRealSceneTests
         Assert.That(sumArea, Is.EqualTo(scene.Count),
             "The cover must be disjoint and exact — Σ of rect areas equals the parcel count.");
         Assert.That(sumArea, Is.LessThanOrEqualTo(new SceneListenerOptions().MaxParcels),
-            "A real scene of this size must fit the default nominal-area budget.");
+            "A real scene of this size must fit the default announcement budget.");
 
-        var request = new SceneListenerHandshakeRequest { Realm = "main" };
-        request.ParcelRects.AddRange(rects);
+        var request = new SceneListenerHandshakeRequest();
+        var aoi = new SceneListenerAoi { Realm = "main" };
+        aoi.ParcelRects.AddRange(rects);
+        request.Aoi.Add(aoi);
 
-        bool ok = validator.ValidateSceneListenerHandshake(new PeerIndex(1), state, request, out HashSet<int>? parcels);
+        bool ok = validator.ValidateSceneListenerHandshake(new PeerIndex(1), state, request,
+            out SceneListenerState? listener);
 
         Assert.That(ok, Is.True, "A well-formed real-scene announcement must be accepted.");
 
         HashSet<int> expected = scene.Select(c => encoder.Encode(c.X, c.Z)).ToHashSet();
-        Assert.That(parcels, Is.EquivalentTo(expected),
+        Assert.That(listener!.ParcelsByRealm["main"], Is.EquivalentTo(expected),
             "Server-side expansion must reproduce the announced footprint exactly.");
+        Assert.That(listener.CellKeys, Is.Not.Empty,
+            "The descriptor must carry the cell cover the simulation queries the grid with.");
     }
 
     private static HashSet<(int X, int Z)> LoadScene()

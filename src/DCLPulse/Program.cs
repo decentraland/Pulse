@@ -169,6 +169,7 @@ builder.Services.AddSingleton<TeleportHandler>();
 builder.Services.AddSingleton(new AuthChainValidator(new RustEthereumSignVerifier()));
 builder.Services.AddSingleton<SceneListenerCellMapper>();
 builder.Services.AddSingleton<SceneListenerHandshakeHandler>();
+builder.Services.AddSingleton<SceneListenerUpdateHandler>();
 
 builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>
 {
@@ -180,6 +181,7 @@ builder.Services.AddSingleton(sp => new Dictionary<ClientMessage.MessageOneofCas
     { ClientMessage.MessageOneofCase.EmoteStop, sp.GetRequiredService<EmoteStopHandler>() },
     {ClientMessage.MessageOneofCase.Teleport, sp.GetRequiredService<TeleportHandler>() },
     { ClientMessage.MessageOneofCase.SceneListenerHandshake, sp.GetRequiredService<SceneListenerHandshakeHandler>() },
+    { ClientMessage.MessageOneofCase.SceneListenerUpdate, sp.GetRequiredService<SceneListenerUpdateHandler>() },
 });
 
 builder.Services.AddSingleton<ProfileBoard>(sp =>

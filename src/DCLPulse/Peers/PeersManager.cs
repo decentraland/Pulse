@@ -269,6 +269,16 @@ public sealed class PeersManager : BackgroundService
 
             peers[from] = peerState;
 
+            // Phase 1 of disconnect: the peer stops being an active subject and leaves the grid
+            // right now, so from the next tick on it is in no observer's interest set.
+            //
+            // The lifecycle event is the seam because it is delivered on the owning worker,
+            // exactly once, and behind every data event this peer had queued — so nothing of its
+            // own can republish after it. Must not move to the ENet thread: that would race the
+            // owning worker's simulation.
+            snapshotBoard.ClearActive(from);
+            realmGrids.Remove(from);
+
             logger.LogInformation("Peer disconnected {Peer}", from);
         }
     }
@@ -289,19 +299,21 @@ public sealed class PeersManager : BackgroundService
     }
 
     /// <summary>
-    ///     Post-auth choke point for scene listeners: only <c>Resync</c> is processed — a
-    ///     listener never mutates state, so <c>Input</c>/emotes/<c>Teleport</c>/profile
-    ///     announcements and repeat handshakes are dropped silently (mirrors the pre-auth
-    ///     "non-handshake silently dropped" convention; no disconnect — a buggy listener
-    ///     degrades to noise, not connection churn). The parcel set is immutable by
-    ///     construction: no message can change it.
+    ///     Post-auth choke point for scene listeners: only <c>Resync</c> and
+    ///     <c>SceneListenerUpdate</c> are processed — a listener never mutates *player* state, so
+    ///     <c>Input</c>/emotes/<c>Teleport</c>/profile announcements and repeat handshakes are
+    ///     dropped silently (mirrors the pre-auth "non-handshake silently dropped" convention; no
+    ///     disconnect — a buggy listener degrades to noise, not connection churn). The listener's
+    ///     own AoI — realms included — is the one thing it may change, and only through
+    ///     <see cref="Messaging.SceneListenerUpdateHandler" />; its role is fixed at connect.
     /// </summary>
     internal static bool IsForbiddenForSceneListener(Dictionary<PeerIndex, PeerState> peers, PeerIndex from, ClientMessage message)
     {
         if (!peers.TryGetValue(from, out PeerState? state) || state.SceneListener == null)
             return false;
 
-        if (message.MessageCase == ClientMessage.MessageOneofCase.Resync)
+        if (message.MessageCase is ClientMessage.MessageOneofCase.Resync
+            or ClientMessage.MessageOneofCase.SceneListenerUpdate)
             return false;
 
         PulseMetrics.SceneListener.FORBIDDEN_MESSAGES_DROPPED.Add(1);

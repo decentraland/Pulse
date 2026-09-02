@@ -160,8 +160,14 @@ public sealed class RealmSpatialGrids(float cellSize, int maxPeers)
     private long ComputeKey(Vector3 position) =>
         SpatialGrid.PackKey(CellCoord(position.X), CellCoord(position.Z));
 
+    /// <summary>
+    ///     Cell coordinate containing the world coordinate <paramref name="v" /> on one axis. Paired
+    ///     with <see cref="SpatialGrid.PackKey" /> this decomposes <see cref="ComputeCellKey" />, so a
+    ///     caller covering a contiguous world region can walk cell coordinates directly instead of
+    ///     probing every point inside it. Realm-independent: cell size is global.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private int CellCoord(float v) =>
+    public int CellCoord(float v) =>
         (int)MathF.Floor(v * inverseCellSize);
 
     /// <summary>

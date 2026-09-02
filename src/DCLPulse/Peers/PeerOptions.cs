@@ -43,11 +43,22 @@ public sealed class PeerOptions
     ///     allocator has no independent timer, so its pending-recycle state and the simulation's
     ///     cleanup state cannot drift.
     ///     <para />
-    ///     Must stay above the stale-view sweep interval (<c>SWEEP_INTERVAL × BaseTickMs</c>, ≈5 s)
-    ///     so observers get a chance to emit <c>PlayerLeft</c> before the slot is reused. The
-    ///     auth-timeout path funnels through the same sequence — a PENDING_AUTH peer that times
-    ///     out is transport-disconnected, which triggers the ENet disconnect event and the same
-    ///     DISCONNECTING → cleanup → release flow.
+    ///     Ordering against <c>PlayerLeft</c>: the <c>Disconnected</c> lifecycle event already
+    ///     cleared the peer from <see cref="SnapshotBoard" /> and the <c>SpatialGrid</c>, so no
+    ///     observer collects it again and its views are swept — emitting <c>PlayerLeft</c> — within
+    ///     <c>(VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL) × BaseTickMs</c>, 4000 ms against this
+    ///     5000 ms deadline at the defaults. That is a real margin at the default configuration
+    ///     under nominal tick pacing, but not a guarantee: the sweep is counted in simulation
+    ///     ticks while this timeout is wall clock, and the worker loop never skips ticks to catch
+    ///     up, so the effective tick period is <c>max(BaseTickMs, actual tick duration)</c>.
+    ///     Sustained tick overrun beyond ~62.5 ms per pass, or a <c>Peers:SimulationSteps[0]</c>
+    ///     above 62 ms, stretches the sweep past this deadline and inverts the ordering. The
+    ///     guarantee of last resort when they do cross is
+    ///     <c>PeerSimulation.DetectAndHandleAliasing</c>.
+    ///     <para />
+    ///     The auth-timeout path funnels through the same sequence — a PENDING_AUTH peer that
+    ///     times out is transport-disconnected, which triggers the ENet disconnect event and the
+    ///     same DISCONNECTING → cleanup → release flow.
     /// </summary>
     public uint DisconnectionCleanTimeoutMs { get; set; } = 5000;
 

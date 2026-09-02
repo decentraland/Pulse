@@ -28,4 +28,12 @@ public class ENetTransportOptionsTests
 
         Assert.That(options.EffectiveMaxConcurrentConnections, Is.EqualTo(4000));
     }
+
+    [Test]
+    public void PeerTimeoutMs_DefaultsToFiveSeconds()
+    {
+        var options = new ENetTransportOptions();
+
+        Assert.That(options.PeerTimeoutMs, Is.EqualTo(5000u));
+    }
 }

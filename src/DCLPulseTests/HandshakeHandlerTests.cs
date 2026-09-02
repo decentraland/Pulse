@@ -62,6 +62,7 @@ public class HandshakeHandlerTests
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),
             Options.Create(new SceneListenerOptions()),
             parcelEncoder,
+            SceneListenerTestFactory.CellMapper(),
             transport);
 
         handler = new HandshakeHandler(

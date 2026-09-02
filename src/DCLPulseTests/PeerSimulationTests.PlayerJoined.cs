@@ -149,13 +149,13 @@ public partial class PeerSimulationTests
 
         // Subject leaves and gets swept
         SetVisibleSubjects();
-        simulation.SimulateTick(peers, tickCounter: SWEEP_INTERVAL * 2);
+        simulation.SimulateTick(peers, tickCounter: FirstSweepTickAfter(0));
         DrainAllMessages();
 
         // Subject re-enters
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         PublishSnapshot(subject, seq: 3);
-        simulation.SimulateTick(peers, tickCounter: (SWEEP_INTERVAL * 2) + 1);
+        simulation.SimulateTick(peers, tickCounter: FirstSweepTickAfter(0) + 1);
 
         OutgoingMessage msg = DrainSingleMessage();
         Assert.That(msg.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined));

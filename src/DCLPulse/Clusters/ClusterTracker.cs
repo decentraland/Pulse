@@ -103,7 +103,10 @@ public sealed class ClusterTracker : BackgroundService
     {
         if (!options.Enabled)
         {
-            logger.LogInformation("Cluster tracker disabled (Clusters:Enabled is false)");
+            // Warning, not Information: production ships Logging:LogLevel:Default = Warning, so an
+            // Information line never reaches the deployment log. A tracker that is not running is
+            // exactly what an operator needs to see there.
+            logger.LogWarning("Cluster tracker disabled (Clusters:Enabled is false)");
             return;
         }
 

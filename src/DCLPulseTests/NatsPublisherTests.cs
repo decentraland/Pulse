@@ -79,6 +79,43 @@ public class NatsPublisherTests
         Assert.That(publisher.PublishedCount, Is.Zero);
     }
 
+    /// <summary>
+    ///     Stats-only mode has to announce itself at Warning. Production ships
+    ///     <c>Logging:LogLevel:Default</c> = Warning, so an Information line never reaches the
+    ///     deployment log — and a feed that was meant to be configured but silently is not is exactly
+    ///     what an operator has to be able to see there.
+    /// </summary>
+    [Test]
+    public async Task WhenUrlUnset_TheDisabledFeedWarnsRatherThanInforms()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+        NatsPublisher publisher = CreatePublisher(url: string.Empty, logger: logger);
+
+        await publisher.StartAsync(CancellationToken.None);
+        WaitForLog(logger, DISABLED_LOG);
+        await publisher.StopAsync(CancellationToken.None);
+
+        Assert.That(LoggedLevel(logger, DISABLED_LOG), Is.EqualTo(LogLevel.Warning));
+    }
+
+    /// <summary>
+    ///     A non-positive capacity makes the eviction test pass on every admission, so each assignment
+    ///     throws out the one before it and the feed delivers almost nothing. It still runs, which is
+    ///     why it has to be said at startup rather than left to be inferred from a climbing counter.
+    /// </summary>
+    [Test]
+    public async Task WhenChannelCapacityIsNotPositive_ItWarnsAtStartup()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 0, discoveryIntervalMs: 0, logger: logger);
+
+        await publisher.StartAsync(CancellationToken.None);
+        WaitForLog(logger, "NATS outbox capacity is not positive");
+        await publisher.StopAsync(CancellationToken.None);
+
+        Assert.That(LoggedLevel(logger, "NATS outbox capacity is not positive"), Is.EqualTo(LogLevel.Warning));
+    }
+
     [Test]
     public void ChannelOverflow_DropsOldestAndCountsEveryDrop()
     {

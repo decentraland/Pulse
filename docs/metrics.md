@@ -297,6 +297,16 @@ Cluster derivation and the outbound NATS feed. Every value here stays zero while
 
 The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — the latter is the name archipelago's services use, so one CI-injected secret can serve both. `Nats__Url` wins if both are set. Because an unresolved URL fails soft rather than erroring, `dcl_pulse_nats_connected` is the signal that the URL never arrived: check the startup log for `NATS feed disabled (Nats:Url not set)`.
 
+**Every unconfigured path logs at `Warning`, deliberately.** Production ships `Logging:LogLevel:Default = Warning`, so an `Information` line never reaches the deployment log — a service that quietly did not start would be invisible exactly where an operator looks. The contract is therefore: **a clean startup logs nothing from these two services, and any line at all means something is off.**
+
+| Startup line | Means |
+|---|---|
+| `Cluster tracker disabled (Clusters:Enabled is false)` | No clustering at all. Everything in this section stays zero |
+| `Cluster tracker disabled (Clusters:PassIntervalMs is not positive)` | Same, from a bad cadence rather than the flag |
+| `NATS feed disabled (Nats:Url not set)` | Shadow mode — the tracker runs, nothing is published. Expected on a deployment that has not been given a broker yet, and the rollback state |
+| `NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)` | Assignments and topology still publish; the service is not advertised on `engine.discovery` |
+| `NATS outbox capacity is not positive (Nats:ChannelCapacity is …)` | The feed runs but each assignment evicts the previous one, so almost everything is lost. Watch `dcl_pulse_nats_dropped_total` |
+
 All of these are recorded once per pass on the tracker's own thread — none of them touch the per-tick or per-packet path.
 
 ### Clusters

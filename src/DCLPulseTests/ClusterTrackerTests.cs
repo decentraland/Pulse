@@ -458,9 +458,11 @@ public class ClusterTrackerTests
 
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1)
     {
-        var options = Substitute.For<IOptions<ClusterOptions>>();
-
-        options.Value.Returns(new ClusterOptions
+        // Options.Create rather than a substitute: IOptions<T> has a real, trivial implementation, and
+        // a substituted property getter depends on NSubstitute's ambient call context — which
+        // neighbouring tests in this fixture were perturbing, so `enabled: false` silently arrived as
+        // the default.
+        IOptions<ClusterOptions> options = Options.Create(new ClusterOptions
         {
             Enabled = enabled,
             PassIntervalMs = 1000,

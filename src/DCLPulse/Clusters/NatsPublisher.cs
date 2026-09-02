@@ -496,7 +496,10 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     {
         if (wakeup is null)
         {
-            logger.LogInformation("NATS feed disabled (Nats:Url not set) — cluster tracker runs in stats-only mode");
+            // Warning, not Information: production ships Logging:LogLevel:Default = Warning, and a
+            // feed that was meant to be configured but silently is not is the failure this line has
+            // to surface. Stats-only is a legitimate mode, so it is a warning and not an error.
+            logger.LogWarning("NATS feed disabled (Nats:Url not set) — cluster tracker runs in stats-only mode");
             return;
         }
 
@@ -506,6 +509,15 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
         if (!heartbeatEnabled)
             logger.LogWarning("NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)");
+
+        // A non-positive capacity makes the eviction test pass on every admission, so each new
+        // assignment throws out the one before it and the feed delivers almost nothing. It still
+        // "works", which is what makes it worth saying out loud at startup rather than leaving to be
+        // inferred from a climbing dropped counter.
+        if (options.ChannelCapacity <= 0)
+            logger.LogWarning(
+                "NATS outbox capacity is not positive (Nats:ChannelCapacity is {Capacity}) — every assignment will evict the previous one, so the feed will lose almost all of them",
+                options.ChannelCapacity);
 
         logger.LogInformation("NATS publisher started — {Broker}", SanitizeBrokerUrl(options.Url));
 

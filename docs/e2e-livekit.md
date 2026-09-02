@@ -50,8 +50,13 @@ dotnet run --project src/DCLPulseTestClient -- --account=loadtest --bot-count=5 
   --comms-url=archipelago:archipelago:wss://peer.decentraland.zone/archipelago/ws
 ```
 
-The `--comms-url` is the realm's `comms.adapter` from `https://peer.decentraland.zone/about`,
-pasted verbatim; `AdapterAddress` reduces it to `wss://peer.decentraland.zone/archipelago/ws`.
+The `--comms-url` is a realm's `comms.adapter` pasted verbatim; `AdapterAddress` reduces it to
+`wss://peer.decentraland.zone/archipelago/ws`.
+
+> **This host is realm `artemis`, not the realm the explorer uses.** It is fine for exercising the
+> harness, and wrong for reproducing what a client sees — see "Resolve the adapter from the realm
+> the client uses" in §4. To match the explorer, take the adapter from
+> `realm-provider-ea.decentraland.zone/main/about` instead.
 
 Observed: 5/5 welcomed, 5/5 islands delivered, real tokens against `wss://dcl.livekit.cloud`,
 nothing unredacted in the log. **In this path the mint *is* heartbeat-driven** — there is no
@@ -274,6 +279,41 @@ scope) would need a real host.
 
 Postgres is still required to start, but its ban check and deny-list lookup **fail open**, so
 neither needs to be populated.
+
+### Resolve the adapter from the realm the client uses — not from `peer.<domain>`
+
+**The single most expensive mistake available here.** A domain hosts several realms on separate
+stacks at different points in the migration, and `peer.<domain>` is usually *not* the one the
+explorer is on. Testing the wrong one produces a confident green result about a stack nobody uses.
+
+unity-explorer resolves Genesis from `realm-provider-ea.<domain>/main`
+(`DecentralandUrlsSource.cs`, `DecentralandUrl.Genesis`), then `RealmController.ResolveCommsAdapter`
+takes `about.comms.adapter` — unless the `COMMS_ADAPTER` app arg overrides it — and
+`RefinedAdapterAddresses` strips the `archipelago:archipelago:` prefix. So the adapter a client
+dials is:
+
+```bash
+curl -s https://realm-provider-ea.decentraland.zone/main/about | jq '{healthy, acceptingUsers, realm: .configurations.realmName, comms}'
+```
+
+Observed on 2026-09-02, the two zone realms had diverged completely:
+
+| | `realm-provider-ea/main` (what the explorer uses) | `peer.decentraland.zone` |
+| --- | --- | --- |
+| realmName | `main` | `artemis` |
+| adapter | `wss://archipelago-ea-ws-connector.decentraland.zone/ws` | `wss://peer.decentraland.zone/archipelago/ws` |
+| comms build | `081ac634` — `chore/decommission-archipelago-core` | `e320cd00` — June |
+| core in that build | **absent** | **present** |
+| `healthy` / `acceptingUsers` | `false` / `false` | `true` / `true` |
+| A bot there | welcome, then silence forever | island + a token that joins |
+
+Both stacks answer the handshake identically, so the failure is invisible until you notice that
+nothing follows the welcome. `healthy: false` and `acceptingUsers: false` on the realm are the
+cheap tell — check them before blaming a client.
+
+The refinement itself is not a difference: `RefinedAdapterAddresses.AdapterUrlAsync` and this
+harness's `AdapterAddress.Refine` were traced against each other and agree on every real adapter
+shape. Only the *input realm* differed.
 
 ### Who mints the token
 

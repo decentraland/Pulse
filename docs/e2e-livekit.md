@@ -119,6 +119,41 @@ Pulse publishes its subjects literally — it has no prefix knob. See
 [clustering-on-aoi.md §3.6](clustering-on-aoi.md) for the full feed description and the three
 subjects Pulse emits.
 
+### What it does not prove: the explorer's criterion
+
+The harness stops one hop short of the real client, and the gap is where most "the island won't
+connect" reports live.
+
+| | This harness | unity-explorer |
+| --- | --- | --- |
+| Success is | a conn string arrived and its claims are consistent | `Room().Info.ConnectionState == LKConnectionState.ConnConnected` |
+| Reached by | reading `islandChanged` off the WebSocket | `TryConnectToRoomAsync` → an actual LiveKit session |
+
+So a token that is well-formed but **rejected by LiveKit** — bad signature, revoked key, room
+policy, expired in transit — reads as success here and as failure in Unity. Never report a
+harness pass as "comms works"; report it as "a usable-looking token was delivered".
+
+Two things that are *not* the difference, checked so they are not re-investigated:
+
+- **Parsing is equivalent.** The explorer uses `new Uri(connStr)` +
+  `HttpUtility.ParseQueryString(uri.Query)["access_token"]`
+  (`Connections/Credentials/ConnectionStringCredentials.cs`) and strips `livekit:` off the URL by
+  splitting on `?`. Verified against zone's exact shape — `livekit:wss://host?access_token=…`,
+  with and without a trailing slash, with an extra query parameter — and .NET's `Uri` resolves the
+  query for the `livekit:` scheme in all three. It agrees with `LiveKitToken`'s substring
+  extraction.
+- **The identity and room are checked.** `[livekit]` prints `room=`, `identity=`, expiry, and
+  `publish=`, and flags `MISMATCH` when the room is not the island id or the identity is not the
+  bot's wallet.
+
+**Watch the TTL against the explorer's retry policy.** Zone mints tokens that expire in ~5
+minutes. The explorer retries a *cached* conn string with `RECONNECT_BACKOFF = 5s` and only forces
+a fresh handshake after `MAX_RECONNECT_ATTEMPTS_BEFORE_FRESH_HANDSHAKE = 3`
+(`Archipelago/Rooms/ArchipelagoIslandRoom.cs`) — its own comment names the failure as "its token
+expired during a long outage". A short TTL plus any stall is a real way for a token that this
+harness called valid to be dead by the time the client uses it. For contrast, MetaForge's MoB
+mints 24-hour tokens.
+
 ## 2. The stack
 
 `docker-compose.e2e.yml` at the repo root brings up three services. The test client is not one
@@ -237,6 +272,82 @@ scope) would need a real host.
 
 Postgres is still required to start, but its ban check and deny-list lookup **fail open**, so
 neither needs to be populated.
+
+### Who mints the token
+
+Whoever assigns the island. Minting is not a separate service — it is a step inside island
+assignment, done by the assigner with a LiveKit API key it holds directly. Two implementations of
+the same step exist:
+
+- **archipelago-core** (`core/src/components.ts`, `createLivekitTransport`) reads
+  `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` / `LIVEKIT_HOST` from its own env, vendors a copy of
+  LiveKit's signer (`core/src/logic/livekit.ts`), and calls `mintToken(userId, roomId)` from
+  `getConnectionStrings(userIds, roomId)` as it forms an island.
+- **comms-gatekeeper** (`src/adapters/livekit.ts`, `generateCredentials`) does the same thing for
+  the cluster subscriber, at `component.ts` step "Mint a LiveKit token for the cluster's island
+  room" — `livekit.getIslandRoomName(clusterId)` then `generateCredentials(wallet, room, …)`.
+
+Both mint with `ttl: 5 * 60`, `roomJoin: true`, `canPublish: true`, `room = the island id`, and
+`identity = the wallet`. So the token's claims tell you the *island* and the *wallet*, and the
+5-minute TTL, but they **do not identify which service signed it** — the shape is house
+convention, not a fingerprint. The only claim that differs in practice is the API key (`iss`),
+which is per-deployment rather than per-service.
+
+Two consequences worth holding on to:
+
+- **Killing the assigner kills the tokens.** There is no standalone minter to keep working. So a
+  token arriving *is* evidence that some assigner is alive — which is what makes the negative
+  check meaningful.
+- **The 5-minute TTL is theirs, not ours.** Nothing in Pulse or in this harness shortens it, and
+  it is the same on both paths.
+
+### Which producer is live, and how to tell
+
+Three things can put an `island_changed` on the wire, and they are told apart by the shape of what
+arrives — not by asking a status endpoint.
+
+| Signature | Producer | Requires |
+| --- | --- | --- |
+| `island_id` like `peer-zone4`, `peers` populated, islands **merge** (`from=peer-zone5`) | the old **archipelago-core** | a deployment built before `archipelago-workers@ad3d007` (`feat!: remove archipelago-core`, 2026-07-29) |
+| `island_id` like `island-C3`, `peers` empty, one new id per assignment | **comms-gatekeeper**'s cluster subscriber | `CLUSTER_SUBSCRIBER_ENABLED=true`, NATS configured, **and** Pulse publishing `peer.{addr}.cluster_change` |
+| nothing arrives, `Welcome received` still logged | no producer | — |
+
+**Do not read `/core-status` as proof the minter is dead.** It is served by the *stats* service and
+reflects whether stats still sees `engine.discovery`. Stats can be far ahead of the archipelago
+serving a realm, in which case `{"healthy":false,"userCount":0}` is an artifact of stats being
+decommissioned, not evidence about the service that mints for your bots. This misled a whole
+investigation once.
+
+**Resolve the deployed commit instead.** Both services report one, and `archipelago-workers` can
+date it:
+
+```bash
+curl -s https://peer.decentraland.zone/archipelago/status          # -> {"version":…,"commitHash":…}
+curl -s https://archipelago-ea-stats.decentraland.zone/core-status # -> {"healthy":…,"userCount":…}
+
+cd ../archipelago-workers && git fetch --all
+git log -1 --format='%ad %s' --date=short <commitHash>
+git merge-base --is-ancestor <commitHash> ad3d007 && echo "predates core removal — still contains core"
+```
+
+Observed on 2026-08: the realm's `/archipelago/ws` ran `e320cd00` (2026-06-18), an **ancestor** of
+the core removal, while stats ran `081ac634` on `chore/decommission-archipelago-core`. Core was
+alive and minting for the realm even though `/core-status` said `healthy:false`.
+
+Also worth knowing: ws-connector's own comment says "the publishers are out of this repo —
+comms-gatekeeper mints and publishes `island_changed`" (`ws-connector/src/logic/nats.ts`). That
+describes the *target* architecture. It is not evidence about what is running today.
+
+### A negative check needs a positive precondition
+
+"No token was minted" is only meaningful if the run got far enough to have received one. The
+precondition is the line `[ws-connector] Welcome received, peer id 0x…`: the handshake completed
+and the wallet is in ws-connector's registry, so a mint for that wallet would have been delivered.
+Without that line, an absent token says nothing — it could be a failed handshake, the wrong
+adapter, or a kicked session.
+
+`--expect-conn-string-within` is **parsed and not acted on**, so the client never fails on a
+missing conn string. A negative result is something you read from the log, not an exit code.
 
 ### The room name is not the cluster id
 

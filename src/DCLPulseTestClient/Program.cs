@@ -234,7 +234,10 @@ async Task<int> RunSceneListenerAsync()
     string listenerAccount = options.AccountPrefix;
 
     Console.WriteLine($"[{listenerAccount}] Ensuring account exists..");
-    await MetaForge.RunCommandAsync($"account create {listenerAccount} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+    await MetaForge.RunCommandAsync(
+        $"account create {listenerAccount} --skip-update-check --skip-auto-login",
+        lifeCycleCts.Token,
+        throwOnNonZeroExit: false);
 
     Console.WriteLine($"[{listenerAccount}] Signing auth chain..");
     LoginResult login = await authenticator.LoginAsync(listenerAccount, lifeCycleCts.Token);

@@ -5,6 +5,7 @@ using Pulse.InterestManagement;
 using Pulse.Clusters;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse;
 using System.Numerics;
 
 namespace DCLPulseTests;
@@ -87,6 +88,86 @@ public class ClusterTrackerTests
     }
 
     /// <summary>
+    ///     The same adjacency question, placed the way production places peers: through
+    ///     <see cref="PeerSnapshotPublisher" />, which decodes a parcel index plus a quantized
+    ///     in-parcel offset into the global position the grid is keyed on. Coordinates are kept off
+    ///     the cell boundaries — see
+    ///     <see cref="PublishingOnACellBoundary_CanLandInTheLowerCell" /> for why that matters.
+    /// </summary>
+    [TestCase(10f, 110f, TestName = "PublishedThroughPublisher_NearOrigin_FormOneCluster")]
+    [TestCase(350f, 450f, TestName = "PublishedThroughPublisher_AwayFromOrigin_FormOneCluster")]
+    public void PeersPublishedOneCellApart_FormOneCluster(float firstX, float secondX)
+    {
+        grids = new RealmSpatialGrids(100f, MAX_PEERS);
+
+        var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+        ITimeProvider timeProvider = Substitute.For<ITimeProvider>();
+        timeProvider.MonotonicTime.Returns(1u);
+
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, grids, parcelEncoder, timeProvider);
+
+        PublishAt(publisher, parcelEncoder, new PeerIndex(0), firstX);
+        PublishAt(publisher, parcelEncoder, new PeerIndex(1), secondX);
+
+        ClusterTracker tracker = CreateTracker();
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.Clusters, Has.Count.EqualTo(1),
+            $"peers published at x={firstX} and x={secondX} are one cell apart and must share a cluster");
+    }
+
+    /// <summary>
+    ///     A peer published at exactly a cell boundary can be indexed in the cell <em>below</em> it.
+    ///     The in-parcel offset is quantized to 8 bits over [0, 16] (step ≈ 0.0627), and an offset of
+    ///     12 encodes to 191 rather than 191.25, decoding to 11.984 — so global x=300 is stored as
+    ///     299.984 and lands in cell 2, not cell 3.
+    ///     <para />
+    ///     Harmless in itself: the two cells are adjacent, so a peer's clustering relative to its
+    ///     neighbours does not change. It matters for <em>test layouts</em>. A live run that spaced
+    ///     eight groups at exact multiples of 100 saw them land in cells 0,1,2,2,4,5,6,6 — leaving
+    ///     cell 3 empty and splitting what looked like an unbroken chain into two clusters. Space
+    ///     fixtures off the boundaries, or assert against the decoded position rather than the input.
+    /// </summary>
+    [Test]
+    public void PublishingOnACellBoundary_CanLandInTheLowerCell()
+    {
+        const float CELL = 100f;
+        grids = new RealmSpatialGrids(CELL, MAX_PEERS);
+
+        var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+        ITimeProvider timeProvider = Substitute.For<ITimeProvider>();
+        timeProvider.MonotonicTime.Returns(1u);
+
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, grids, parcelEncoder, timeProvider);
+
+        PublishAt(publisher, parcelEncoder, new PeerIndex(0), 300f);
+
+        Assert.That(snapshotBoard.TryRead(new PeerIndex(0), out PeerSnapshot snapshot), Is.True);
+
+        float stored = snapshot.GlobalPosition.X;
+
+        Assert.That(stored, Is.LessThan(300f), "the offset quantizes down, so the stored position is below the input");
+        Assert.That(300f - stored, Is.LessThan(Decentraland.Pulse.PlayerState.PositionXQuantizedStep),
+            "and by less than one quantization step");
+        Assert.That(grids.CellCoord(stored), Is.EqualTo(2), "which puts it one cell below floor(300/100)");
+    }
+
+    private void PublishAt(PeerSnapshotPublisher publisher, ParcelEncoder parcelEncoder, PeerIndex peer, float x)
+    {
+        snapshotBoard.SetActive(peer);
+        identityBoard.Set(peer, $"0xwallet{peer.Value}");
+
+        int index = parcelEncoder.EncodeFromGlobalPosition(new Vector3(x, 0, 0), out Vector3 local);
+
+        var state = new Decentraland.Pulse.PlayerState { ParcelIndex = index };
+        state.PositionXQuantized = local.X;
+        state.PositionYQuantized = local.Y;
+        state.PositionZQuantized = local.Z;
+
+        publisher.PublishFromPlayerState(peer, state, realm: REALM);
+    }
+
+    /// <summary>
     ///     Two clusters that become adjacent must merge. On a deployed server, groups that connected
     ///     in separate waves stayed split even though their cells were adjacent, while groups that
     ///     arrived together merged — so the distinguishing variable is whether a cluster already
@@ -116,6 +197,10 @@ public class ClusterTrackerTests
     ///     The chaining worst case from <c>docs/clustering-on-aoi.md</c> §3.2, at the smallest scale
     ///     that still chains: eight occupied cells in a line, each adjacent to the next, must be a
     ///     single connected component.
+    ///     <para />
+    ///     Places peers directly, so the cells really are 0–7. Sending the same coordinates over the
+    ///     wire does not reproduce this — see
+    ///     <see cref="PublishingOnACellBoundary_CanLandInTheLowerCell" />.
     /// </summary>
     [Test]
     public void EightCellsInALine_FormOneCluster()

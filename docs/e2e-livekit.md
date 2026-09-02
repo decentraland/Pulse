@@ -306,11 +306,39 @@ Two consequences worth holding on to:
 Three things can put an `island_changed` on the wire, and they are told apart by the shape of what
 arrives — not by asking a status endpoint.
 
-| Signature | Producer | Requires |
+Read it off the **room name** in the `[livekit]` line. The two island producers do not collide,
+because gatekeeper prefixes and core does not (`ISLAND_ROOM_PREFIX = 'island-'`,
+`src/adapters/livekit.ts`):
+
+| `room=` | Producer | Requires |
 | --- | --- | --- |
-| `island_id` like `peer-zone4`, `peers` populated, islands **merge** (`from=peer-zone5`) | the old **archipelago-core** | a deployment built before `archipelago-workers@ad3d007` (`feat!: remove archipelago-core`, 2026-07-29) |
-| `island_id` like `island-C3`, `peers` empty, one new id per assignment | **comms-gatekeeper**'s cluster subscriber | `CLUSTER_SUBSCRIBER_ENABLED=true`, NATS configured, **and** Pulse publishing `peer.{addr}.cluster_change` |
-| nothing arrives, `Welcome received` still logged | no producer | — |
+| `island-C3` | **comms-gatekeeper**'s cluster subscriber | `CLUSTER_SUBSCRIBER_ENABLED=true`, NATS configured, **and** Pulse publishing `peer.{addr}.cluster_change` |
+| `peer-zone4` — a bare island name, unprefixed | the old **archipelago-core** | a deployment built before `archipelago-workers@ad3d007` (`feat!: remove archipelago-core`, 2026-07-29) |
+| `<COMMS_ROOM_PREFIX>…`, or `…realm:sceneId` | gatekeeper's **scene-adapter** path — unrelated to clustering | nothing; it is pull-based and always on |
+| nothing arrives, `Welcome received` still logged | no island producer | — |
+
+Corroborating signals, weaker than the room name: core populates `peers` and merges islands
+(`from=peer-zone5`), while the cluster subscriber leaves `peers` empty and issues one room per
+cluster.
+
+**Gatekeeper being deployed does not mean islands work.** It mints on eight independent paths and
+only one of them involves Pulse:
+
+| Path | Trigger | Room | Needs Pulse |
+| --- | --- | --- | --- |
+| `POST /get-scene-adapter`, `/get-server-scene-adapter` | HTTP from client, scene or authoritative server | scene or world room | no |
+| `GET /private-messages/token` | HTTP from explorer | private-messages room | no |
+| private + community voice chat | HTTP from the social service | `voice-chat-private-…`, `voice-chat-community…` | no |
+| cast streamer / watcher / presentation-bot | HTTP from the cast app | scene room | no |
+| cluster subscriber | NATS `peer.*.cluster_change` | `island-{clusterId}` | **yes** |
+
+The non-Pulse paths are **pull, not push**, and their rooms are statically derivable — a scene room
+is a pure function of `(realm, sceneId)`, both of which the caller already knows, so it asks and
+gets a token. Nothing has to work out who is standing near whom. The island path is the only one
+that is pushed and the only one whose room name the client cannot derive, which is exactly the part
+Pulse supplies. With no feed, `start()` logs `disabled (CLUSTER_SUBSCRIBER_ENABLED is not "true")`
+or `enabled but NATS is not configured, staying idle` and mints nothing there — while serving every
+other path normally.
 
 **Do not read `/core-status` as proof the minter is dead.** It is served by the *stats* service and
 reflects whether stats still sees `engine.discovery`. Stats can be far ahead of the archipelago

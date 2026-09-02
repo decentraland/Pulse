@@ -37,6 +37,10 @@ public sealed class ConnStringListener(ICommsConnection connection)
                     // line is the one place the harness would otherwise print it.
                     Console.WriteLine($"[ws-connector] Island {message.IslandId} (from {fromIsland ?? "none"}), {message.Peers.Count} peer(s), connStr {ConnStringRedaction.Redact(message.ConnStr)}");
 
+                    // Claims only, never the token: whether it arrived is a weaker claim than whether a
+                    // client could use it, and the two look identical until the claims are read.
+                    Console.WriteLine($"[livekit] {LiveKitToken.Describe(message.ConnStr, expectedRoom: message.IslandId)}");
+
                     // Copy the peer map — the packet is transient and handlers may outlive this iteration.
                     IslandChanged?.Invoke(new IslandChange(
                         message.IslandId,

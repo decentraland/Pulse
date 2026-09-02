@@ -119,19 +119,21 @@ Pulse publishes its subjects literally — it has no prefix knob. See
 [clustering-on-aoi.md §3.6](clustering-on-aoi.md) for the full feed description and the three
 subjects Pulse emits.
 
-### What it does not prove: the explorer's criterion
+### Two strengths of claim, and which one you asked for
 
-The harness stops one hop short of the real client, and the gap is where most "the island won't
-connect" reports live.
+| | Default | With `--join-livekit` | unity-explorer |
+| --- | --- | --- | --- |
+| Success is | a conn string arrived and its claims are consistent | `room.ConnectionState == ConnConnected` | `ConnectionState == LKConnectionState.ConnConnected` |
+| Reached by | reading `islandChanged` off the WebSocket | `Room.ConnectAsync` — a real LiveKit session | `TryConnectToRoomAsync` — the same |
 
-| | This harness | unity-explorer |
-| --- | --- | --- |
-| Success is | a conn string arrived and its claims are consistent | `Room().Info.ConnectionState == LKConnectionState.ConnConnected` |
-| Reached by | reading `islandChanged` off the WebSocket | `TryConnectToRoomAsync` → an actual LiveKit session |
+**Without the flag, a token that is well-formed but rejected by LiveKit** — bad signature, revoked
+key, room policy, expired in transit — **reads as success here and as failure in Unity.** So never
+report a default run as "comms works"; report it as "a usable-looking token was delivered".
 
-So a token that is well-formed but **rejected by LiveKit** — bad signature, revoked key, room
-policy, expired in transit — reads as success here and as failure in Unity. Never report a
-harness pass as "comms works"; report it as "a usable-looking token was delivered".
+With the flag the harness makes the explorer's claim, on the same enum
+(`LiveKit.Proto.ConnectionState`), and reports the room the **server** granted rather than the one
+the token asked for — a stronger check than the claim, since the two can disagree. Use it whenever
+the question is "does comms actually work" rather than "did something mint".
 
 Two things that are *not* the difference, checked so they are not re-investigated:
 
@@ -313,7 +315,7 @@ because gatekeeper prefixes and core does not (`ISLAND_ROOM_PREFIX = 'island-'`,
 | `room=` | Producer | Requires |
 | --- | --- | --- |
 | `island-C3` | **comms-gatekeeper**'s cluster subscriber | `CLUSTER_SUBSCRIBER_ENABLED=true`, NATS configured, **and** Pulse publishing `peer.{addr}.cluster_change` |
-| `peer-zone4` — a bare island name, unprefixed | the old **archipelago-core** | a deployment built before `archipelago-workers@ad3d007` (`feat!: remove archipelago-core`, 2026-07-29) |
+| `peer-zone4` — a bare island name, unprefixed | the old **archipelago-core** | the `archipelago-ea-core` service still running; it is deployed separately from ws-connector and nothing in CI removes it |
 | `<COMMS_ROOM_PREFIX>…`, or `…realm:sceneId` | gatekeeper's **scene-adapter** path — unrelated to clustering | nothing; it is pull-based and always on |
 | nothing arrives, `Welcome received` still logged | no island producer | — |
 
@@ -340,27 +342,43 @@ Pulse supplies. With no feed, `start()` logs `disabled (CLUSTER_SUBSCRIBER_ENABL
 or `enabled but NATS is not configured, staying idle` and mints nothing there — while serving every
 other path normally.
 
-**Do not read `/core-status` as proof the minter is dead.** It is served by the *stats* service and
-reflects whether stats still sees `engine.discovery`. Stats can be far ahead of the archipelago
-serving a realm, in which case `{"healthy":false,"userCount":0}` is an artifact of stats being
-decommissioned, not evidence about the service that mints for your bots. This misled a whole
-investigation once.
+**No status endpoint answers this, because core has none that is reachable.** `archipelago-core`
+is its own service (`archipelago-ea-core`), separate from ws-connector, and it publishes to NATS
+rather than serving clients. The two endpoints that look like they should answer do not:
 
-**Resolve the deployed commit instead.** Both services report one, and `archipelago-workers` can
-date it:
+- `/archipelago/status` is served by **ws-connector**
+  (`ws-connector/src/controllers/handlers/status-handler.ts`), so its `commitHash` dates
+  ws-connector's build and says nothing about whether core is running beside it.
+- `/core-status` is served by the **stats** service and reflects whether stats still sees
+  `engine.discovery`. Stats can be rolled forward independently, in which case
+  `{"healthy":false,"userCount":0}` is an artifact of stats being decommissioned, not evidence
+  about the service minting for your bots. This misled a whole investigation once.
+
+**So identify the producer from what arrives, using the room name above.** A bare unprefixed island
+id is core, and it is the only positive proof that core is alive.
+
+The commit hashes are still worth collecting — they date the surrounding stack and reveal an
+inconsistent rollout — just not as an answer about core:
 
 ```bash
-curl -s https://peer.decentraland.zone/archipelago/status          # -> {"version":…,"commitHash":…}
-curl -s https://archipelago-ea-stats.decentraland.zone/core-status # -> {"healthy":…,"userCount":…}
+curl -s https://peer.decentraland.zone/about | jq .comms   # ws-connector's build + the adapter clients use
+curl -s https://comms-gatekeeper.decentraland.zone/status  # gatekeeper's build
 
 cd ../archipelago-workers && git fetch --all
 git log -1 --format='%ad %s' --date=short <commitHash>
-git merge-base --is-ancestor <commitHash> ad3d007 && echo "predates core removal — still contains core"
 ```
 
-Observed on 2026-08: the realm's `/archipelago/ws` ran `e320cd00` (2026-06-18), an **ancestor** of
-the core removal, while stats ran `081ac634` on `chore/decommission-archipelago-core`. Core was
-alive and minting for the realm even though `/core-status` said `healthy:false`.
+Observed on 2026-09: ws-connector on `e320cd00` (2026-06-18), stats on `081ac634`
+(`chore/decommission-archipelago-core`), gatekeeper on `feat/cluster-livekit-subscriber` — three
+services, three different points in the migration, and core still minting behind all of them.
+
+**Nothing redeploys core, so it will not go away on its own.** The removal commit deleted core's
+jobs from `docker-next.yml`, `docker-release.yml` and `manual-deploy.yml`, so CI no longer touches
+that service and the running task keeps its last image indefinitely. Retiring it is an infra
+action, not a deploy — see `archipelago-workers/docs/core-decommission-runbook.md`, precondition 3.
+Until then, expect core to keep assigning islands regardless of what is deployed elsewhere, and
+expect **two** `island_changed` messages per wallet during any window where Pulse's feed and
+gatekeeper's subscriber are both live — the runbook calls this the dual-publish flap.
 
 Also worth knowing: ws-connector's own comment says "the publishers are out of this repo —
 comms-gatekeeper mints and publishes `island_changed`" (`ws-connector/src/logic/nats.ts`). That
@@ -484,6 +502,7 @@ Read from `src/DCLPulseTestClient/ClientOptions.cs`. Defaults are the ones in `F
 | --- | --- | --- |
 | `--comms-enabled` | off | Open a ws-connector session per bot on the bot's own wallet. Everything below is inert without it |
 | `--comms-url=<url>` | `ws://127.0.0.1:5000/ws` | ws-connector endpoint. Also accepts a realm's raw adapter string (`archipelago:archipelago:wss://host/ws`), so a value copied from `/about` works unchanged |
+| `--join-livekit` | off | Also **join** each room the bot is given a token for, and report `ConnectionState`. Opens a real WebRTC session per bot; accepted bare or as `--join-livekit=true` |
 | `--expect-conn-string-within=<s>` | `15` | **Parsed but not yet acted on.** Reserved for the regression scenarios |
 
 There is deliberately no broker flag. The client never connects to NATS.
@@ -493,7 +512,7 @@ Two parsing details that will cost you a run each:
 - **`--flag=value`, not `--flag value`.** `FromArgs` matches on the `--name=` prefix; a
   space-separated value is silently ignored and the default is used — so `--comms-url ws://…`
   leaves you pointed at the default endpoint with no warning.
-- **`--comms-enabled` is the exception**, accepted both bare and as `--comms-enabled=true`.
+- **`--comms-enabled` and `--join-livekit` are the exceptions**, accepted both bare and as `--comms-enabled=true`.
 
 ## 6. Reading a failure
 

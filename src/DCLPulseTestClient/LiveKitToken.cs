@@ -64,6 +64,29 @@ public static class LiveKitToken
         return string.Join(" ", notes);
     }
 
+    /// <summary>
+    ///     Splits a conn string into the LiveKit server URL and the access token. Validates neither —
+    ///     that is <see cref="Describe" />'s job for the token, and the server's for the URL. False when
+    ///     either half is missing.
+    /// </summary>
+    public static bool TryParse(string connStr, out string url, out string token)
+    {
+        url = string.Empty;
+
+        if (!TryExtractToken(connStr, out token)) return false;
+
+        // `livekit:wss://host?access_token=...`. The `livekit:` scheme names which transport the
+        // adapter is, Decentraland-side, and is not part of the URL the SDK wants.
+        const string SCHEME = "livekit:";
+        int scheme = connStr.IndexOf(SCHEME, StringComparison.OrdinalIgnoreCase);
+        string rest = scheme < 0 ? connStr : connStr[(scheme + SCHEME.Length)..];
+        int query = rest.IndexOf('?');
+
+        url = (query < 0 ? rest : rest[..query]).Trim();
+
+        return url.Length > 0;
+    }
+
     private static string DescribeExpiry(JsonElement payload)
     {
         if (payload.TryGetProperty("exp", out JsonElement exp) && exp.TryGetInt64(out long seconds))

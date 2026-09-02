@@ -35,6 +35,12 @@ public class ClientOptions
     /// </summary>
     public int ExpectConnStringWithinSeconds { get; init; } = 15;
 
+    /// <summary>
+    ///     Whether each conn string received is also used to actually join its LiveKit room. Off by
+    ///     default: it opens a real WebRTC session per bot, which existing runs neither need nor expect.
+    /// </summary>
+    public bool JoinLiveKit { get; init; }
+
     public static ClientOptions FromArgs(string[] args)
     {
         string Arg(string name, string fallback) =>
@@ -64,6 +70,7 @@ public class ClientOptions
             CommsEnabled = Flag("comms-enabled"),
             CommsUrl = Arg("comms-url", "ws://127.0.0.1:5000/ws"),
             ExpectConnStringWithinSeconds = int.Parse(Arg("expect-conn-string-within", "15")),
+            JoinLiveKit = Flag("join-livekit"),
         };
     }
 }

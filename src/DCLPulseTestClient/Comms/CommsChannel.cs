@@ -22,6 +22,10 @@ public sealed class CommsChannel
     private readonly string walletAddress;
     private readonly Func<Vector3> position;
 
+    // Created in RunAsync when --join-livekit is set, null otherwise. A field so the finally block can
+    // leave the room even when the channel ends by exception.
+    private LiveKitJoiner? joiner;
+
     /// <summary>Raised for every island assignment observed on this channel.</summary>
     public event Action<IslandChange>? IslandChanged;
 
@@ -52,7 +56,18 @@ public sealed class CommsChannel
             await signFlow.ConnectAsync(options.CommsUrl, walletAddress, ct);
 
             var listener = new ConnStringListener(connection);
-            listener.IslandChanged += change => IslandChanged?.Invoke(change);
+
+            joiner = options.JoinLiveKit ? new LiveKitJoiner(account) : null;
+
+            listener.IslandChanged += change =>
+            {
+                IslandChanged?.Invoke(change);
+
+                // Fire and forget: a join takes seconds, and the listener loop must keep draining or
+                // the heartbeat and the next assignment stall behind it. JoinAsync never throws.
+                if (joiner is not null)
+                    _ = joiner.JoinAsync(change.ConnStr, change.IslandId, ct);
+            };
 
             var pump = new HeartbeatPump(connection, position);
 
@@ -72,6 +87,9 @@ public sealed class CommsChannel
         }
         finally
         {
+            if (joiner is not null)
+                await joiner.DisposeAsync();
+
             await connection.DisposeAsync();
         }
     }

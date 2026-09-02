@@ -524,6 +524,9 @@ public sealed class ClusterTracker : BackgroundService
     {
         if (clusterRecords.Count == components.Count) return;
 
+        // Removing during enumeration is deliberate and supported: since .NET Core 3.0
+        // Dictionary.Remove does not invalidate an active enumerator, so this needs no second pass
+        // and no key list. Adding still would invalidate it — only removal is exempt.
         foreach ((string clusterId, ClusterRecord record) in clusterRecords)
             if (record.LastLivePass != passNumber)
                 clusterRecords.Remove(clusterId);

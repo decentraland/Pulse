@@ -291,6 +291,115 @@ Counter of post-auth messages rejected for invalid fields (oversized `EmoteId`/`
 
 ---
 
+## Cluster metrics
+
+Cluster derivation and the outbound NATS feed. Every value here stays zero while `Clusters:Enabled` is false; the NATS rows additionally stay zero in stats-only mode (broker URL unset), where the tracker runs but nothing is published.
+
+The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — the latter is the name archipelago's services use, so one CI-injected secret can serve both. `Nats__Url` wins if both are set. Because an unresolved URL fails soft rather than erroring, `dcl_pulse_nats_connected` is the signal that the URL never arrived: check the startup log for `NATS feed disabled (Nats:Url not set)`.
+
+**Every unconfigured path logs at `Warning`, deliberately.** Production ships `Logging:LogLevel:Default = Warning`, so an `Information` line never reaches the deployment log — a service that quietly did not start would be invisible exactly where an operator looks. The contract is therefore: **a clean startup logs nothing from these two services, and any line at all means something is off.**
+
+| Startup line | Means |
+|---|---|
+| `Cluster tracker disabled (Clusters:Enabled is false)` | No clustering at all. Everything in this section stays zero |
+| `Cluster tracker disabled (Clusters:PassIntervalMs is not positive)` | Same, from a bad cadence rather than the flag |
+| `NATS feed disabled (Nats:Url not set)` | Shadow mode — the tracker runs, nothing is published. Expected on a deployment that has not been given a broker yet, and the rollback state |
+| `NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)` | Assignments and topology still publish; the service is not advertised on `engine.discovery` |
+| `NATS outbox capacity is not positive (Nats:ChannelCapacity is …)` | The feed runs but each assignment evicts the previous one, so almost everything is lost. Watch `dcl_pulse_nats_dropped_total` |
+
+All of these are recorded once per pass on the tracker's own thread — none of them touch the per-tick or per-packet path.
+
+### Clusters
+
+Gauge of the clusters currently derived. `dcl_pulse_clusters`.
+
+| Signal | Meaning |
+|---|---|
+| Zero with peers connected | No peer has a realm yet, or `Clusters:Enabled` is false |
+| Stable count | Healthy — crowds are holding their shape between passes |
+| Oscillating each pass | Peers straddling a cell boundary; if it persists, raise `Clusters:DwellPasses` |
+| One cluster per peer | Peers are spread beyond one cell of each other — expected in a sparse realm |
+
+### Cluster Size
+
+The size distribution of the clusters each pass derives, as a Prometheus histogram plus two gauges:
+
+| Series | Shape | Reading it |
+|---|---|---|
+| `dcl_pulse_cluster_size_bucket{le}` / `_sum` / `_count` | histogram, one observation per cluster per pass | `histogram_quantile(0.95, sum by (le) (rate(dcl_pulse_cluster_size_bucket[5m])))` |
+| `dcl_pulse_cluster_peers`, `dcl_pulse_clusters` | gauges | mean cluster size is `peers / clusters`; both sum across instances, so `sum(peers) / sum(clusters)` is a true fleet mean |
+| `dcl_pulse_cluster_size_max` | gauge | the largest cluster of the last pass |
+
+Quantiles are computed at query time rather than exported pre-computed, which is what makes them aggregatable — a pre-computed median cannot be averaged across instances or re-quantiled over a window, because the mean of medians is not the median of the union. The cost is bucket-width approximation: bounds are exponential (`1, 2, 4, … 4096`), fine where nearly every cluster lands and coarse at the top where only a collapsed partition reaches.
+
+Two things the histogram cannot answer, hence the gauges:
+
+- **The largest cluster.** `histogram_quantile(1.0, …)` returns the top bucket's upper bound, or `+Inf`. `size_max` is exact, and `max()` over instances is still a true max.
+- **How many peers are clustered right now.** The histogram is cumulative since process start, so it only answers questions through `rate()`. `peers` is instantaneous, and the difference from the connected peer count is peers with no realm yet or no wallet in `IdentityBoard` — neither can be clustered.
+
+Observations weight each cluster equally, not each peer: a realm with one crowd of 500 and forty singletons puts forty observations in `le="1"` and one in `le="512"`, so the median cluster is 1. That is correct, but it means no quantile describes what a typical *player* sees — `size_max` against the mean is the signal for that.
+
+| Signal | Meaning |
+|---|---|
+| `size_max` close to the mean | Healthy — crowds are comparable in size |
+| `size_max` ≫ mean, and near the connected peer count | The partition has collapsed into one giant cluster. Expected past the percolation threshold at high density — see the percolation limit in [clustering-on-aoi.md](clustering-on-aoi.md) — and the point at which downstream room sharding becomes load-bearing |
+| p50 = 1 with a large `size_max` | A crowd plus a long tail of isolated peers; normal in a sparse realm with one gathering |
+| Anything in the `+Inf` bucket | A cluster exceeded the top bound, so `Transport.MaxPeers` was raised past it — extend `ClusterSizeHistogram.BOUNDS` |
+| Mean climbing while cluster count falls | Crowds are merging; watch `size_max` for the collapse case above |
+
+The console dashboard shows the mean and the max only. Quantiles need a range query, which a terminal gauge cannot express.
+
+### Pass Duration
+
+Cumulative pass wall time in microseconds, paired with a pass count so the mean is `duration_total / passes_total`. `dcl_pulse_cluster_pass_duration_us_total`, `dcl_pulse_cluster_passes_total`. The dashboard shows the mean over passes since the last snapshot rather than the lifetime mean, so a recent slowdown is visible.
+
+| Signal | Meaning |
+|---|---|
+| Well under `PassIntervalMs` | Normal — the pass is O(N + cells) and should finish in single-digit milliseconds |
+| Approaching `PassIntervalMs` | Passes are about to overlap their own cadence; investigate before raising the interval |
+| Growing with peer count | Expected and linear; a superlinear climb means something peer-pairwise crept into the pass |
+
+### Reassignments
+
+Counter of published cluster assignment changes, counted *after* the dwell debounce — so it measures churn a consumer actually sees, not raw pass-to-pass jitter. `dcl_pulse_cluster_reassignments_total`.
+
+| Signal | Meaning |
+|---|---|
+| Roughly tracking peer movement | Normal |
+| Sustained high with a stable cluster count | Peers flapping between two clusters; raise `Clusters:DwellPasses` |
+| Zero while peers move between crowds | Debounce never satisfied, or the feed is wedged — cross-check pass count |
+
+### NATS Published / Publish Failed / Dropped / Superseded / Reconnects / Connected
+
+Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_publish_failed_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
+
+**Three ways a message does not arrive, three different levers.** Superseded is harmless, dropped is a capacity problem, publish-failed is a broker or network problem — and reaching for the wrong lever makes things worse, so they are separate counters rather than one.
+
+The outbox keeps the two feeds apart because they supersede differently. `engine.islands` is a whole-world snapshot, so it sits in a single latest-wins slot — a newer snapshot replaces an undelivered one and never occupies more than one delivery slot. `peer.{addr}.cluster_change` supersedes only *per peer*, so it is held one entry per peer: a peer's newer assignment replaces its own older one, and one peer's event can never displace another's.
+
+- **Superseded** — replaced before delivery by a newer message on the same subject. Expected whenever the broker lags a pass; harmless, because the replacement carries strictly fresher state. No lever.
+- **Dropped** — evicted from the outbox, and nothing else: more than `Nats:ChannelCapacity` distinct peers held an undelivered assignment at once, so the longest-admitted one was pushed out (admission order, not wait time — a supersede keeps a peer's original place in line). Actionable: a lost `cluster_change` leaves that peer addressed by a stale cluster until its *next* reassignment, which may never come if the peer stops moving. The lever is the capacity.
+- **Publish Failed** — the publish call threw, on the outbox drain or on the discovery heartbeat. Every one of these is raised **client-side** — a timeout, a connect failure, an oversized payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a broker that refuses a publish cannot fail the call (see the rejected-publish note below). The lever is the broker or the path to it. Raising `Nats:ChannelCapacity` in response is actively harmful: a larger outbox only lengthens the stale backlog the recovered connection has to drain before it delivers anything current.
+
+| Signal | Meaning |
+|---|---|
+| `connected` 1, published rising, dropped and publish-failed zero | Healthy — superseded may be non-zero and is fine |
+| `connected` 0 with a broker URL set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
+| `connected` 0 with no broker URL | Stats-only mode, by configuration — not a fault |
+| Superseded rising, dropped zero | Broker slower than the pass rate; freshness degrades but nothing is lost |
+| **Dropped rising** | More than `Nats:ChannelCapacity` peers pending at once. Raise the capacity toward `Transport.MaxPeers` — some peer is in the wrong room. Nothing about the broker is implied |
+| **Publish Failed rising** | Publishes are throwing client-side: check broker reachability, latency and the payload size cap. Leave the capacity alone — enlarging it lengthens the stale drain on recovery |
+| Publish Failed rising while `connected` 1 | The socket is up but calls still fail — most likely timeouts under a lagging broker; the client's own `NATS.Client.Core` warnings carry the reason |
+| Reconnects climbing steadily | Flapping broker or network path; assignment delivery is lossy in that window |
+
+**Shutdown discard is counted nowhere.** Whatever is still pending when the publisher is disposed is dropped without touching either counter. That is deliberate: `dropped` means "raise the capacity" and `publish_failed` means "look at the broker", and a shutdown answers to neither — counting it would make every clean stop emit the alert condition while naming a lever that cannot help. The loss is real but bounded by one outbox and ends with the process; at most `Nats:ChannelCapacity` assignments and one topology snapshot go undelivered, and the peers themselves are disconnecting along with the server.
+
+**The broker's own wording lands in the log, not in a metric.** The NATS client's diagnostics are routed into Pulse's logging under the `NATS.Client.Core` categories, floored at `Warning` in `appsettings.json`. That floor is low enough to keep every connect failure and every `-ERR` line the broker sends, and high enough that a `Debug` default — which `docker-compose.debug.yml` sets — cannot drag the client down to its own per-operation logging inside the console dashboard.
+
+Two failures are indistinguishable from something else in the table above and can only be told apart there:
+
+- **A rejected credential.** The connection never opens, so `connected` stays 0 and reads exactly like an unreachable broker. `Authentication error: …` from the client, and `NATS server error (AuthorizationViolation): …` from the publisher, are what separate the two. Pulse sets `IgnoreAuthErrorAbort`, so the client keeps retrying rather than giving up permanently: the feed recovers on its own once the credential is fixed, and stays down until then.
+- **A rejected publish.** The client raises this from its read loop without closing the socket, so `connected` stays 1 and `published` keeps climbing while nothing reaches a subscriber — a publish is not acknowledged, so the broker refusing it does not fail the call, and `publish_failed` stays zero too. `NATS server error (PermissionsViolation): …` is the only signal.
 ## Feature flags — no metrics
 
 Runtime configuration polled from the remote `pulse.json` document has **no Prometheus series and no

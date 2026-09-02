@@ -86,6 +86,24 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
         return histograms;
     }
 
+    // Cluster derivation and feed totals — recorded once per pass on the tracker thread.
+    private int clusterCount;
+    private int clusterPeers;
+    private int clusterSizeMax;
+
+    // Cluster-size histogram: non-cumulative per-bucket counts plus the sum/count pair. The formatter
+    // turns the counts into the cumulative form Prometheus expects.
+    private readonly BucketHistogram clusterSize = new (PulseMetrics.Clusters.SIZE_BUCKETS);
+    private long clusterPasses;
+    private long clusterPassDurationUs;
+    private long clusterReassignments;
+    private long natsPublished;
+    private long natsPublishFailed;
+    private long natsDropped;
+    private long natsSuperseded;
+    private long natsReconnects;
+    private int natsConnected;
+
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
         ClientMessageCounters incomingMessageCounters,
@@ -180,6 +198,22 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TickDurationUs = tickDurationUs.Snapshot(),
                 TotalTickOverruns = Interlocked.Read(ref tickOverruns),
             },
+            Clusters = new MetricsSnapshot.ClustersSnapshot
+            {
+                ClusterCount = Volatile.Read(ref clusterCount),
+                ClusterPeers = Volatile.Read(ref clusterPeers),
+                ClusterSizeMax = Volatile.Read(ref clusterSizeMax),
+                ClusterSize = clusterSize.Snapshot(),
+                TotalPasses = Interlocked.Read(ref clusterPasses),
+                TotalPassDurationUs = Interlocked.Read(ref clusterPassDurationUs),
+                TotalReassignments = Interlocked.Read(ref clusterReassignments),
+                TotalNatsPublished = Interlocked.Read(ref natsPublished),
+                TotalNatsPublishFailed = Interlocked.Read(ref natsPublishFailed),
+                TotalNatsDropped = Interlocked.Read(ref natsDropped),
+                TotalNatsSuperseded = Interlocked.Read(ref natsSuperseded),
+                TotalNatsReconnects = Interlocked.Read(ref natsReconnects),
+                NatsConnected = Volatile.Read(ref natsConnected),
+            },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
         };
@@ -270,6 +304,30 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.hardening.corrupted_packet":
                 Interlocked.Add(ref corruptedPacket, value);
                 break;
+            case "pulse.clusters.passes":
+                Interlocked.Add(ref clusterPasses, value);
+                break;
+            case "pulse.clusters.pass_duration_us":
+                Interlocked.Add(ref clusterPassDurationUs, value);
+                break;
+            case "pulse.clusters.reassignments":
+                Interlocked.Add(ref clusterReassignments, value);
+                break;
+            case "pulse.nats.published":
+                Interlocked.Add(ref natsPublished, value);
+                break;
+            case "pulse.nats.publish_failed":
+                Interlocked.Add(ref natsPublishFailed, value);
+                break;
+            case "pulse.nats.dropped":
+                Interlocked.Add(ref natsDropped, value);
+                break;
+            case "pulse.nats.superseded":
+                Interlocked.Add(ref natsSuperseded, value);
+                break;
+            case "pulse.nats.reconnects":
+                Interlocked.Add(ref natsReconnects, value);
+                break;
             case "pulse.hardening.ip_limit_refused":
                 Interlocked.Add(ref ipLimitRefused[ConnectionClassIndex(tags)], value);
                 break;
@@ -332,6 +390,21 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.hardening.pre_auth_in_flight":
                 Interlocked.Add(ref preAuthInFlight, value);
+                break;
+            case "pulse.clusters.count":
+                Interlocked.Add(ref clusterCount, value);
+                break;
+            case "pulse.clusters.peers":
+                Interlocked.Add(ref clusterPeers, value);
+                break;
+            case "pulse.clusters.size":
+                clusterSize.Record(value);
+                break;
+            case "pulse.clusters.size_max":
+                Interlocked.Add(ref clusterSizeMax, value);
+                break;
+            case "pulse.nats.connected":
+                Interlocked.Add(ref natsConnected, value);
                 break;
             case "pulse.hardening.ip_limit_tracked_ips":
                 Interlocked.Add(ref ipLimitTrackedIps, value);

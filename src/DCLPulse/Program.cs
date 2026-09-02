@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Pulse;
 using Pulse.FeatureFlags;
 using Pulse.InterestManagement;
+using Pulse.Clusters;
 using Pulse.Messaging;
 using Pulse.Messaging.Hardening;
 using Pulse.Metrics;
@@ -221,12 +222,46 @@ builder.Services.AddSingleton(sp =>
 {
     SpatialHashAreaOfInterestOptions aoiOptions = sp.GetRequiredService<SpatialHashAreaOfInterestOptions>();
     ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
-    return new SpatialGrid(aoiOptions.CellSize, transportOptions.MaxPeers);
+    return new RealmSpatialGrids(aoiOptions.CellSize, transportOptions.MaxPeers);
 });
 
 builder.Services.AddSingleton<IAreaOfInterest, SpatialHashAreaOfInterest>();
 
 builder.Services.AddSingleton<PeerSnapshotPublisher>();
+
+// Clusters — derived off the hot path by a background pass over the AoI boards. The publisher is
+// registered even when NATS is unconfigured, where it serves as a no-op IClusterFeedPublisher.
+builder.Services.AddOptions<ClusterOptions>()
+    .Bind(builder.Configuration.GetSection(ClusterOptions.SECTION_NAME));
+
+// Accepts the flat NATS_URL alongside Nats__Url. Must run before the bind below.
+builder.Configuration.AddNatsUrlAlias(Environment.GetEnvironmentVariable(NatsOptions.URL_ENV_ALIAS));
+
+builder.Services.AddOptions<NatsOptions>()
+    .Bind(builder.Configuration.GetSection(NatsOptions.SECTION_NAME));
+
+builder.Services.AddSingleton<ClusterBoard>();
+
+builder.Services.AddSingleton<NatsPublisher>();
+builder.Services.AddSingleton<IClusterFeedPublisher>(sp => sp.GetRequiredService<NatsPublisher>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<NatsPublisher>());
+
+builder.Services.AddSingleton(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+
+    return new ClusterTracker(
+        sp.GetRequiredService<ILogger<ClusterTracker>>(),
+        sp.GetRequiredService<IOptions<ClusterOptions>>(),
+        sp.GetRequiredService<RealmSpatialGrids>(),
+        sp.GetRequiredService<SnapshotBoard>(),
+        sp.GetRequiredService<IdentityBoard>(),
+        sp.GetRequiredService<ClusterBoard>(),
+        sp.GetRequiredService<IClusterFeedPublisher>(),
+        transportOptions.MaxPeers);
+});
+
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ClusterTracker>());
 
 var dashboardType = builder.Configuration.GetSection(MetricsOptions.SECTION_NAME)
                           .GetValue<DashboardType>(nameof(MetricsOptions.Type));

@@ -12,15 +12,15 @@ public class SceneListenerCellMapperTests
     // world [0,16)² inside cell (0,0).
     private const int PARCEL_SIZE = 16;
 
-    private SpatialGrid grid;
+    private RealmSpatialGrids grids;
     private SceneListenerCellMapper mapper;
 
     [SetUp]
     public void SetUp()
     {
         IOptions<ParcelEncoderOptions> options = Options.Create(new ParcelEncoderOptions());
-        grid = new SpatialGrid(100, 100);
-        mapper = new SceneListenerCellMapper(grid, options);
+        grids = new RealmSpatialGrids(100, 100);
+        mapper = new SceneListenerCellMapper(grids, options);
     }
 
     [Test]
@@ -30,9 +30,9 @@ public class SceneListenerCellMapperTests
         HashSet<long> keys = Cover(1, 1, 1, 1);
 
         var peer = new PeerIndex(7);
-        grid.Set(peer, new Vector3(20f, 0f, 20f));
+        grids.Set(peer, "main", new Vector3(20f, 0f, 20f));
 
-        Assert.That(keys.Any(k => grid.GetPeersByCell(k)?.Contains(peer) == true), Is.True,
+        Assert.That(keys.Any(k => grids.GetGrid("main")?.GetPeers(k)?.Contains(peer) == true), Is.True,
             "A peer standing inside the parcel must be reachable through the covering cell keys.");
     }
 
@@ -44,13 +44,13 @@ public class SceneListenerCellMapperTests
 
         var left = new PeerIndex(1);
         var right = new PeerIndex(2);
-        grid.Set(left, new Vector3(97f, 0f, 5f));
-        grid.Set(right, new Vector3(105f, 0f, 5f));
+        grids.Set(left, "main", new Vector3(97f, 0f, 5f));
+        grids.Set(right, "main", new Vector3(105f, 0f, 5f));
 
         Assert.Multiple(() =>
         {
-            Assert.That(keys.Any(k => grid.GetPeersByCell(k)?.Contains(left) == true), Is.True);
-            Assert.That(keys.Any(k => grid.GetPeersByCell(k)?.Contains(right) == true), Is.True);
+            Assert.That(keys.Any(k => grids.GetGrid("main")?.GetPeers(k)?.Contains(left) == true), Is.True);
+            Assert.That(keys.Any(k => grids.GetGrid("main")?.GetPeers(k)?.Contains(right) == true), Is.True);
         });
     }
 
@@ -79,10 +79,10 @@ public class SceneListenerCellMapperTests
             float minX = x * PARCEL_SIZE;
             float minZ = z * PARCEL_SIZE;
 
-            fromParcels.Add(grid.ComputeCellKey(minX, minZ));
-            fromParcels.Add(grid.ComputeCellKey(minX + PARCEL_SIZE, minZ));
-            fromParcels.Add(grid.ComputeCellKey(minX, minZ + PARCEL_SIZE));
-            fromParcels.Add(grid.ComputeCellKey(minX + PARCEL_SIZE, minZ + PARCEL_SIZE));
+            fromParcels.Add(grids.ComputeCellKey(minX, minZ));
+            fromParcels.Add(grids.ComputeCellKey(minX + PARCEL_SIZE, minZ));
+            fromParcels.Add(grids.ComputeCellKey(minX, minZ + PARCEL_SIZE));
+            fromParcels.Add(grids.ComputeCellKey(minX + PARCEL_SIZE, minZ + PARCEL_SIZE));
         }
 
         Assert.That(fromRect, Is.EquivalentTo(fromParcels));

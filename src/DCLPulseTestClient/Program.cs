@@ -3,6 +3,7 @@ using Pulse.Transport;
 using Pulse.Transport.WebTransport;
 using PulseTestClient;
 using PulseTestClient.Auth;
+using PulseTestClient.Comms;
 using PulseTestClient.Inputs;
 using PulseTestClient.Networking;
 using PulseTestClient.Profiles;
@@ -77,7 +78,14 @@ if (!isWorker)
     {
         accountNames[i] = options.BotCount == 1 ? options.AccountPrefix : $"{options.AccountPrefix}-{i}";
         Console.WriteLine($"[{accountNames[i]}] Ensuring account exists..");
-        await MetaForge.RunCommandAsync($"account create {accountNames[i]} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+
+        // Non-zero is the normal outcome here: re-running with the same account name exits 2 with
+        // "already exists", which is exactly the state this call wants. A real failure surfaces at
+        // the next step instead, where the account is actually needed to sign.
+        await MetaForge.RunCommandAsync(
+            $"account create {accountNames[i]} --skip-update-check --skip-auto-login",
+            lifeCycleCts.Token,
+            throwOnNonZeroExit: false);
     }
 }
 else
@@ -122,7 +130,19 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     LoginResult login = await authenticator.LoginAsync(accountName, lifeCycleCts.Token);
 
     Console.WriteLine($"[{accountName}] Fetching profile for {login.WalletAddress}..");
-    Profile profile = await profileGateway.GetAsync(login.WalletAddress, lifeCycleCts.Token);
+
+    // The profile supplies profile_version and the emote list, both of which the server relays
+    // without validating — an account whose profile is unreachable still authenticates and plays.
+    // Losing the whole run to a Catalyst outage, a rate limit, or an account created against a
+    // different environment therefore costs far more than the defaults do.
+    Profile profile;
+
+    try { profile = await profileGateway.GetAsync(login.WalletAddress, lifeCycleCts.Token); }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        Console.WriteLine($"[{accountName}] Profile unavailable ({e.Message}); continuing with version 1 and no emotes.");
+        profile = new Profile(new Web3Address(login.WalletAddress), Version: 1, Emotes: []);
+    }
 
     var pipe = new MessagePipe();
     ITransport botTransport = useWebTransport
@@ -151,6 +171,7 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     var session = new BotSession
     {
         AccountName = accountName,
+        WalletAddress = login.WalletAddress.ToLowerInvariant(),
         Profile = profile,
         Pipe = pipe,
         Service = service,
@@ -164,6 +185,25 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     await service.ConnectAsync(options.ServerIp, options.ServerPort, login.AuthChainJson, lifeCycleCts.Token);
 
     _ = ServerEventHandler.ProcessAll(session, lifeCycleCts.Token);
+
+    // Started only after Pulse auth succeeds, and on the same account — the shared identity is what
+    // makes cluster_change and island_changed a verifiable correspondence rather than two unrelated
+    // observations. Deliberately not awaited: the channel runs for the life of the bot, and it must
+    // not be able to hold up or fail the Pulse session.
+    if (options.CommsEnabled)
+    {
+        var comms = new CommsChannel(options, authenticator, accountName, session.WalletAddress, () => session.Position);
+
+        comms.IslandChanged += change =>
+        {
+            lock (session.Assignments)
+                session.Assignments.Add(new ObservedAssignment(
+                    change.IslandId, change.ConnStr, change.FromIslandId, DateTimeOffset.UtcNow));
+        };
+
+        session.Comms = comms;
+        _ = comms.RunAsync(lifeCycleCts.Token);
+    }
 
     int spawnParcelIndex = parcelEncoder.EncodeGlobalPosition(position, out Vector3 spawnRelativePosition);
 
@@ -206,7 +246,10 @@ async Task<int> RunSceneListenerAsync()
     string listenerAccount = options.AccountPrefix;
 
     Console.WriteLine($"[{listenerAccount}] Ensuring account exists..");
-    await MetaForge.RunCommandAsync($"account create {listenerAccount} --skip-update-check --skip-auto-login", lifeCycleCts.Token);
+    await MetaForge.RunCommandAsync(
+        $"account create {listenerAccount} --skip-update-check --skip-auto-login",
+        lifeCycleCts.Token,
+        throwOnNonZeroExit: false);
 
     Console.WriteLine($"[{listenerAccount}] Signing auth chain..");
     LoginResult login = await authenticator.LoginAsync(listenerAccount, lifeCycleCts.Token);

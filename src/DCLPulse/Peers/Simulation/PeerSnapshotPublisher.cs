@@ -15,7 +15,7 @@ namespace Pulse.Peers.Simulation;
 /// </summary>
 public sealed class PeerSnapshotPublisher(
     SnapshotBoard snapshotBoard,
-    SpatialGrid spatialGrid,
+    RealmSpatialGrids realmGrids,
     ParcelEncoder parcelEncoder,
     ITimeProvider timeProvider)
 {
@@ -41,7 +41,8 @@ public sealed class PeerSnapshotPublisher(
     ///     <para />
     ///     <paramref name="realm" /> is non-null only on the handshake seed path; movement and
     ///     emote-start publishes leave it null and inherit the prior snapshot's realm via the
-    ///     <see cref="SnapshotBoard" /> ledger carry-forward.
+    ///     <see cref="SnapshotBoard" /> ledger carry-forward. The returned snapshot carries the
+    ///     resolved realm either way.
     /// </summary>
     public PeerSnapshot PublishFromPlayerState(PeerIndex from, PlayerState state, EmoteInput? emote = null, string? realm = null)
     {
@@ -85,9 +86,11 @@ public sealed class PeerSnapshotPublisher(
             Emote: emoteState,
             Realm: realm);
 
-        snapshotBoard.Publish(from, in snapshot);
-        spatialGrid.Set(from, snapshot.GlobalPosition);
-        return snapshot;
+        PeerSnapshot published = snapshotBoard.Publish(from, in snapshot);
+
+        PlaceInRealmGrid(from, published.Realm, published.GlobalPosition);
+
+        return published;
     }
 
     /// <summary>
@@ -108,6 +111,7 @@ public sealed class PeerSnapshotPublisher(
         uint rotationY = 0;
         uint? headYaw = null, headPitch = null;
         QuantizedPointAt? pointAt = null;
+        string? previousRealm = null;
 
         if (snapshotBoard.TryRead(from, out PeerSnapshot prev))
         {
@@ -115,6 +119,7 @@ public sealed class PeerSnapshotPublisher(
             headYaw = prev.HeadYaw;
             headPitch = prev.HeadPitch;
             pointAt = prev.PointAt;
+            previousRealm = prev.Realm;
         }
 
         var snapshot = new PeerSnapshot(
@@ -140,8 +145,30 @@ public sealed class PeerSnapshotPublisher(
             IsTeleport: true,
             Realm: teleportRequest.Realm);
 
-        snapshotBoard.Publish(from, in snapshot);
-        spatialGrid.Set(from, snapshot.GlobalPosition);
-        return snapshot;
+        // Teleport is the only path that changes a peer's realm, and the snapshot and the grids cannot
+        // be updated together. Vacating the old grid first leaves the peer in no grid for an instant —
+        // invisible to both realms — instead of sitting in the old realm's grid while its snapshot
+        // already names the new one, which an observer of the old realm reads as a cross-realm subject
+        // and holds until the stale-view sweep clears it.
+        if (!string.Equals(previousRealm, teleportRequest.Realm, StringComparison.Ordinal))
+            realmGrids.Remove(from);
+
+        PeerSnapshot published = snapshotBoard.Publish(from, in snapshot);
+
+        PlaceInRealmGrid(from, teleportRequest.Realm, globalPosition);
+
+        return published;
+    }
+
+    /// <summary>
+    ///     Places the peer in a realm's spatial grid. A peer with no realm — connected but neither
+    ///     seeded nor teleported — belongs to no grid, so it is invisible to interest management and to
+    ///     cluster derivation until it has one.
+    /// </summary>
+    private void PlaceInRealmGrid(PeerIndex peer, string? realm, Vector3 globalPosition)
+    {
+        if (realm is null) return;
+
+        realmGrids.Set(peer, realm, globalPosition);
     }
 }

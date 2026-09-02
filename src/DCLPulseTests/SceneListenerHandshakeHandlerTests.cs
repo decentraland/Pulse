@@ -25,7 +25,7 @@ public class SceneListenerHandshakeHandlerTests
     private const string LISTENER_IP = "203.0.113.9";
 
     private SnapshotBoard snapshotBoard;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ITransport transport;
     private IdentityBoard identityBoard;
     private ParcelEncoder parcelEncoder;
@@ -38,7 +38,7 @@ public class SceneListenerHandshakeHandlerTests
     public void SetUp()
     {
         snapshotBoard = new SnapshotBoard(100, 16);
-        spatialGrid = new SpatialGrid(100, 100);
+        realmGrids = new RealmSpatialGrids(100, 100);
         IOptions<ParcelEncoderOptions> parcelOptions = Options.Create(new ParcelEncoderOptions());
         parcelEncoder = new ParcelEncoder(parcelOptions);
         transport = Substitute.For<ITransport>();
@@ -56,7 +56,7 @@ public class SceneListenerHandshakeHandlerTests
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),
             Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
             parcelEncoder,
-            new SceneListenerCellMapper(spatialGrid, parcelOptions),
+            new SceneListenerCellMapper(realmGrids, parcelOptions),
             transport);
 
         ipLimiter = BuildIpLimiter();
@@ -111,7 +111,7 @@ public class SceneListenerHandshakeHandlerTests
 
         Assert.That(snapshotBoard.TryRead(peer, out _), Is.False,
             "A listener must never own a SnapshotBoard slot — it would become visible to players.");
-        Assert.That(spatialGrid.GetPeers(new System.Numerics.Vector3(0, 0, 0)), Is.Null.Or.Not.Contains(peer));
+        Assert.That(realmGrids.PeersAt("main", new System.Numerics.Vector3(0, 0, 0)), Is.Null.Or.Not.Contains(peer));
     }
 
     [Test]

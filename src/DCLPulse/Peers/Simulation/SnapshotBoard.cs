@@ -55,13 +55,17 @@ public sealed class SnapshotBoard
     ///     is self-sufficient for "is this peer emoting, since when, for how long" — independent of
     ///     ring depth. See <see cref="PeerSnapshotExtensions.IsEmoting" />.
     ///     <para />
-    ///     Realm-ledger invariant: same carry-forward pattern. <see cref="TeleportHandler" /> is
-    ///     the only publisher that sets <c>snapshot.Realm</c> explicitly; every other publish
+    ///     Realm-ledger invariant: same carry-forward pattern. Only <see cref="TeleportHandler" /> and
+    ///     the handshake initial-state seed set <c>snapshot.Realm</c> explicitly; every other publish
     ///     inherits the previous snapshot's realm so AoI lookups read the latest ring slot and
-    ///     never see a null realm after the peer has teleported once.
+    ///     never see a null realm after the peer has been placed in one once.
+    ///     <para />
+    ///     Returns the snapshot as stored, with both ledger columns resolved. Callers that need the
+    ///     inherited values — placing the peer in its realm's spatial grid, for one — read them from
+    ///     the result instead of paying for a second read of the slot they just wrote.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Publish(PeerIndex id, in PeerSnapshot snapshot)
+    public PeerSnapshot Publish(PeerIndex id, in PeerSnapshot snapshot)
     {
         var index = (int)id.Value;
 
@@ -85,6 +89,8 @@ public sealed class SnapshotBoard
 
         // Increment to even (write complete)
         Volatile.Write(ref versions[index], Volatile.Read(ref versions[index]) + 1);
+
+        return toWrite;
     }
 
     /// <summary>

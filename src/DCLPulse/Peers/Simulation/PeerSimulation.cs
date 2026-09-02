@@ -45,7 +45,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
-    private readonly SpatialGrid spatialGrid;
+    private readonly RealmSpatialGrids realmGrids;
     private readonly IdentityBoard identityBoard;
     private readonly MessagePipe messagePipe;
     private readonly ITimeProvider timeProvider;
@@ -82,7 +82,7 @@ public sealed class PeerSimulation : IPeerSimulation
     public PeerSimulation(
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
-        SpatialGrid spatialGrid,
+        RealmSpatialGrids realmGrids,
         IdentityBoard identityBoard,
         MessagePipe messagePipe,
         uint[] simulationSteps,
@@ -99,7 +99,7 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
-        this.spatialGrid = spatialGrid;
+        this.realmGrids = realmGrids;
         this.identityBoard = identityBoard;
         this.messagePipe = messagePipe;
         this.timeProvider = timeProvider;
@@ -242,34 +242,48 @@ public sealed class PeerSimulation : IPeerSimulation
     // ── Scene-listener interest collection ──────────────────────────
 
     /// <summary>
-    ///     Fills the collector with subjects standing inside the listener's AoI: union the
-    ///     occupants of the precomputed covering cells, then filter on (realm, parcel) exactly.
-    ///     Neither filter is redundant — the covering cells over-approximate (a 100-unit cell
-    ///     holds ~6×6 parcels), and every realm numbers its parcels from 0,0, so two cohosted
-    ///     worlds share both cells and parcel indices. Every accepted subject is TIER_0: a
-    ///     parcel set has no distance to tier by.
+    ///     Fills the collector with subjects standing inside the listener's AoI: for each announced
+    ///     realm, union the occupants of the covering cells in that realm's grid, then filter
+    ///     parcel-exact — the covering cells over-approximate, since a 100-unit cell holds ~6x6
+    ///     parcels. Every accepted subject is TIER_0: a parcel set has no distance to tier by.
+    ///     <para />
+    ///     The realm needs no test of its own, because grids are per realm: resolving one realm's grid
+    ///     already excludes every other realm's peers. That is what lets two cohosted worlds share both
+    ///     cell keys and parcel indices without colliding.
+    ///     <para />
+    ///     Cell keys are a single realm-independent union across the announcement, so a realm is probed
+    ///     with cells only another realm announced. That over-covers and never mis-covers: an extra cell
+    ///     can only surface a peer that still has to pass this realm's parcel filter.
     /// </summary>
     private void CollectSceneListenerSubjects(PeerIndex observerId, SceneListenerState listener)
     {
-        foreach (long cellKey in listener.CellKeys)
+        foreach ((string realm, HashSet<int> parcels) in listener.ParcelsByRealm)
         {
-            HashSet<PeerIndex>? cellPeers = spatialGrid.GetPeersByCell(cellKey);
+            SpatialGrid? grid = realmGrids.GetGrid(realm);
 
-            if (cellPeers == null)
+            if (grid == null)
                 continue;
 
-            foreach (PeerIndex subject in cellPeers)
+            foreach (long cellKey in listener.CellKeys)
             {
-                if (subject == observerId)
+                HashSet<PeerIndex>? cellPeers = grid.GetPeers(cellKey);
+
+                if (cellPeers == null)
                     continue;
 
-                if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
-                    continue;
+                foreach (PeerIndex subject in cellPeers)
+                {
+                    if (subject == observerId)
+                        continue;
 
-                if (!listener.Observes(subjectSnapshot.Realm, subjectSnapshot.Parcel))
-                    continue;
+                    if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
+                        continue;
 
-                collector.Add(subject, PeerViewSimulationTier.TIER_0);
+                    if (!parcels.Contains(subjectSnapshot.Parcel))
+                        continue;
+
+                    collector.Add(subject, PeerViewSimulationTier.TIER_0);
+                }
             }
         }
     }
@@ -311,7 +325,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 continue;
 
             // Same-wallet ghost suppression: during the disconnect-cleanup window a stale
-            // PeerIndex from the prior session still occupies SnapshotBoard/SpatialGrid/
+            // PeerIndex from the prior session still occupies SnapshotBoard/realm grid/
             // IdentityBoard and surfaces to its own freshly reconnected PeerIndex as a
             // visible subject. The PeerIndex differs (allocator pending-recycle), so the
             // == observerId check above doesn't catch it. Skipping by wallet here prevents
@@ -865,7 +879,7 @@ public sealed class PeerSimulation : IPeerSimulation
             PulseMetrics.SceneListener.CONNECTED.Add(-1);
 
         snapshotBoard.ClearActive(peerId);
-        spatialGrid.Remove(peerId);
+        realmGrids.Remove(peerId);
         identityBoard.Remove(peerId);
         profileBoard.Remove(peerId);
         observerViews.Remove(peerId);

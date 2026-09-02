@@ -98,13 +98,13 @@ public partial class PeerSimulationTests
         identityBoard.Set(subject, "0xSUBJECT_WALLET");        // IdentityBoard — set in SetUp too, re-set here for clarity
         PublishSnapshot(subject, seq: 42);                     // SnapshotBoard
         profileBoard.Set(subject, 7);                          // ProfileBoard
-        spatialGrid.Set(subject, new Vector3(10, 0, 10));      // SpatialGrid
+        realmGrids.Set(subject, REALM, new Vector3(10, 0, 10)); // RealmSpatialGrids
 
         // Precondition: state is actually present.
         Assert.That(snapshotBoard.TryRead(subject, out _), Is.True);
         Assert.That(identityBoard.GetWalletIdByPeerIndex(subject), Is.EqualTo("0xSUBJECT_WALLET"));
         Assert.That(profileBoard.Get(subject), Is.EqualTo(7));
-        Assert.That(spatialGrid.GetPeers(new Vector3(10, 0, 10)), Does.Contain(subject));
+        Assert.That(realmGrids.PeersAt(REALM, new Vector3(10, 0, 10)), Does.Contain(subject));
 
         // Transition subject to DISCONNECTING and advance past the cleanup timeout.
         peers[subject] = new PeerState(PeerConnectionState.DISCONNECTING)
@@ -124,9 +124,9 @@ public partial class PeerSimulationTests
             "IdentityBoard reverse-map not cleared on disconnect");
         Assert.That(profileBoard.Get(subject), Is.EqualTo(0),
             "ProfileBoard not reset on disconnect");
-        HashSet<PeerIndex>? stillAtCell = spatialGrid.GetPeers(new Vector3(10, 0, 10));
+        HashSet<PeerIndex>? stillAtCell = realmGrids.PeersAt(REALM, new Vector3(10, 0, 10));
         Assert.That(stillAtCell == null || !stillAtCell.Contains(subject), Is.True,
-            "SpatialGrid not cleared on disconnect");
+            "Realm grid not cleared on disconnect");
     }
 
     /// <summary>

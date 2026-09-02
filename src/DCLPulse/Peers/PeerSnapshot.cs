@@ -50,12 +50,13 @@ public readonly record struct QuantizedPointAt(uint X, uint Y, uint Z);
 ///     decoded value kept is <see cref="GlobalPosition" />, which the server itself consumes for
 ///     interest management; it is computed once at publish time.
 ///     <para />
-///     <see cref="Realm" /> is the AoI partition the peer belongs to. Carried forward by
+///     <see cref="Realm" /> is the AoI partition the peer belongs to — it selects which of
+///     <c>RealmSpatialGrids</c>' grids the peer is indexed in. Carried forward by
 ///     <see cref="Simulation.SnapshotBoard.Publish" /> onto every snapshot, same as
 ///     <see cref="Emote" /> — the handshake initial-state seed sets it, subsequent
-///     <c>TeleportRequest</c>s may change it. A snapshot with <c>Realm == null</c> would make
-///     the peer invisible to every observer and unable to observe anyone — that's why
-///     <c>PlayerInitialState.realm</c> is mandatory.
+///     <c>TeleportRequest</c>s may change it. A snapshot with <c>Realm == null</c> puts the peer in
+///     no grid at all, leaving it invisible to every observer and unable to observe anyone — that's
+///     why <c>PlayerInitialState.realm</c> is mandatory.
 /// </summary>
 public record struct PeerSnapshot(
 

@@ -34,7 +34,7 @@ public sealed class PeersManager : BackgroundService
     private readonly PeerStateFactory peerStateFactory;
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
-    private readonly SpatialGrid spatialGrid;
+    private readonly RealmSpatialGrids realmGrids;
     private readonly IdentityBoard identityBoard;
     private readonly PeerOptions peerOptions;
     private readonly int workerCount;
@@ -60,7 +60,7 @@ public sealed class PeersManager : BackgroundService
         PeerStateFactory peerStateFactory,
         IAreaOfInterest areaOfInterest,
         SnapshotBoard snapshotBoard,
-        SpatialGrid spatialGrid,
+        RealmSpatialGrids realmGrids,
         IdentityBoard identityBoard,
         PeerOptions peerOptions,
         ILogger<PeersManager> logger,
@@ -87,7 +87,7 @@ public sealed class PeersManager : BackgroundService
         this.peerStateFactory = peerStateFactory;
         this.areaOfInterest = areaOfInterest;
         this.snapshotBoard = snapshotBoard;
-        this.spatialGrid = spatialGrid;
+        this.realmGrids = realmGrids;
         this.identityBoard = identityBoard;
         this.peerOptions = peerOptions;
         this.peerIndexAllocator = peerIndexAllocator;
@@ -119,7 +119,7 @@ public sealed class PeersManager : BackgroundService
         for (var i = 0; i < workerCount; i++)
         {
             var simulation = new PeerSimulation(
-                areaOfInterest, snapshotBoard, spatialGrid, identityBoard,
+                areaOfInterest, snapshotBoard, realmGrids, identityBoard,
                 messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard,
                 peerIndexAllocator, peerSimulationLogger,
                 peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta,
@@ -277,7 +277,7 @@ public sealed class PeersManager : BackgroundService
             // own can republish after it. Must not move to the ENet thread: that would race the
             // owning worker's simulation.
             snapshotBoard.ClearActive(from);
-            spatialGrid.Remove(from);
+            realmGrids.Remove(from);
 
             logger.LogInformation("Peer disconnected {Peer}", from);
         }

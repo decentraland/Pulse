@@ -11,5 +11,5 @@ internal static class SceneListenerTestFactory
 {
     /// <summary>Cell mapper over a default-configured parcel grid.</summary>
     internal static SceneListenerCellMapper CellMapper() =>
-        new (new SpatialGrid(100, 100), Options.Create(new ParcelEncoderOptions()));
+        new (new RealmSpatialGrids(100, 100), Options.Create(new ParcelEncoderOptions()));
 }

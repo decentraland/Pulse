@@ -98,6 +98,21 @@ internal static class PrometheusFormatter
             WriteHistogramSeries(writer, "dcl_pulse_peer_rtt_ms", series, "region=\"" + Continents.LABELS[i] + "\"");
         }
 
+        WriteGauge(writer, "dcl_pulse_clusters", "Clusters currently derived by the clustering pass", snap.Clusters.ClusterCount);
+        WriteGauge(writer, "dcl_pulse_cluster_peers", "Peers placed in a cluster by the last pass. Divide by dcl_pulse_clusters for the mean cluster size.", snap.Clusters.ClusterPeers);
+        WriteHistogramHeader(writer, "dcl_pulse_cluster_size", "Cluster sizes observed, one measurement per cluster per pass. Quantiles are query-time: histogram_quantile(0.95, sum by (le) (rate(dcl_pulse_cluster_size_bucket[5m]))).");
+        WriteHistogramSeries(writer, "dcl_pulse_cluster_size", snap.Clusters.ClusterSize, labels: null);
+        WriteGauge(writer, "dcl_pulse_cluster_size_max", "Largest cluster in the last pass. Far above the mean means the partition has collapsed; see the percolation limit in docs/clustering-on-aoi.md.", snap.Clusters.ClusterSizeMax);
+        WriteCounter(writer, "dcl_pulse_cluster_passes_total", "Clustering passes completed", snap.Clusters.TotalPasses);
+        WriteCounter(writer, "dcl_pulse_cluster_pass_duration_us_total", "Cumulative clustering pass wall time in microseconds. Divide by dcl_pulse_cluster_passes_total for the mean.", snap.Clusters.TotalPassDurationUs);
+        WriteCounter(writer, "dcl_pulse_cluster_reassignments_total", "Published cluster assignment changes, counted after the dwell debounce", snap.Clusters.TotalReassignments);
+        WriteCounter(writer, "dcl_pulse_nats_published_total", "Messages published to the cluster feed broker", snap.Clusters.TotalNatsPublished);
+        WriteCounter(writer, "dcl_pulse_nats_publish_failed_total", "Feed and heartbeat publishes that threw. Raised client-side — timeout, connect failure, oversized payload, rejected subject — since a PUB is never acknowledged. Non-zero means the broker or the path to it needs attention, not more outbox capacity.", snap.Clusters.TotalNatsPublishFailed);
+        WriteCounter(writer, "dcl_pulse_nats_dropped_total", "Feed messages genuinely lost to eviction, because more than Nats:ChannelCapacity distinct peers held an undelivered assignment at once. Non-zero means a peer may be addressed by a stale cluster; raise the capacity.", snap.Clusters.TotalNatsDropped);
+        WriteCounter(writer, "dcl_pulse_nats_superseded_total", "Feed messages replaced before delivery by a newer one for the same subject. Expected under load and harmless.", snap.Clusters.TotalNatsSuperseded);
+        WriteCounter(writer, "dcl_pulse_nats_reconnects_total", "Times the broker connection was re-established after a loss", snap.Clusters.TotalNatsReconnects);
+        WriteGauge(writer, "dcl_pulse_nats_connected", "1 while the broker connection is up, 0 otherwise (always 0 in stats-only mode)", snap.Clusters.NatsConnected);
+
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);
         WriteEnumCounters(writer, "dcl_pulse_outgoing_messages_total", "Total outgoing messages by type",

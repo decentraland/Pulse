@@ -30,7 +30,7 @@ public partial class PeerSimulationTests
 
         peers[listener] = new PeerState(PeerConnectionState.AUTHENTICATED)
         {
-            SceneListener = new SceneListenerState(expanded, cellKeys ?? [spatialGrid.ComputeCellKey(0f, 0f)]),
+            SceneListener = new SceneListenerState(expanded, cellKeys ?? [realmGrids.ComputeCellKey(0f, 0f)]),
         };
 
         identityBoard.Set(listener, "0xLISTENER_WALLET");
@@ -41,7 +41,7 @@ public partial class PeerSimulationTests
         snapshotBoard.SetActive(peer);
         snapshotBoard.Publish(peer, TestSnapshots.Make(seq: seq, serverTick: seq * 10, parcel: parcel,
             globalPosition: worldPos, realm: realm));
-        spatialGrid.Set(peer, worldPos);
+        realmGrids.Set(peer, realm, worldPos);
     }
 
     [Test]
@@ -144,7 +144,7 @@ public partial class PeerSimulationTests
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 2, serverTick: 20, parcel: 5,
             globalPosition: new Vector3(8f, 0f, 8f), realm: "main",
             emote: new EmoteState("wave", StartSeq: 2, StartTick: 20)));
-        spatialGrid.Set(subject, new Vector3(8f, 0f, 8f));
+        realmGrids.Set(subject, "main", new Vector3(8f, 0f, 8f));
 
         simulation.SimulateTick(peers, tickCounter: 1);
 
@@ -188,7 +188,7 @@ public partial class PeerSimulationTests
 
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 3, serverTick: 30, parcel: 5,
             globalPosition: new Vector3(12f, 0f, 12f), realm: "main", isTeleport: true));
-        spatialGrid.Set(subject, new Vector3(12f, 0f, 12f));
+        realmGrids.Set(subject, "main", new Vector3(12f, 0f, 12f));
 
         simulation.SimulateTick(peers, tickCounter: 2);
 

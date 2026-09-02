@@ -5,6 +5,7 @@ public readonly record struct MetricsSnapshot
     public TransportSnapshot Transport { get; init; }
     public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
+    public ClustersSnapshot Clusters { get; init; }
     public SceneListenerSnapshot SceneListener { get; init; }
     public SimulationSnapshot Simulation { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
@@ -47,6 +48,34 @@ public readonly record struct MetricsSnapshot
     {
         public long TotalDatagramsDroppedStale { get; init; }
         public long TotalDatagramsDroppedOversize { get; init; }
+    }
+
+    /// <summary>
+    ///     Cluster derivation and the outbound NATS feed. All zero while
+    ///     <c>Clusters:Enabled</c> is false; NATS values also stay zero in stats-only mode.
+    /// </summary>
+    public readonly record struct ClustersSnapshot
+    {
+        public int ClusterCount { get; init; }
+
+        /// <summary>Peers placed in a cluster; with <see cref="ClusterCount" /> gives the mean size.</summary>
+        public int ClusterPeers { get; init; }
+
+        /// <summary>Largest cluster; the histogram cannot recover it from its top bucket.</summary>
+        public int ClusterSizeMax { get; init; }
+
+        /// <summary>Cluster-size histogram: one observation per cluster per pass.</summary>
+        public HistogramSnapshot ClusterSize { get; init; }
+
+        public long TotalPasses { get; init; }
+        public long TotalPassDurationUs { get; init; }
+        public long TotalReassignments { get; init; }
+        public long TotalNatsPublished { get; init; }
+        public long TotalNatsPublishFailed { get; init; }
+        public long TotalNatsDropped { get; init; }
+        public long TotalNatsSuperseded { get; init; }
+        public long TotalNatsReconnects { get; init; }
+        public int NatsConnected { get; init; }
     }
 
     public readonly record struct HardeningSnapshot

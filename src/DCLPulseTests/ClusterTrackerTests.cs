@@ -63,6 +63,77 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Current.Clusters[0].Count, Is.EqualTo(2));
     }
 
+    /// <summary>
+    ///     Reproduces a split observed on a deployed server: two groups 100 u apart merged at the
+    ///     origin but stayed separate at x=300/400, and an eight-cell chain at a uniform 100 u pitch
+    ///     broke into two halves at exactly that pair. Distance and cell adjacency are identical in
+    ///     both cases, so if adjacency is purely positional these must agree.
+    /// </summary>
+    [TestCase(0f, 100f, TestName = "AdjacentCellsAtOrigin_FormOneCluster")]
+    [TestCase(300f, 400f, TestName = "AdjacentCellsAwayFromOrigin_FormOneCluster")]
+    public void PeersOneCellApart_FormOneCluster(float firstX, float secondX)
+    {
+        var farGrids = new RealmSpatialGrids(100f, MAX_PEERS);
+        grids = farGrids;
+
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), new Vector3(firstX, 0, 0));
+        SetupPeer(new PeerIndex(1), new Vector3(secondX, 0, 0));
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.Clusters, Has.Count.EqualTo(1),
+            $"peers at x={firstX} and x={secondX} are one cell apart and must share a cluster");
+    }
+
+    /// <summary>
+    ///     Two clusters that become adjacent must merge. On a deployed server, groups that connected
+    ///     in separate waves stayed split even though their cells were adjacent, while groups that
+    ///     arrived together merged — so the distinguishing variable is whether a cluster already
+    ///     existed when the second group appeared, not the geometry.
+    /// </summary>
+    [Test]
+    public void ClusterFormedBeforeNeighbourArrives_MergesOnNextPass()
+    {
+        grids = new RealmSpatialGrids(100f, MAX_PEERS);
+
+        ClusterTracker tracker = CreateTracker();
+
+        SetupPeer(new PeerIndex(0), new Vector3(300, 0, 0));
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.Clusters, Has.Count.EqualTo(1), "first group forms its own cluster");
+
+        SetupPeer(new PeerIndex(1), new Vector3(400, 0, 0));
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.Clusters, Has.Count.EqualTo(1),
+            "an adjacent cell appearing later must join the existing cluster, not start a second one");
+        Assert.That(clusterBoard.Current.Clusters[0].Count, Is.EqualTo(2));
+    }
+
+    /// <summary>
+    ///     The chaining worst case from <c>docs/clustering-on-aoi.md</c> §3.2, at the smallest scale
+    ///     that still chains: eight occupied cells in a line, each adjacent to the next, must be a
+    ///     single connected component.
+    /// </summary>
+    [Test]
+    public void EightCellsInALine_FormOneCluster()
+    {
+        grids = new RealmSpatialGrids(100f, MAX_PEERS);
+
+        ClusterTracker tracker = CreateTracker();
+
+        for (var cell = 0; cell < 8; cell++)
+            SetupPeer(new PeerIndex((uint)cell), new Vector3(cell * 100f, 0, 0));
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.Clusters, Has.Count.EqualTo(1),
+            "eight cells at a uniform one-cell pitch form one chain");
+        Assert.That(clusterBoard.Current.Clusters[0].Count, Is.EqualTo(8));
+    }
+
     [Test]
     public void PeersInAdjacentCells_FormOneCluster()
     {

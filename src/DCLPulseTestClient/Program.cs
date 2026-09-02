@@ -130,7 +130,19 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     LoginResult login = await authenticator.LoginAsync(accountName, lifeCycleCts.Token);
 
     Console.WriteLine($"[{accountName}] Fetching profile for {login.WalletAddress}..");
-    Profile profile = await profileGateway.GetAsync(login.WalletAddress, lifeCycleCts.Token);
+
+    // The profile supplies profile_version and the emote list, both of which the server relays
+    // without validating — an account whose profile is unreachable still authenticates and plays.
+    // Losing the whole run to a Catalyst outage, a rate limit, or an account created against a
+    // different environment therefore costs far more than the defaults do.
+    Profile profile;
+
+    try { profile = await profileGateway.GetAsync(login.WalletAddress, lifeCycleCts.Token); }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        Console.WriteLine($"[{accountName}] Profile unavailable ({e.Message}); continuing with version 1 and no emotes.");
+        profile = new Profile(new Web3Address(login.WalletAddress), Version: 1, Emotes: []);
+    }
 
     var pipe = new MessagePipe();
     ITransport botTransport = useWebTransport

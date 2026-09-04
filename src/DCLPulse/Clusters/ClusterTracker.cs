@@ -3,6 +3,7 @@ using Pulse.InterestManagement;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Presence;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Numerics;
@@ -40,6 +41,8 @@ public sealed class ClusterTracker : BackgroundService
     private readonly IdentityBoard identityBoard;
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
+    private readonly ParcelChangeTracker parcelChanges;
+    private readonly ITimeProvider timeProvider;
 
     // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
     // its own union-find state. Cleared between realms — the same cell exists in every realm, and
@@ -77,6 +80,8 @@ public sealed class ClusterTracker : BackgroundService
         IdentityBoard identityBoard,
         ClusterBoard clusterBoard,
         IClusterFeedPublisher feedPublisher,
+        ParcelChangeTracker parcelChanges,
+        ITimeProvider timeProvider,
         int maxPeers)
     {
         this.logger = logger;
@@ -86,6 +91,8 @@ public sealed class ClusterTracker : BackgroundService
         this.identityBoard = identityBoard;
         this.clusterBoard = clusterBoard;
         this.feedPublisher = feedPublisher;
+        this.parcelChanges = parcelChanges;
+        this.timeProvider = timeProvider;
 
         peerStates = new PeerClusterState[maxPeers];
     }
@@ -170,6 +177,11 @@ public sealed class ClusterTracker : BackgroundService
         // Topology before the per-peer events, so a snapshot declaring a cluster is published ahead
         // of the assignments that reference it.
         feedPublisher.PublishTopology(pass);
+
+        // Presence is derived from the same pass rather than from a walk of its own, so what
+        // engine.parcel_changes says and what the stats surface serves can never disagree by more
+        // than one pass.
+        parcelChanges.ObservePass(pass);
 
         int reassignments = PublishAssignmentChanges();
         ForgetVanishedPeers();
@@ -548,7 +560,7 @@ public sealed class ClusterTracker : BackgroundService
         for (var component = 0; component < components.Count; component++)
             clusterInfos[component] = BuildCluster(component, peers, clusterIdByPeer, ref peerCursor);
 
-        return new ClusterPass(clusterInfos, peers, clusterIdByPeer);
+        return new ClusterPass(clusterInfos, peers, clusterIdByPeer, timeProvider.UnixTimeMs);
     }
 
     /// <summary>

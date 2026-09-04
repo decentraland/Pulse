@@ -36,13 +36,21 @@ public readonly record struct ClusterPeerInfo(
 public sealed class ClusterPass(
     IReadOnlyList<ClusterInfo> clusters,
     IReadOnlyList<ClusterPeerInfo> peers,
-    string?[] clusterIdByPeer)
+    string?[] clusterIdByPeer,
+    long takenAtUnixMs = 0)
 {
     public static readonly ClusterPass EMPTY = new ([], [], []);
 
     public IReadOnlyList<ClusterInfo> Clusters { get; } = clusters;
 
     public IReadOnlyList<ClusterPeerInfo> Peers { get; } = peers;
+
+    /// <summary>
+    ///     Wall clock, unix ms, when this pass ran — what <c>GET /realms</c> reports as
+    ///     <c>lastUpdated</c>, since the boards it reads are exactly as fresh as this pass. Zero on
+    ///     <see cref="EMPTY" />, meaning no pass has run yet.
+    /// </summary>
+    public long TakenAtUnixMs { get; } = takenAtUnixMs;
 
     /// <summary>
     ///     The cluster this peer belonged to as of this pass, or null if it was unassigned (no realm,

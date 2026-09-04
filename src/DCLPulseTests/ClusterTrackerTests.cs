@@ -634,6 +634,8 @@ public class ClusterTrackerTests
             identityBoard,
             clusterBoard,
             feedPublisher,
+            PresenceTestFactory.Disabled(),
+            Substitute.For<ITimeProvider>(),
             MAX_PEERS);
     }
 

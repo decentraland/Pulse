@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using Pulse.Messaging;
+using Pulse.Presence;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
@@ -103,6 +104,10 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long natsSuperseded;
     private long natsReconnects;
     private int natsConnected;
+
+    // Presence feed — one observation and at most one snapshot count per published batch.
+    private readonly BucketHistogram presenceBatchSize = new (PulseMetrics.Presence.BATCH_SIZE_BUCKETS);
+    private readonly long[] presenceSnapshots = new long[Enum.GetValues<PresenceSnapshotReason>().Length];
 
     public MeterListenerMetricsCollector(
         MessagePipe messagePipe,
@@ -213,6 +218,11 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalNatsSuperseded = Interlocked.Read(ref natsSuperseded),
                 TotalNatsReconnects = Interlocked.Read(ref natsReconnects),
                 NatsConnected = Volatile.Read(ref natsConnected),
+            },
+            Presence = new MetricsSnapshot.PresenceSnapshot
+            {
+                BatchSize = presenceBatchSize.Snapshot(),
+                SnapshotsByReason = SnapshotPresenceSnapshots(),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -328,6 +338,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.nats.reconnects":
                 Interlocked.Add(ref natsReconnects, value);
                 break;
+            case "pulse.presence.snapshots":
+                Interlocked.Add(ref presenceSnapshots[SnapshotReasonIndex(tags)], value);
+                break;
             case "pulse.hardening.ip_limit_refused":
                 Interlocked.Add(ref ipLimitRefused[ConnectionClassIndex(tags)], value);
                 break;
@@ -400,6 +413,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.clusters.size":
                 clusterSize.Record(value);
                 break;
+            case "pulse.presence.batch_size":
+                presenceBatchSize.Record(value);
+                break;
             case "pulse.clusters.size_max":
                 Interlocked.Add(ref clusterSizeMax, value);
                 break;
@@ -438,6 +454,25 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     ///     <see cref="ConnectionClass.PLAYER" /> for an untagged measurement — every recording site
     ///     tags itself, so the default only guards against an accidentally-untagged site.
     /// </summary>
+    private long[] SnapshotPresenceSnapshots()
+    {
+        var snapshots = new long[presenceSnapshots.Length];
+
+        for (var i = 0; i < snapshots.Length; i++)
+            snapshots[i] = Interlocked.Read(ref presenceSnapshots[i]);
+
+        return snapshots;
+    }
+
+    private static int SnapshotReasonIndex(ReadOnlySpan<KeyValuePair<string, object?>> tags)
+    {
+        foreach (KeyValuePair<string, object?> tag in tags)
+            if (tag.Key == PulseMetrics.Presence.SNAPSHOT_REASON_TAG_KEY && tag.Value is PresenceSnapshotReason reason)
+                return (int)reason;
+
+        return (int)PresenceSnapshotReason.Start;
+    }
+
     private static int ConnectionClassIndex(ReadOnlySpan<KeyValuePair<string, object?>> tags)
     {
         foreach (KeyValuePair<string, object?> tag in tags)

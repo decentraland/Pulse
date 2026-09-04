@@ -7,6 +7,7 @@ using NATS.Client.Core;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Presence;
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
@@ -47,7 +48,7 @@ namespace Pulse.Clusters;
 ///     <c>PublishTimeoutOnDisconnected</c> staying <c>false</c> is what makes a publish wait for the
 ///     reconnect instead of throwing once <c>CommandTimeout</c> elapses.
 /// </summary>
-public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
+public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPublisher
 {
     // IslandData.max_peers belongs to archipelago's shape and Pulse caps cluster size nowhere, so
     // every island goes out carrying zero rather than a bound this server does not enforce.
@@ -63,6 +64,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private const string ISLANDS_SUBJECT = "engine.islands";
 
     private const string DISCOVERY_SUBJECT = "engine.discovery";
+
+    private const string PARCEL_CHANGES_SUBJECT = "engine.parcel_changes";
 
     /// <summary>
     ///     Wait before rebuilding a faulted pipeline. Not a reconnect delay — the client handles
@@ -86,6 +89,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly ILoggerFactory loggerFactory;
 
     private readonly NatsOptions options;
+    private readonly PresenceOptions presenceOptions;
+    private readonly ITimeProvider timeProvider;
     private readonly SnapshotBoard snapshotBoard;
     private readonly bool feedEnabled;
 
@@ -145,15 +150,26 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         ILogger<NatsPublisher> logger,
         ILoggerFactory loggerFactory,
         IOptions<NatsOptions> options,
+        IOptions<PresenceOptions> presenceOptions,
+        ITimeProvider timeProvider,
         SnapshotBoard snapshotBoard)
     {
         this.logger = logger;
         this.loggerFactory = loggerFactory;
         this.options = options.Value;
+        this.presenceOptions = presenceOptions.Value;
+        this.timeProvider = timeProvider;
         this.snapshotBoard = snapshotBoard;
 
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
+        presenceEnabled = feedEnabled && this.presenceOptions.Enabled && this.presenceOptions.BatchIntervalMs > 0;
+
+        // Consumers have nothing for this server_name yet, so the first batch of the process has to
+        // be a full snapshot (C1.4). Raised here rather than in the run loop so a broker that takes a
+        // while to reach cannot turn the opening batch into a delta against nothing.
+        if (presenceEnabled)
+            parcelSnapshotRequest = PresenceSnapshotReason.Start;
 
         if (!feedEnabled) return;
 
@@ -241,6 +257,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 pendingTopology = null;
                 topologyPool.Push(abandoned);
             }
+
+            // Presence entries are plain values rather than pooled messages, so dropping them is the
+            // whole of their teardown.
+            pendingParcelChangeByAddress.Clear();
+            parcelChangeOrder.Clear();
+            pendingParcelSnapshot = null;
 
             foreach (KeyValuePair<string, PeerClusterChange> pending in pendingChangeBySubject)
                 changePool.Push(pending.Value);
@@ -519,6 +541,19 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 "NATS outbox capacity is not positive (Nats:ChannelCapacity is {Capacity}) — every assignment will evict the previous one, so the feed will lose almost all of them",
                 options.ChannelCapacity);
 
+        if (presenceEnabled)
+            logger.LogInformation(
+                "Presence feed publishing to {Subject} as {ServerName} — batch every {BatchIntervalMs}ms, snapshot every {SnapshotIntervalMs}ms",
+                PARCEL_CHANGES_SUBJECT, options.ServerName, presenceOptions.BatchIntervalMs, presenceOptions.SnapshotIntervalMs);
+        else
+
+            // Warning for the same reason stats-only mode is: production floors logging at Warning,
+            // and a presence feed that was meant to be on and silently is not is what an operator has
+            // to be able to see in the deployment log.
+            logger.LogWarning(
+                "Presence feed disabled ({Subject} will carry nothing) — Presence:Enabled is {Enabled}, Presence:BatchIntervalMs is {BatchIntervalMs}",
+                PARCEL_CHANGES_SUBJECT, presenceOptions.Enabled, presenceOptions.BatchIntervalMs);
+
         logger.LogInformation("NATS publisher started — {Broker}", SanitizeBrokerUrl(options.Url));
 
         // Supervision loop. Losing the broker is handled inside the client — it retries forever with
@@ -589,7 +624,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             await Task.WhenAll(
                 DrainAsync(connection, signal, loops),
-                heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask);
+                heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask,
+                presenceEnabled ? PublishParcelChangesPeriodicallyAsync(connection, loops) : Task.CompletedTask);
         }
         finally
         {
@@ -779,10 +815,19 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         PulseMetrics.Nats.PUBLISH_FAILED.Add(1);
     }
 
+    /// <summary>
+    ///     Records an eviction — the outbox's one path to genuine loss — and, with it, that the
+    ///     presence delta stream is no longer complete, so the next presence batch has to be a full
+    ///     snapshot (C1.4). Every eviction counted here goes through this one method, whichever
+    ///     outbox let a message go, which is what makes "after any outbox eviction" one call site
+    ///     rather than a rule each outbox has to remember.
+    /// </summary>
     private void CountDropped()
     {
         Interlocked.Increment(ref droppedCount);
         PulseMetrics.Nats.DROPPED.Add(1);
+
+        RequestParcelSnapshot(PresenceSnapshotReason.Eviction);
     }
 
     private void CountSuperseded()

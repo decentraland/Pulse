@@ -319,7 +319,7 @@ public partial class PeerSimulationTests
             areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
-            Substitute.For<ILogger<PeerSimulation>>(),
+            Substitute.For<ILogger<PeerSimulation>>(), PresenceTestFactory.Disabled(),
             resyncWithDelta: true);
 
     [Test]

@@ -138,6 +138,25 @@ public class HandshakeHandlerTests
             "Seed must carry the client-asserted realm so AoI can place the peer immediately on reconnect.");
     }
 
+    /// <summary>
+    ///     The second realm ingest point (the first is <c>TeleportRequest</c>): a seed realm is
+    ///     canonicalized to lowercase before it reaches the snapshot ring and the spatial grid, so
+    ///     one realm is one partition however the client spelled it (iteration-2 C1.5).
+    /// </summary>
+    [Test]
+    public void Handle_MixedCaseRealmInInitialState_SeedsTheLowercaseRealm()
+    {
+        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, realm: "CozyFarm.dcl");
+
+        handler.Handle(peers, peer, BuildHandshake(initial));
+
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Realm, Is.EqualTo("cozyfarm.dcl"));
+        Assert.That(realmGrids.PeersAt("cozyfarm.dcl", snapshot.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.PeersAt("CozyFarm.dcl", snapshot.GlobalPosition), Is.Null);
+    }
+
     [Test]
     public void Handle_EmptyRealmInInitialState_RejectsHandshake()
     {

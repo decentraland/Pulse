@@ -1,0 +1,20 @@
+{
+  "request": "GET /status",
+  "note": "version kept (godot reads it); currentTime = unix ms; realms = per-realm peer counts (same order as /realms)",
+  "status": 200,
+  "body": {
+    "version": "0.0.0-fixture",
+    "currentTime": 1788515567834,
+    "commitHash": "0000000",
+    "realms": [
+      {
+        "name": "main",
+        "peers": 4
+      },
+      {
+        "name": "cozyfarm.dcl.eth",
+        "peers": 1
+      }
+    ]
+  }
+}

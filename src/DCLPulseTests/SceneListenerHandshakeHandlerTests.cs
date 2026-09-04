@@ -104,6 +104,21 @@ public class SceneListenerHandshakeHandlerTests
         Assert.That(state.WalletId, Is.EqualTo(WALLET).IgnoreCase);
     }
 
+    /// <summary>
+    ///     A listener's announced realm is probed against <c>RealmSpatialGrids</c>, whose keys are
+    ///     the lowercase realms players are placed under — so the announcement is canonicalized on
+    ///     the same seam, or a listener announcing "Main" would observe nobody (iteration-2 C1.5).
+    /// </summary>
+    [Test]
+    public void Handle_MixedCaseRealm_AnnouncesTheLowercaseRealm()
+    {
+        handler.Handle(peers, peer, BuildListenerHandshake("CozyFarm.dcl", (10, 10, 10, 10)));
+
+        PeerState state = peers[peer];
+        Assert.That(state.ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+        Assert.That(state.SceneListener!.ParcelsByRealm.Keys, Is.EquivalentTo(new[] { "cozyfarm.dcl" }));
+    }
+
     [Test]
     public void Handle_ValidRequest_NeverRegistersAsSubject()
     {

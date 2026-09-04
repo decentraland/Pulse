@@ -1,0 +1,45 @@
+{
+  "request": "GET /realms/main/islands/C1",
+  "note": "today the island object is the body itself (no envelope) — kept unchanged",
+  "status": 200,
+  "body": {
+    "id": "C1",
+    "maxPeers": 0,
+    "center": [
+      -2.655,
+      1.115,
+      7.31
+    ],
+    "radius": 3.568631,
+    "peers": [
+      {
+        "id": "0x0000000000000000000000000000000000000001",
+        "address": "0x0000000000000000000000000000000000000001",
+        "lastPing": 1788515567804,
+        "parcel": [
+          -1,
+          0
+        ],
+        "position": [
+          -0.31,
+          1.73,
+          4.62
+        ]
+      },
+      {
+        "id": "0x0000000000000000000000000000000000000004",
+        "address": "0x0000000000000000000000000000000000000004",
+        "lastPing": 1788515567814,
+        "parcel": [
+          -1,
+          0
+        ],
+        "position": [
+          -5,
+          0.5,
+          10
+        ]
+      }
+    ]
+  }
+}

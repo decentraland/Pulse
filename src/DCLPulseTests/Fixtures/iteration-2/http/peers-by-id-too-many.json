@@ -1,0 +1,9 @@
+{
+  "request": "GET /peers?id=<201 distinct ids>",
+  "note": "cap is 200 ids per request",
+  "status": 400,
+  "body": {
+    "ok": false,
+    "error": "too many ids (max 200)"
+  }
+}

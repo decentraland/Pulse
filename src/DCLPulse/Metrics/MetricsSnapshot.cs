@@ -105,5 +105,12 @@ public readonly record struct MetricsSnapshot
         public HistogramSnapshot DeltaStalenessTier2Ms { get; init; }
         public HistogramSnapshot TickDurationUs { get; init; }
         public long TotalTickOverruns { get; init; }
+
+        /// <summary>
+        ///     Resync baseline-gap histograms indexed by <c>(int)ResyncOutcome</c> — labels in
+        ///     <c>ResyncOutcomes.LABELS</c>. Null on a snapshot no collector populated, such as a
+        ///     default-constructed one.
+        /// </summary>
+        public HistogramSnapshot[]? ResyncSeqGap { get; init; }
     }
 }

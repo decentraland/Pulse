@@ -6,6 +6,7 @@ public readonly record struct MetricsSnapshot
     public WebTransportSnapshot WebTransport { get; init; }
     public HardeningSnapshot Hardening { get; init; }
     public ClustersSnapshot Clusters { get; init; }
+    public PresenceSnapshot Presence { get; init; }
     public SceneListenerSnapshot SceneListener { get; init; }
     public SimulationSnapshot Simulation { get; init; }
     public ClientMessageCounters IncomingMessages { get; init; }
@@ -77,6 +78,19 @@ public readonly record struct MetricsSnapshot
         public long TotalNatsSuperseded { get; init; }
         public long TotalNatsReconnects { get; init; }
         public int NatsConnected { get; init; }
+    }
+
+    /// <summary>
+    ///     The <c>engine.parcel_changes</c> feed. Stays zero when the feed is off — no broker
+    ///     configured, or <c>Presence:Enabled</c> false.
+    /// </summary>
+    public readonly record struct PresenceSnapshot
+    {
+        /// <summary>Entries per published batch; the observation count is the batch count.</summary>
+        public HistogramSnapshot BatchSize { get; init; }
+
+        /// <summary>Snapshots published, indexed by <c>(int)PresenceSnapshotReason</c>.</summary>
+        public long[]? SnapshotsByReason { get; init; }
     }
 
     public readonly record struct HardeningSnapshot

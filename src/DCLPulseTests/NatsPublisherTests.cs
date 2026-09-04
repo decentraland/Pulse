@@ -9,8 +9,10 @@ using NSubstitute;
 using NSubstitute.Core;
 using Pulse.Clusters;
 using Pulse.Metrics;
+using Pulse;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Presence;
 using System.Buffers;
 using System.Diagnostics.Metrics;
 using System.Numerics;
@@ -936,14 +938,17 @@ public class NatsPublisherTests
         string url,
         int channelCapacity = 1024,
         int discoveryIntervalMs = 10_000,
-        ILogger<NatsPublisher>? logger = null)
+        ILogger<NatsPublisher>? logger = null,
+        PresenceOptions? presence = null,
+        ITimeProvider? timeProvider = null,
+        string serverName = "pulse-test")
     {
         var options = Substitute.For<IOptions<NatsOptions>>();
 
         options.Value.Returns(new NatsOptions
         {
             Url = url,
-            ServerName = "pulse-test",
+            ServerName = serverName,
             DiscoveryIntervalMs = discoveryIntervalMs,
             ChannelCapacity = channelCapacity,
         });
@@ -952,6 +957,8 @@ public class NatsPublisherTests
             logger ?? NullLogger<NatsPublisher>.Instance,
             NullLoggerFactory.Instance,
             options,
+            Options.Create(presence ?? new PresenceOptions()),
+            timeProvider ?? Substitute.For<ITimeProvider>(),
             snapshotBoard);
     }
 

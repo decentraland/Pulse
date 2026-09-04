@@ -55,7 +55,8 @@ public class WorkerSignalTests
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
             })),
-            DisabledIpLimiter());
+            DisabledIpLimiter(),
+            PresenceTestFactory.Disabled());
 
         eventChannel = Channel.CreateUnbounded<IncomingEvent>();
         signal = new ManualResetEventSlim();
@@ -208,7 +209,8 @@ public class WorkerSignalTests
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
             })),
-            DisabledIpLimiter());
+            DisabledIpLimiter(),
+            PresenceTestFactory.Disabled());
 
         IPeerSimulation? simulation = Substitute.For<IPeerSimulation>();
         simulation.BaseTickMs.Returns(5000u);

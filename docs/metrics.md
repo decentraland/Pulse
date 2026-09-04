@@ -439,6 +439,42 @@ Two ways the files get to that directory:
 - **Docker**: each of the three Dockerfiles fetches the fresh IPv4 CSV, IPv6 CSV, and `countryInfo.txt` into the image's `geodb/` directory at build time via a single `ADD` — no runtime download. These freshly-fetched copies are authoritative for images.
 - **Local (non-Docker) builds**: the `DCLPulse.csproj` `FetchGeoDb` target predownloads the three files into the gitignored `packages/geodb/` cache (once) and copies them next to the build output, so local runs resolve regions without a Docker image. Delete `packages/geodb` to force a refresh. Offline builds warn and continue — the app then degrades to `region="unknown"`. The download is skipped in Docker builds and containers (`FetchGeoDb=false`) and on CI (`CI=true`), so it never runs where the `ADD`-provided or in-memory test copies already apply.
 
+
+### Resync Seq Gap
+
+How far a client's baseline had fallen behind when it asked for a resync: `latestSnapshot.Seq − knownSeq` in **snapshot sequence numbers**, recorded once per `RESYNC_REQUEST` served, at the moment the simulation serves it. This replaced a per-request log line — the distribution answers the same question the log did (how big are the gaps clients recover from?) without one line per event.
+
+The two outcomes are separate histograms, so the fallback rate is the `full` series' own sample count:
+
+| Outcome | Meaning |
+|---|---|
+| `delta` | The client's baseline was still in the `SnapshotBoard` ring and `Peers:ResyncWithDelta` is on — closed with a targeted `STATE_DELTA` on the reliable channel |
+| `full` | The ring had moved past the baseline, the seq had not advanced, or `Peers:ResyncWithDelta` is off — closed with a full `STATE_FULL` |
+
+Buckets are dense around `Peers:SnapshotHistoryCapacity` (10 default, 20 configured), the ring-eviction cliff a gap crosses to turn a targeted delta into a full snapshot. A dedicated `0` edge separates "the client was already current" from "one publish behind"; the long tail measures how many publishes a client went dark for. Seq advances once per publish, and publishes are driven by client input capped at `MaxHz` (20), so a gap of 256 is roughly 12.8 s of missed updates.
+
+`knownSeq` arrives unvalidated off the wire. A baseline at or ahead of the subject's latest publish — an echoed seq the client never received, or a fabricated one — records as `0`. The ordering is tested before subtracting rather than inferred from the sign of a wrapped difference, which would let any fabricated seq past 2^31 register as a ~2-billion gap and swamp `_sum` and the `+Inf` bucket.
+
+**Expected**: p50 within a few seqs. A gap inside the ring depth is recoverable with a delta; sustained p99 beyond it means clients are going dark for longer than the history covers.
+
+| Signal | Meaning |
+|---|---|
+| Low count, small gaps | Normal — occasional unreliable-channel loss, cheaply recovered |
+| p99 climbing toward `SnapshotHistoryCapacity` | Clients are on the edge of eviction — raise the ring depth before they start paying full snapshots |
+| p99 well past the ring depth | Sustained loss or a stalled client; the ring cannot help, every request costs a `STATE_FULL` |
+| `full` count high while `delta` stays flat | `Peers:ResyncWithDelta` is off, or baselines are consistently evicted — reliable-channel bandwidth is being spent on full snapshots |
+| Mass of samples at `0` | Clients resyncing when already current — a client-side gap-detection bug, not server loss |
+
+The console dashboard shows a single **Resync Seq Gap** row merging both outcomes (`HistogramSnapshots.Merge`); the per-outcome split is Grafana-only.
+
+**Prometheus**: exposed as a native histogram `dcl_pulse_resync_seq_gap` with one `outcome` label per outcome (`delta`, `full`). Gap percentile and fallback share:
+
+```promql
+histogram_quantile(0.99, sum by (le) (rate(dcl_pulse_resync_seq_gap_bucket[5m])))
+
+sum(rate(dcl_pulse_resync_seq_gap_count{outcome="full"}[5m]))
+  / sum(rate(dcl_pulse_resync_seq_gap_count[5m]))
+```
 ---
 
 ## Incoming Messages

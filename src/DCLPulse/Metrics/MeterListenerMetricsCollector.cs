@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using Pulse.Messaging;
+using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
@@ -73,6 +74,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private readonly BucketHistogram outgoingDrainCycleUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
     private long tickOverruns;
 
+    // Per-outcome resync baseline-gap histograms — indexed by (int)ResyncOutcome.
+    private readonly BucketHistogram[] resyncSeqGap = CreateResyncSeqGapHistograms();
+
     // Per-continent peer RTT histograms — indexed by (int)Continent.
     private readonly BucketHistogram[] peerRttMs = CreatePeerRttHistograms();
 
@@ -82,6 +86,16 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
 
         for (var i = 0; i < histograms.Length; i++)
             histograms[i] = new BucketHistogram(PulseMetrics.Transport.RTT_BUCKETS_MS);
+
+        return histograms;
+    }
+
+    private static BucketHistogram[] CreateResyncSeqGapHistograms()
+    {
+        var histograms = new BucketHistogram[ResyncOutcomes.COUNT];
+
+        for (var i = 0; i < histograms.Length; i++)
+            histograms[i] = new BucketHistogram(PulseMetrics.Simulation.RESYNC_SEQ_GAP_BUCKETS);
 
         return histograms;
     }
@@ -179,6 +193,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 DeltaStalenessTier2Ms = deltaStalenessTier2.Snapshot(),
                 TickDurationUs = tickDurationUs.Snapshot(),
                 TotalTickOverruns = Interlocked.Read(ref tickOverruns),
+                ResyncSeqGap = SnapshotResyncSeqGap(),
             },
             IncomingMessages = incomingMessageCounters,
             OutgoingMessages = outgoingMessageCounters,
@@ -191,6 +206,16 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
 
         for (var i = 0; i < peerRttMs.Length; i++)
             snapshots[i] = peerRttMs[i].Snapshot();
+
+        return snapshots;
+    }
+
+    private HistogramSnapshot[] SnapshotResyncSeqGap()
+    {
+        var snapshots = new HistogramSnapshot[resyncSeqGap.Length];
+
+        for (var i = 0; i < resyncSeqGap.Length; i++)
+            snapshots[i] = resyncSeqGap[i].Snapshot();
 
         return snapshots;
     }
@@ -287,6 +312,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.sim.delta_staleness_tier2_ms":
                 deltaStalenessTier2.Record(value);
+                break;
+            case "pulse.sim.resync_seq_gap_delta":
+                resyncSeqGap[(int)ResyncOutcome.TARGETED_DELTA].Record(value);
+                break;
+            case "pulse.sim.resync_seq_gap_full":
+                resyncSeqGap[(int)ResyncOutcome.FULL_STATE].Record(value);
                 break;
             case "pulse.sim.tick_duration_us":
                 tickDurationUs.Record(value);

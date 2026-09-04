@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.Messaging;
 using Pulse.Metrics;
+using Pulse.Peers.Simulation;
 
 namespace DCLPulseTests.Metrics;
 
@@ -34,6 +35,27 @@ public class HistogramCollectorTests
         Assert.That(after.Simulation.DeltaStalenessTier1Ms.Sum - before.Simulation.DeltaStalenessTier1Ms.Sum, Is.EqualTo(7));
         Assert.That(after.Simulation.DeltaStalenessTier0Ms.Count, Is.EqualTo(before.Simulation.DeltaStalenessTier0Ms.Count));
         Assert.That(after.Simulation.DeltaStalenessTier2Ms.Count, Is.EqualTo(before.Simulation.DeltaStalenessTier2Ms.Count));
+    }
+
+    [Test]
+    public void Resync_gap_measurements_route_to_the_matching_outcome_histogram()
+    {
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        PulseMetrics.Simulation.RESYNC_SEQ_GAP[(int)ResyncOutcome.FULL_STATE].Record(6);
+
+        MetricsSnapshot after = collector.TakeSnapshot();
+
+        Assert.That(before.Simulation.ResyncSeqGap, Is.Not.Null);
+        Assert.That(after.Simulation.ResyncSeqGap, Is.Not.Null);
+
+        HistogramSnapshot[] gapBefore = before.Simulation.ResyncSeqGap!;
+        HistogramSnapshot[] gapAfter = after.Simulation.ResyncSeqGap!;
+
+        Assert.That(gapAfter, Has.Length.EqualTo(ResyncOutcomes.COUNT));
+        Assert.That(gapAfter[(int)ResyncOutcome.FULL_STATE].Count - gapBefore[(int)ResyncOutcome.FULL_STATE].Count, Is.EqualTo(1));
+        Assert.That(gapAfter[(int)ResyncOutcome.FULL_STATE].Sum - gapBefore[(int)ResyncOutcome.FULL_STATE].Sum, Is.EqualTo(6));
+        Assert.That(gapAfter[(int)ResyncOutcome.TARGETED_DELTA].Count, Is.EqualTo(gapBefore[(int)ResyncOutcome.TARGETED_DELTA].Count));
     }
 
     [Test]

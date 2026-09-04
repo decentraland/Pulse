@@ -670,8 +670,7 @@ public sealed class PeerSimulation : IPeerSimulation
         {
             SendDelta(observerId, ref view, entry.Subject, knownSnapshot, latestSnapshot, entry.Tier, PacketMode.RELIABLE, fromResync: true);
 
-            logger.LogInformation("Resync fulfilled with targeted delta for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq})",
-                entry.Subject, observerId, lastKnownSeq);
+            RecordResyncSeqGap(latestSnapshot.Seq, lastKnownSeq, ResyncOutcome.TARGETED_DELTA);
         }
         else
         {
@@ -680,11 +679,28 @@ public sealed class PeerSimulation : IPeerSimulation
                 PlayerStateFull = CreateFullState(entry.Subject, latestSnapshot),
             }, PacketMode.RELIABLE, fromResync: true);
 
-            logger.LogWarning("Resync fallback to STATE_FULL for subject {Subject} to observer {Observer} (lastKnownSeq={LastKnownSeq}, gap={SeqGap})",
-                entry.Subject, observerId, lastKnownSeq, latestSnapshot.Seq - lastKnownSeq);
+            RecordResyncSeqGap(latestSnapshot.Seq, lastKnownSeq, ResyncOutcome.FULL_STATE);
         }
 
         return latestSnapshot;
+    }
+
+    /// <summary>
+    ///     Records how far the client's resync baseline trailed the subject's latest published
+    ///     snapshot, split by how the request was served. <paramref name="lastKnownSeq" /> is an
+    ///     unvalidated client-supplied uint, so the ordering is tested before subtracting rather
+    ///     than inferred from the sign of a wrapped difference: a serial-number cast only
+    ///     disambiguates a baseline within 2^31 of <paramref name="latestSeq" />, and a fabricated
+    ///     seq past that turns back into a ~2-billion positive gap that swamps Sum and the +Inf
+    ///     bucket. Any baseline at or ahead of the latest publish records 0, the same bucket as a
+    ///     client that was already current. Seq itself does not wrap within a session — it is
+    ///     server-assigned from 0 per session, the same assumption every other Seq comparison here
+    ///     makes.
+    /// </summary>
+    private static void RecordResyncSeqGap(uint latestSeq, uint lastKnownSeq, ResyncOutcome outcome)
+    {
+        long gap = lastKnownSeq <= latestSeq ? latestSeq - lastKnownSeq : 0;
+        PulseMetrics.Simulation.RESYNC_SEQ_GAP[(int)outcome].Record(gap);
     }
 
     // ── Message sending ─────────────────────────────────────────────

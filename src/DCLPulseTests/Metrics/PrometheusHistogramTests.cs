@@ -64,6 +64,33 @@ public class PrometheusHistogramTests
     }
 
     [Test]
+    public void Resync_gap_histogram_is_emitted_with_one_series_per_outcome()
+    {
+        var delta = new HistogramSnapshot
+        {
+            UpperBounds = [0L, 8L],
+            Counts = [2L, 5L, 0L], // 2 at 0, 5 in ≤8, none above
+            Count = 7,
+            Sum = 21,
+        };
+
+        string output = Format(SnapshotWith(new MetricsSnapshot.SimulationSnapshot
+        {
+            ResyncSeqGap = [delta, default(HistogramSnapshot)],
+        }));
+
+        Assert.That(output, Does.Contain("# TYPE dcl_pulse_resync_seq_gap histogram"));
+        Assert.That(output, Does.Contain("dcl_pulse_resync_seq_gap_bucket{outcome=\"delta\",le=\"0\"} 2"));
+        Assert.That(output, Does.Contain("dcl_pulse_resync_seq_gap_bucket{outcome=\"delta\",le=\"8\"} 7"));
+        Assert.That(output, Does.Contain("dcl_pulse_resync_seq_gap_sum{outcome=\"delta\"} 21"));
+        Assert.That(output, Does.Contain("dcl_pulse_resync_seq_gap_count{outcome=\"delta\"} 7"));
+
+        // The fallback series must still be well-formed at zero — an appearing series reads as a
+        // step to Prometheus rate(), not as traffic.
+        Assert.That(output, Does.Contain("dcl_pulse_resync_seq_gap_bucket{outcome=\"full\",le=\"+Inf\"} 0"));
+    }
+
+    [Test]
     public void Unlabeled_histogram_and_overrun_counter_are_emitted()
     {
         var h = new HistogramSnapshot

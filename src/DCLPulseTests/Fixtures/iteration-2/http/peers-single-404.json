@@ -1,0 +1,8 @@
+{
+  "request": "GET /peers/0x0000000000000000000000000000000000000009",
+  "status": 404,
+  "body": {
+    "ok": false,
+    "peer": null
+  }
+}

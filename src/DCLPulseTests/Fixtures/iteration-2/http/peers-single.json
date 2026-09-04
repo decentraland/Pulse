@@ -1,0 +1,23 @@
+{
+  "request": "GET /peers/0x0000000000000000000000000000000000000003",
+  "note": "all realms; replaces worlds-content-server /wallet/:wallet/connected-world (realm ending .dcl.eth => in a world)",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "peer": {
+      "id": "0x0000000000000000000000000000000000000003",
+      "address": "0x0000000000000000000000000000000000000003",
+      "lastPing": 1788515567790,
+      "parcel": [
+        0,
+        0
+      ],
+      "position": [
+        8,
+        0,
+        8
+      ],
+      "realm": "cozyfarm.dcl.eth"
+    }
+  }
+}

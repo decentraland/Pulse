@@ -283,10 +283,10 @@ static string FormatRect(ParcelRect r) =>
         ? $"[{r.MinX}:{r.MinZ}]"
         : $"[{r.MinX}:{r.MinZ}..{r.MaxX}:{r.MaxZ}]";
 
-// Receive-only: subscribe to the positional stream and log each message with subject id + parcel.
-// Never sends anything back to the server after the handshake.
+// Receive-only: subscribe to the positional and emote stream and log each message with subject id
+// + parcel. Never sends anything back to the server after the handshake.
 //
-// We ALSO subscribe to EmoteStarted/EmoteStopped/PlayerProfileVersionAnnounced — messages a scene
+// We ALSO subscribe to PlayerProfileVersionAnnounced — a message a scene
 // listener must NEVER receive. Without an active subscription the service silently drops them
 // (RouteIncomingMessagesAsync discards messages with no subscriber), so a "0 received" tally would
 // be true by construction rather than evidence. Subscribing turns any server-side leak into a
@@ -299,7 +299,7 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
         return $"{x}:{z}";
     }
 
-    long positionalCount = 0;
+    long receivedCount = 0;
     long leakCount = 0;
 
     try
@@ -310,26 +310,26 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
                            ServerMessage.MessageOneofCase.PlayerStateDelta,
                            ServerMessage.MessageOneofCase.PlayerStateFull,
                            ServerMessage.MessageOneofCase.Teleported,
-                           // Leak-detection subscriptions: a scene listener must never see these.
                            ServerMessage.MessageOneofCase.EmoteStarted,
                            ServerMessage.MessageOneofCase.EmoteStopped,
+                           // Leak-detection subscription: a scene listener must never see this.
                            ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced))
         {
             switch (message.MessageCase)
             {
                 case ServerMessage.MessageOneofCase.PlayerJoined:
                     PlayerJoined joined = message.PlayerJoined;
-                    positionalCount++;
+                    receivedCount++;
                     Console.WriteLine($"[{accountName}] PlayerJoined subject={joined.State.SubjectId} " +
                                       $"parcel={Parcel(joined.State.State.ParcelIndex)} user={joined.UserId}");
                     break;
                 case ServerMessage.MessageOneofCase.PlayerLeft:
-                    positionalCount++;
+                    receivedCount++;
                     Console.WriteLine($"[{accountName}] PlayerLeft subject={message.PlayerLeft.SubjectId}");
                     break;
                 case ServerMessage.MessageOneofCase.PlayerStateDelta:
                     PlayerStateDeltaTier0 delta = message.PlayerStateDelta;
-                    positionalCount++;
+                    receivedCount++;
                     // parcel_index is an optional delta field, only present when it changed.
                     string deltaParcel = delta.HasParcelIndex ? Parcel(delta.ParcelIndex) : "(unchanged)";
                     Console.WriteLine($"[{accountName}] PlayerStateDelta subject={delta.SubjectId} " +
@@ -337,25 +337,27 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
                     break;
                 case ServerMessage.MessageOneofCase.PlayerStateFull:
                     PlayerStateFull full = message.PlayerStateFull;
-                    positionalCount++;
+                    receivedCount++;
                     Console.WriteLine($"[{accountName}] PlayerStateFull subject={full.SubjectId} " +
                                       $"parcel={Parcel(full.State.ParcelIndex)} seq={full.Sequence}");
                     break;
                 case ServerMessage.MessageOneofCase.Teleported:
                     TeleportPerformed teleport = message.Teleported;
-                    positionalCount++;
+                    receivedCount++;
                     Console.WriteLine($"[{accountName}] Teleported subject={teleport.SubjectId} " +
                                       $"parcel={Parcel(teleport.State.ParcelIndex)} seq={teleport.Sequence}");
                     break;
                 case ServerMessage.MessageOneofCase.EmoteStarted:
-                    leakCount++;
-                    Console.WriteLine($"[{accountName}] LEAK: EmoteStarted for subject {message.EmoteStarted.SubjectId} " +
-                                      "— server must never send this to a scene listener");
+                    EmoteStarted started = message.EmoteStarted;
+                    receivedCount++;
+                    Console.WriteLine($"[{accountName}] EmoteStarted subject={started.SubjectId} " +
+                                      $"emote={started.EmoteId} seq={started.Sequence}");
                     break;
                 case ServerMessage.MessageOneofCase.EmoteStopped:
-                    leakCount++;
-                    Console.WriteLine($"[{accountName}] LEAK: EmoteStopped for subject {message.EmoteStopped.SubjectId} " +
-                                      "— server must never send this to a scene listener");
+                    EmoteStopped stopped = message.EmoteStopped;
+                    receivedCount++;
+                    Console.WriteLine($"[{accountName}] EmoteStopped subject={stopped.SubjectId} " +
+                                      $"reason={stopped.Reason} seq={stopped.Sequence}");
                     break;
                 case ServerMessage.MessageOneofCase.PlayerProfileVersionAnnounced:
                     leakCount++;
@@ -371,7 +373,7 @@ async Task ProcessListenerEventsAsync(string accountName, PulseMultiplayerServic
         // Graceful shutdown (Ctrl+C / stop file) cancels the subscription.
     }
 
-    Console.WriteLine($"[{accountName}] Listener summary: positional messages={positionalCount}, " +
+    Console.WriteLine($"[{accountName}] Listener summary: received messages={receivedCount}, " +
                       $"suppressed-message LEAKS={leakCount}");
 }
 

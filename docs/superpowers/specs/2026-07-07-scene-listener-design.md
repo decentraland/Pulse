@@ -27,7 +27,7 @@ is standing where (e.g. scene runtimes reacting to player presence).
 |---|---|
 | Authorization | Same ECDSA auth chain as players; listener mode is signaled by a dedicated handshake message. No allowlist, no special ephemeral purpose. |
 | Protocol shape | Separate `SceneListenerHandshakeRequest` message (new `ClientMessage` variant), not new fields on `HandshakeRequest`. |
-| Message surface | Positional only: `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`. Emote and profile-version messages are suppressed for listener observers. |
+| Message surface | Positional and emote: `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`, `EmoteStarted`, `EmoteStopped`. Profile-version messages are suppressed for listener observers. |
 | Sessions | One session per wallet — the existing `DUPLICATE_SESSION` eviction applies unchanged, across listener and player sessions alike. |
 | Parcel cap | Config cap `SceneListener:MaxParcels` (default 4096) applied to the Σ of announced rect areas; handshake exceeding it is rejected, never clamped. |
 | Resync | `RESYNC_REQUEST` remains allowed — "never sends updates" means no state mutations. Listeners use the standard client-driven gap recovery. |
@@ -183,12 +183,10 @@ method-decoupling rule), replacing the snapshot-read + radius-AoI steps:
    disconnects.
 
 One addition to the shared pipeline: a per-observer **positional-only** flag
-(true for listeners) gates off `EmoteStarted`, `EmoteStopped`, and
-`PlayerProfileVersionAnnounced` emission. During an emote the subject sends no
-`MovementInput`, so the listener sees it stationary; the post-emote-stop delta
-is never suppressed, so position resynchronizes on resume. `PlayerJoined` for
-a mid-emote subject skips the usual companion `EmoteStarted` for listener
-observers.
+(true for listeners) gates off `PlayerProfileVersionAnnounced` emission.
+Emotes flow to listeners exactly as to players (server scenes report them to
+scene code as `AvatarEmoteCommand`), including the companion `EmoteStarted`
+on `PlayerJoined` for a mid-emote subject.
 
 The existing aliasing detection and stale-view sweep apply unchanged, since
 listeners use the same view machinery.

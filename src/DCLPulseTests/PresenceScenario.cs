@@ -11,8 +11,11 @@ using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Presence;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 using System.Buffers;
 using System.Numerics;
+using System.Threading.Channels;
+using static Pulse.Messaging.MessagePipe;
 
 namespace DCLPulseTests;
 
@@ -28,6 +31,14 @@ internal sealed class PresenceScenario
     public const int MAX_PEERS = 32;
     private const float CELL_SIZE = 100f;
     private const int PARCEL_SIZE = 16;
+
+    private static readonly uint[] SIMULATION_STEPS = [50u, 100u, 200u];
+
+    /// <summary>
+    ///     Phase-2 gate. Short so <see cref="DriveCleanup" /> can step past it without the monotonic
+    ///     clock running away from the wall-clock stamps the fixtures pin.
+    /// </summary>
+    private const uint DISCONNECTION_CLEAN_TIMEOUT_MS = 100;
 
     /// <summary>
     ///     <paramref name="unixOriginMs" /> is the wall clock this process started at, and defaults to
@@ -86,6 +97,16 @@ internal sealed class PresenceScenario
             new DiscreteEventRateLimiter(
                 Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }), Clock, Transport),
             FieldValidator);
+
+        ProfileBoard = new ProfileBoard(MAX_PEERS);
+        PeerIndexAllocator = Substitute.For<IPeerIndexAllocator>();
+        MessagePipe = new MessagePipe(NullLogger<MessagePipe>.Instance, new ServerMessageCounters());
+
+        Simulation = new PeerSimulation(
+            Substitute.For<IAreaOfInterest>(), SnapshotBoard, Grids, IdentityBoard, MessagePipe,
+            SIMULATION_STEPS, Clock, Transport, ProfileBoard, PeerIndexAllocator,
+            NullLogger<PeerSimulation>.Instance, ParcelChanges,
+            disconnectionCleanTimeoutMs: DISCONNECTION_CLEAN_TIMEOUT_MS);
     }
 
     public TestTimeProvider Clock { get; }
@@ -113,6 +134,22 @@ internal sealed class PresenceScenario
     public TeleportHandler TeleportHandler { get; }
 
     public ITransport Transport { get; }
+
+    public ProfileBoard ProfileBoard { get; }
+
+    public IPeerIndexAllocator PeerIndexAllocator { get; }
+
+    public MessagePipe MessagePipe { get; }
+
+    /// <summary>
+    ///     The real <see cref="PeerSimulation" />, wired to this scenario's boards and to the
+    ///     publishing <see cref="ParcelChanges" />, so an exit reaches the feed through the production
+    ///     cleanup rather than through a direct call.
+    /// </summary>
+    public PeerSimulation Simulation { get; }
+
+    /// <summary>The worker's peer set, as <c>PeersManager</c> keeps it.</summary>
+    public Dictionary<PeerIndex, PeerState> Peers { get; } = new ();
 
     /// <summary>
     ///     The middle of a parcel, so nothing lands on a grid-cell boundary — see
@@ -178,15 +215,91 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     What <c>PeerSimulation</c>'s cleanup does to the presence feed, plus the phase-1 grid and
-    ///     board clearing that precedes it, so a removed peer cannot reappear in the next pass.
+    ///     Takes a peer out the way every exit path does: the <c>Disconnected</c> lifecycle event
+    ///     drained by the real <c>PeersManager</c> (phase 1 — off the grid, off the board, state
+    ///     DISCONNECTING), then a simulation tick past
+    ///     <see cref="DISCONNECTION_CLEAN_TIMEOUT_MS" /> so the real
+    ///     <see cref="PeerSimulation" /> cleanup runs (phase 2 — the presence feed's exit seam).
+    ///     <para />
+    ///     Whatever kicked the peer — a clean disconnect, an auth timeout, a duplicate-session kick, a
+    ///     ban, <c>PeerDefense</c> — reaches the feed through exactly this, because all of them are a
+    ///     transport disconnect and the transport raises one lifecycle event for each.
     /// </summary>
     public void Remove(PeerIndex peer)
     {
-        Grids.Remove(peer);
-        SnapshotBoard.ClearActive(peer);
-        ParcelChanges.OnPeerRemoved(peer);
-        IdentityBoard.Remove(peer);
+        DispatchDisconnected(peer);
+        DriveCleanup();
+    }
+
+    /// <summary>
+    ///     Phase 1 alone: the lifecycle event a transport disconnect produces, drained on the owning
+    ///     worker against this scenario's peer set.
+    /// </summary>
+    public void DispatchDisconnected(PeerIndex peer) =>
+        Dispatch(IncomingEvent.Disconnected(peer));
+
+    /// <summary>
+    ///     The <c>Connected</c> lifecycle event, which is what puts a peer in <c>PENDING_AUTH</c> and
+    ///     stamps the connection time the auth timeout is measured from — so a test of that timeout
+    ///     starts from the state production starts from rather than a hand-built one.
+    /// </summary>
+    public void DispatchConnected(PeerIndex peer) =>
+        Dispatch(IncomingEvent.Connected(peer));
+
+    private void Dispatch(IncomingEvent evt)
+    {
+        Channel<IncomingEvent> events = Channel.CreateUnbounded<IncomingEvent>();
+        events.Writer.TryWrite(evt);
+
+        CreatePeersManager().DrainEvents(events.Reader, Peers, workerIndex: 0);
+    }
+
+    /// <summary>
+    ///     Phase 2 alone: the clock steps past the cleanup gate and one tick runs, which is what
+    ///     releases the peer and publishes its exit.
+    /// </summary>
+    public void DriveCleanup()
+    {
+        Clock.MonotonicTime += DISCONNECTION_CLEAN_TIMEOUT_MS;
+
+        Simulation.SimulateTick(Peers, tickCounter: Clock.MonotonicTime / SIMULATION_STEPS[0]);
+    }
+
+    /// <summary>
+    ///     Registers a peer as connected-and-authenticated in the worker's peer set, so the lifecycle
+    ///     paths that read <see cref="PeerState" /> see what they would in production.
+    /// </summary>
+    public void Authenticate(PeerIndex peer)
+    {
+        Peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+    }
+
+    private PeersManager CreatePeersManager() =>
+        new (
+            MessagePipe, new PeerStateFactory(), Substitute.For<IAreaOfInterest>(), SnapshotBoard, Grids,
+            IdentityBoard, new PeerOptions(), NullLogger<PeersManager>.Instance,
+            NullLogger<PeerSimulation>.Instance, Clock,
+            new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),
+            Transport, ProfileBoard, new ClientMessageCounters(),
+            new EmoteCompleter(SnapshotBoard, Clock), PeerIndexAllocator,
+            new PreAuthAdmission(Options.Create(new PreAuthAdmissionOptions
+            {
+                PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
+            })),
+            DisabledIpLimiter(),
+            ParcelChanges);
+
+    /// <summary>
+    ///     Cap switched off — the limiter counts connections but refuses none, so it never interferes
+    ///     with the lifecycle path under test.
+    /// </summary>
+    private static IpLimiter DisabledIpLimiter()
+    {
+        IOptionsMonitor<IpLimiterOptions> optionsMonitor = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
+        optionsMonitor.CurrentValue.Returns(new IpLimiterOptions { Enabled = false, MaxConcurrency = 0 });
+        optionsMonitor.OnChange(Arg.Any<Action<IpLimiterOptions, string?>>()).Returns(Substitute.For<IDisposable>());
+
+        return new IpLimiter(optionsMonitor, NullLogger<IpLimiter>.Instance);
     }
 
     public void RunPass() =>

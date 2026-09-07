@@ -17,7 +17,8 @@ namespace Pulse.Presence;
 ///             entry even for a peer that never moves again (C1.1);
 ///         </item>
 ///         <item>
-///             a peer leaving, published by <see cref="OnPeerRemoved" /> alone (C1.2).
+///             a peer leaving, published by <see cref="OnPeerRemoved" /> alone (C1.2) and only when
+///             the wallet is left on no connection of this server (A1).
 ///         </item>
 ///     </list>
 ///     <para />
@@ -104,6 +105,16 @@ public sealed class ParcelChangeTracker
     ///     presence, and nothing at all for one that never did — a peer that timed out in
     ///     <c>PENDING_AUTH</c> was never on the feed, so it has no departure to announce.
     ///     <para />
+    ///     The entry is <b>wallet-scoped</b> (A1): it goes out only when the wallet is no longer
+    ///     placed on any connection of this server. A duplicate-session kick accepts the new
+    ///     connection at once and cleans the evicted slot a full
+    ///     <c>Peers:DisconnectionCleanTimeoutMs</c> later, so by the time this runs the wallet is
+    ///     usually already standing somewhere on a newer slot — and consumers key presence by wallet,
+    ///     so publishing this slot's departure would take a peer that is online offline until the next
+    ///     snapshot. Worse, when both entries fall in one batch the per-address coalescing keeps the
+    ///     later one, so the exit wins and the new placement is never seen at all. The newer placement
+    ///     is this wallet's whole presence; the stale slot leaving is not news.
+    ///     <para />
     ///     Clearing the slot is mandatory rather than tidy: <see cref="PeerIndex" /> is a recycled
     ///     transport slot, and state left behind would make the next wallet's first placement look
     ///     unchanged — the one case C1.1 exists to rule out.
@@ -120,14 +131,42 @@ public sealed class ParcelChangeTracker
         {
             ref Slot slot = ref slots[index];
 
-            if (slot.Realm is { } realm)
+            if (slot.Realm is not { } realm)
             {
-                liveCount--;
-                feed.PublishParcelChange(slot.Address!, realm, parcel: null);
+                slot = default(Slot);
+
+                return;
             }
 
+            string address = slot.Address!;
+
+            // Cleared before the scan, so the departing slot cannot answer for itself.
             slot = default(Slot);
+            liveCount--;
+
+            if (IsPlaced(address)) return;
+
+            feed.PublishParcelChange(address, realm, parcel: null);
         }
+    }
+
+    /// <summary>
+    ///     Whether any live slot still holds <paramref name="address" />. A linear walk of the slot
+    ///     table under <see cref="stateLock" />, which is what the caller already holds: it runs once
+    ///     per disconnect against <c>Transport:MaxPeers</c> entries, so an index keyed by address
+    ///     would be state to keep consistent for no measurable gain.
+    /// </summary>
+    private bool IsPlaced(string address)
+    {
+        for (var index = 0; index < slots.Length; index++)
+        {
+            Slot slot = slots[index];
+
+            if (slot.Realm is not null && string.Equals(slot.Address, address, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -137,14 +176,36 @@ public sealed class ParcelChangeTracker
     /// </summary>
     private void Observe(ClusterPeerInfo info, bool publishChange)
     {
-        ref Slot slot = ref slots[(int)info.Peer.Value];
+        var index = (int)info.Peer.Value;
+
+        // Bounds-checked like OnPeerRemoved. A PeerIndex at or past Transport:MaxPeers is a peer this
+        // tracker never sized a slot for, and ignoring it beats throwing on the ClusterTracker
+        // thread, where the exception would take the whole clustering pass — and the stats surface
+        // with it — down over one peer.
+        if (index >= slots.Length) return;
+
+        ref Slot slot = ref slots[index];
 
         parcelEncoder.Decode(info.Parcel, out int x, out int z);
 
         var parcel = new ParcelCoord(x, z);
         string realm = info.Realm;
 
+        // A different wallet on this slot is a new presence wherever it stands. PeerIndex is a
+        // recycled transport slot; nothing releases one today except OnPeerRemoved, which clears the
+        // slot — but the codebase already guards the same class of aliasing for the observer view
+        // (PeerSimulation.DetectAndHandleAliasing), and a slot reused without that clearing would
+        // otherwise publish nothing and leave the next snapshot reporting the wallet that left as
+        // standing at the new occupant's parcel, since Address is only refreshed on a change.
+        //
+        // The reference check is the fast path — IdentityBoard hands out one string instance per peer
+        // for as long as it lives — and the value compare runs only when the instance differs, which
+        // is once per identification.
+        bool sameWallet = ReferenceEquals(slot.Wallet, info.Wallet)
+                       || string.Equals(slot.Wallet, info.Wallet, StringComparison.OrdinalIgnoreCase);
+
         if (slot.Realm is not null
+            && sameWallet
             && slot.Parcel == parcel
             && string.Equals(slot.Realm, realm, StringComparison.Ordinal))
             return;
@@ -152,13 +213,11 @@ public sealed class ParcelChangeTracker
         if (slot.Realm is null)
             liveCount++;
 
-        // The wallet string is one instance per peer slot for as long as the peer lives, so the
-        // lowercase form is computed once per peer rather than once per published entry.
-        if (!ReferenceEquals(slot.Wallet, info.Wallet))
-        {
-            slot.Wallet = info.Wallet;
+        slot.Wallet = info.Wallet;
+
+        // The lowercase form is computed once per wallet rather than once per published entry.
+        if (!sameWallet)
             slot.Address = CanonicalName.Of(info.Wallet);
-        }
 
         slot.Realm = realm;
         slot.Parcel = parcel;

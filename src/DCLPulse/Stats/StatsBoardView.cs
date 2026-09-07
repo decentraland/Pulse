@@ -27,6 +27,13 @@ public sealed class StatsBoardView
     private readonly string[] clusterIds;
     private readonly ClusterPass pass;
 
+    // clusterId -> the peers assigned to it, in address order, built on the first island request of
+    // this view. Lazily, because most routes never ask: /peers, /parcels, /realms and /status all
+    // read the flat array. Before this, each island rescanned the whole peer array — O(peers x
+    // clusters) per request, which at 5000 peers and a few hundred clusters is ~10^6 ordinal string
+    // comparisons on a route several services poll.
+    private Dictionary<string, List<PeerResult>>? membersByCluster;
+
     private StatsBoardView(ClusterPass pass, PeerResult[] peers, string[] clusterIds)
     {
         this.pass = pass;
@@ -202,22 +209,38 @@ public sealed class StatsBoardView
         return null;
     }
 
-    private IslandResult BuildIsland(ClusterInfo cluster)
-    {
-        var members = new List<PeerResult>(cluster.Count);
-
-        // The parallel arrays are in address order already, so members come out sorted without a
-        // second sort per island.
-        for (var i = 0; i < peers.Length; i++)
-            if (string.Equals(clusterIds[i], cluster.Id, StringComparison.Ordinal))
-                members.Add(peers[i] with { Realm = null });
-
-        return new IslandResult(
+    private IslandResult BuildIsland(ClusterInfo cluster) =>
+        new (
             cluster.Id,
             MaxPeers: 0,
             [cluster.Centroid.X, cluster.Centroid.Y, cluster.Centroid.Z],
             cluster.Radius,
-            members);
+            MembersOf(cluster.Id));
+
+    /// <summary>
+    ///     The members of one cluster, in address order. Indexed in a single walk of the peer array
+    ///     the first time any island is asked for, so a request costs one pass over the peers rather
+    ///     than one per island — the loop shape, not caching, which is why it needs no invalidation:
+    ///     the index belongs to this view and dies with it.
+    /// </summary>
+    private IReadOnlyList<PeerResult> MembersOf(string clusterId)
+    {
+        if (membersByCluster is null)
+        {
+            membersByCluster = new Dictionary<string, List<PeerResult>>(StringComparer.Ordinal);
+
+            // The parallel arrays are in address order already, so members come out sorted without a
+            // second sort per island.
+            for (var i = 0; i < peers.Length; i++)
+            {
+                if (!membersByCluster.TryGetValue(clusterIds[i], out List<PeerResult>? members))
+                    membersByCluster[clusterIds[i]] = members = [];
+
+                members.Add(peers[i] with { Realm = null });
+            }
+        }
+
+        return membersByCluster.GetValueOrDefault(clusterId) ?? (IReadOnlyList<PeerResult>)[];
     }
 
     /// <summary>

@@ -106,7 +106,7 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void SceneListener_EmoteStart_SuppressedButPositionStillFlows()
+    public void SceneListener_EmoteStart_Delivered()
     {
         var listener = new PeerIndex(9);
         MakeSceneListener(listener, realm: "main", parcels: [5]);
@@ -124,22 +124,19 @@ public partial class PeerSimulationTests
 
         List<OutgoingMessage> messages = DrainAllMessages().Where(m => m.To == listener).ToList();
         Assert.That(messages.Select(m => m.Message.MessageCase),
-            Has.None.EqualTo(ServerMessage.MessageOneofCase.EmoteStarted),
-            "Positional-only listeners must not receive emote broadcasts.");
-        Assert.That(messages.Select(m => m.Message.MessageCase),
-            Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta),
-            "The position carried by the emote snapshot must still arrive as a delta.");
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.EmoteStarted),
+            "Listeners receive emote broadcasts like player observers do.");
     }
 
     [Test]
-    public void SceneListener_MidEmoteJoin_GetsPlayerJoinedButNoEmoteStarted()
+    public void SceneListener_MidEmoteJoin_GetsPlayerJoinedAndEmoteStarted()
     {
         var listener = new PeerIndex(9);
         MakeSceneListener(listener, realm: "main", parcels: [5]);
 
-        // Subject is already mid-emote when the listener first sees it. A player observer would
-        // get a companion EmoteStarted alongside PlayerJoined (see
-        // PlayerJoined_AlsoAnnouncesActiveEmote_ForNewSubject); a positional-only listener must not.
+        // Subject is already mid-emote when the listener first sees it. Like a player observer
+        // (see PlayerJoined_AlsoAnnouncesActiveEmote_ForNewSubject) it gets a companion
+        // EmoteStarted alongside PlayerJoined.
         snapshotBoard.SetActive(subject);
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 2, serverTick: 20, parcel: 5,
             globalPosition: new Vector3(8f, 0f, 8f), realm: "main",
@@ -153,8 +150,8 @@ public partial class PeerSimulationTests
             Has.Some.EqualTo(ServerMessage.MessageOneofCase.PlayerJoined),
             "The mid-emote subject must still be announced to the listener.");
         Assert.That(messages.Select(m => m.Message.MessageCase),
-            Has.None.EqualTo(ServerMessage.MessageOneofCase.EmoteStarted),
-            "Listeners must not get the companion EmoteStarted that players receive on mid-emote join.");
+            Has.Some.EqualTo(ServerMessage.MessageOneofCase.EmoteStarted),
+            "Listeners get the companion EmoteStarted that players receive on mid-emote join.");
     }
 
     [Test]

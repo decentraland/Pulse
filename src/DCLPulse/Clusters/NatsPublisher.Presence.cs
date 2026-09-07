@@ -273,10 +273,39 @@ public sealed partial class NatsPublisher
         parcelChangePool.TryPop(out ParcelChange? pooled) ? pooled : new ParcelChange();
 
     /// <summary>
-    ///     Publishes a batch once per <see cref="PresenceOptions.BatchIntervalMs" />, and raises the
-    ///     interval snapshot request. Sent straight to the connection rather than through the
-    ///     wake-signalled drain: a batch does not exist until the timer fires, so there is nothing to
-    ///     queue. A fault that ends the loop is logged once and cancels <paramref name="loops" />.
+    ///     One turn of the presence cadence: raise the interval snapshot request if it is due, take
+    ///     whatever the outbox now holds, and account for it — the batch-size observation, and for a
+    ///     snapshot the reason counter and the deadline this batch resets. Everything that happens per
+    ///     batch other than the publish itself, so the cadence a test drives is the cadence the loop
+    ///     runs.
+    ///     <para />
+    ///     False means there is nothing to send this interval.
+    /// </summary>
+    internal bool TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? snapshotReason)
+    {
+        RequestParcelSnapshotIfDue();
+
+        if (!TryBuildParcelBatch(out batch, out snapshotReason))
+            return false;
+
+        PulseMetrics.Presence.BATCH_SIZE.Record(batch.Changes.Count);
+
+        if (snapshotReason is { } reason)
+        {
+            // Stamped from the batch that carries the snapshot rather than from the request that
+            // asked for one, so the deadline measures what consumers actually received.
+            lastParcelSnapshotUnixMs = timeProvider.UnixTimeMs;
+            PulseMetrics.Presence.SNAPSHOTS.Add(1, PulseMetrics.Presence.ReasonTag(reason));
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    ///     Publishes a batch once per <see cref="PresenceOptions.BatchIntervalMs" />. Sent straight to
+    ///     the connection rather than through the wake-signalled drain: a batch does not exist until
+    ///     the timer fires, so there is nothing to queue. A fault that ends the loop is logged once
+    ///     and cancels <paramref name="loops" />.
     /// </summary>
     private async Task PublishParcelChangesPeriodicallyAsync(NatsConnection connection, CancellationTokenSource loops)
     {
@@ -288,18 +317,8 @@ public sealed partial class NatsPublisher
 
             while (!token.IsCancellationRequested)
             {
-                RequestParcelSnapshotIfDue();
-
-                if (TryBuildParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? snapshotReason))
+                if (TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? _))
                 {
-                    PulseMetrics.Presence.BATCH_SIZE.Record(batch.Changes.Count);
-
-                    if (snapshotReason is { } reason)
-                    {
-                        lastParcelSnapshotUnixMs = timeProvider.UnixTimeMs;
-                        PulseMetrics.Presence.SNAPSHOTS.Add(1, PulseMetrics.Presence.ReasonTag(reason));
-                    }
-
                     try
                     {
                         await connection.PublishAsync(

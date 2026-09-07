@@ -561,7 +561,12 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
                 "Presence feed disabled ({Subject} will carry nothing) — Presence:Enabled is {Enabled}, Presence:BatchIntervalMs is {BatchIntervalMs}",
                 PARCEL_CHANGES_SUBJECT, presenceOptions.Enabled, presenceOptions.BatchIntervalMs);
 
-        logger.LogInformation("NATS publisher started — {Broker}", SanitizeBrokerUrl(options.Url));
+        // The effective server_name, whether it was configured or defaulted (A3): consumers key
+        // their per-server presence state on it and replace that state per snapshot, so two replicas
+        // sharing one value delete each other's populations — and this line is the only place an
+        // operator can see which value this process actually resolved.
+        logger.LogInformation("NATS publisher started — {Broker}, server_name {ServerName}",
+            SanitizeBrokerUrl(options.Url), options.ServerName);
 
         // Supervision loop. Losing the broker is handled inside the client — it retries forever with
         // its own backoff — so reaching the end of one iteration means the pipeline itself faulted,

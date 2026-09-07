@@ -359,13 +359,26 @@ public sealed partial class NatsPublisher
     ///     Raises the periodic snapshot request. Measured from the last snapshot <em>published</em>,
     ///     not requested, so a request the tracker has not answered yet — a stopped clustering pass,
     ///     say — does not silently reset the deadline it exists to enforce.
+    ///     <para />
+    ///     A snapshot already in flight satisfies the deadline. It has to: the request is answered by
+    ///     the next pass and published by the turn after that, so for two turns the deadline is still
+    ///     nominally past, and raising a second request in that window costs an extra full snapshot of
+    ///     this server's population every interval, saying exactly what the first one said. Checked
+    ///     under the outbox lock together with the set, so a snapshot being taken for delivery on
+    ///     another thread cannot slip between the two.
     /// </summary>
     private void RequestParcelSnapshotIfDue()
     {
+        if (!presenceEnabled) return;
         if (presenceOptions.SnapshotIntervalMs <= 0) return;
+        if (timeProvider.UnixTimeMs - lastParcelSnapshotUnixMs < presenceOptions.SnapshotIntervalMs) return;
 
-        if (timeProvider.UnixTimeMs - lastParcelSnapshotUnixMs >= presenceOptions.SnapshotIntervalMs)
-            RequestParcelSnapshot(PresenceSnapshotReason.Interval);
+        lock (outboxLock)
+        {
+            if (pendingParcelSnapshot is not null) return;
+
+            parcelSnapshotRequest ??= PresenceSnapshotReason.Interval;
+        }
     }
 
     /// <summary>

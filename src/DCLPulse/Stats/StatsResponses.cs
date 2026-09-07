@@ -66,7 +66,12 @@ public sealed record RealmPeerCount(string Name, int Peers);
 
 public sealed record RealmsResponse(IReadOnlyList<RealmSummary> Realms, string LastUpdated);
 
-public sealed record PeersResponse(bool Ok, IReadOnlyList<PeerResult> Peers, string? Realm = null);
+/// <summary>
+///     A peers list. <see cref="Realm" /> is declared before <see cref="Peers" /> so the envelope
+///     reads before the payload on the wire — the shape the contract documents — and is null on the
+///     all-realms routes, where each entry carries its own realm instead.
+/// </summary>
+public sealed record PeersResponse(bool Ok, string? Realm, IReadOnlyList<PeerResult> Peers);
 
 public sealed record PeerResponse(bool Ok, PeerResult? Peer);
 

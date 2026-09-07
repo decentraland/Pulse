@@ -289,6 +289,33 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
+    ///     One interval, one snapshot. The request the deadline raises is answered by the next pass
+    ///     and published by the turn after that, so for two turns the deadline is still nominally
+    ///     past — and a second request raised in that window costs a whole extra snapshot of this
+    ///     server's population, every minute, saying exactly what the first one said.
+    /// </summary>
+    [Test]
+    public void TheIntervalSnapshot_IsPublishedOnce_NotAgainWhileItIsInFlight()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null, "the deadline passes on a turn with nothing to send");
+
+        scenario.RunPass();
+
+        Assert.That(scenario.NextBatchWithReason(T0 + 62_000).Reason, Is.EqualTo(PresenceSnapshotReason.Interval));
+
+        scenario.RunPass();
+
+        Assert.That(scenario.NextBatch(T0 + 64_000), Is.Null,
+            "the snapshot has just gone out — the deadline is met, not still pending");
+
+        scenario.RunPass();
+
+        Assert.That(scenario.NextBatch(T0 + 66_000), Is.Null);
+    }
+
+    /// <summary>
     ///     The outbox's one path to real loss is eviction, and a consumer applying the deltas either
     ///     side of one would hold a peer at a parcel it has left. So an eviction forces a snapshot:
     ///     consumers never run on a delta stream that is known to be incomplete.

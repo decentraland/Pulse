@@ -169,7 +169,14 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
         // be a full snapshot (C1.4). Raised here rather than in the run loop so a broker that takes a
         // while to reach cannot turn the opening batch into a delta against nothing.
         if (presenceEnabled)
+        {
             parcelSnapshotRequest = PresenceSnapshotReason.Start;
+
+            // The periodic deadline runs from process start, not from the epoch. Left at zero it is
+            // due on the first turn of the loop, which would raise an interval request on top of the
+            // start snapshot and spend the next batch re-sending what that snapshot just said.
+            lastParcelSnapshotUnixMs = this.timeProvider.UnixTimeMs;
+        }
 
         if (!feedEnabled) return;
 

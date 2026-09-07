@@ -1,10 +1,12 @@
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Pulse;
 using Pulse.Clusters;
 using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Presence;
 using System.Numerics;
 using Decentraland.Pulse;
 
@@ -100,6 +102,18 @@ public class ClusterTrackerBenchmarks
             IdPrefix = "C",
         });
 
+        var feedPublisher = new NoOpFeedPublisher();
+        var timeProvider = new StopwatchTimeProvider();
+
+        // Presence off, as it is with no broker configured: this benchmark measures the clustering
+        // pass, and the feed's own cost belongs to its own benchmark.
+        var parcelChanges = new ParcelChangeTracker(
+            feedPublisher,
+            new ParcelEncoder(new OptionsWrapper<ParcelEncoderOptions>(new ParcelEncoderOptions())),
+            new OptionsWrapper<PresenceOptions>(new PresenceOptions()),
+            new OptionsWrapper<NatsOptions>(new NatsOptions { Url = string.Empty }),
+            peerCount);
+
         tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
@@ -107,7 +121,9 @@ public class ClusterTrackerBenchmarks
             snapshotBoard,
             identityBoard,
             clusterBoard,
-            new NoOpFeedPublisher(),
+            feedPublisher,
+            parcelChanges,
+            timeProvider,
             peerCount);
 
         for (var i = 0; i < peerCount; i++)
@@ -354,5 +370,16 @@ public class ClusterTrackerBenchmarks
         public void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session) { }
 
         public void PublishTopology(ClusterPass pass) { }
+
+        public void PublishParcelChange(string address, string realm, ParcelCoord? parcel) { }
+
+        public void PublishParcelSnapshot(IReadOnlyList<PeerPresence> presence, PresenceSnapshotReason reason) { }
+
+        public bool TryTakeParcelSnapshotRequest(out PresenceSnapshotReason reason)
+        {
+            reason = default(PresenceSnapshotReason);
+
+            return false;
+        }
     }
 }

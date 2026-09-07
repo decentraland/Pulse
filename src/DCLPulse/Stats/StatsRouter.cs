@@ -108,7 +108,7 @@ public sealed class StatsRouter(
     {
         string canonical = CanonicalName.Of(realm);
 
-        return StatsResponse.Ok(new PeersResponse(Ok: true, Read().PeersIn(canonical), canonical));
+        return StatsResponse.Ok(new PeersResponse(Ok: true, canonical, Read().PeersIn(canonical)));
     }
 
     private StatsResponse RealmParcels(string realm)
@@ -142,11 +142,11 @@ public sealed class StatsRouter(
         if (ids.Count > MAX_IDS)
             return StatsResponse.Json(400, new ErrorResponse(Ok: false, $"too many ids (max {MAX_IDS})"));
 
-        return StatsResponse.Ok(new PeersResponse(Ok: true, Read().PeersMatching(ids)));
+        return StatsResponse.Ok(new PeersResponse(Ok: true, Realm: null, Read().PeersMatching(ids)));
     }
 
     private StatsResponse AllPeers() =>
-        StatsResponse.Ok(new PeersResponse(Ok: true, Read().AllPeers()));
+        StatsResponse.Ok(new PeersResponse(Ok: true, Realm: null, Read().AllPeers()));
 
     /// <summary>
     ///     One wallet across every realm. 404 with <c>{"ok":false,"peer":null}</c> rather than an

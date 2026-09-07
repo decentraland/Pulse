@@ -1,5 +1,6 @@
 using Pulse.Clusters;
 using Pulse.FeatureFlags;
+using System.Globalization;
 using Pulse.InterestManagement;
 using Pulse.Peers.Simulation;
 
@@ -67,10 +68,16 @@ public sealed class StatsRouter(
     {
         string[] segments = absolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        // The /comms/ prefix is a second spelling of the same legacy paths, so it is stripped before
-        // matching and the redirect it produces points at the unprefixed canonical route.
+        // The /comms/ prefix is a second spelling of the legacy paths — and of nothing else. Stripped
+        // before matching, but only for those four: /comms/realms, /comms/status and the rest would
+        // otherwise be new unversioned public surface that nobody asked for and that becomes hard to
+        // withdraw once a caller depends on it.
         if (segments is ["comms", ..])
+        {
             segments = segments[1..];
+
+            if (!IsLegacyPath(segments)) return StatsResponse.NotFound();
+        }
 
         return segments switch
         {
@@ -96,6 +103,15 @@ public sealed class StatsRouter(
             _ => StatsResponse.NotFound(),
         };
     }
+
+    /// <summary>
+    ///     The paths archipelago-stats answered unscoped, which are the only ones the <c>/comms/</c>
+    ///     prefix is a second spelling of. <c>/peers</c> is in the set whether or not a query
+    ///     parameter turns it into an all-realms lookup — <c>/comms/peers?id=…</c> is answered
+    ///     directly, exactly like <c>/peers?id=…</c>.
+    /// </summary>
+    private static bool IsLegacyPath(string[] segments) =>
+        segments is ["peers"] or ["parcels"] or ["islands"] or ["islands", _];
 
     private StatsResponse Realms()
     {
@@ -200,7 +216,16 @@ public sealed class StatsRouter(
     /// <summary>
     ///     ISO-8601 UTC with milliseconds and a <c>Z</c> — what <c>new Date(ms).toISOString()</c>
     ///     produces, since every consumer of this field parses it with a JavaScript <c>Date</c>.
+    ///     <para />
+    ///     <see cref="CultureInfo.InvariantCulture" /> is load-bearing, not decoration: <c>:</c> in a
+    ///     custom format string is <em>the culture's time separator</em>, so a container started with
+    ///     <c>LANG=fi_FI.UTF-8</c> would emit <c>2026-09-04T09.52.47.834Z</c> and every JS consumer's
+    ///     <c>new Date(…)</c> would read Invalid Date. The explicit pattern rather than <c>"o"</c>
+    ///     because the contract pins milliseconds and round-trip format writes seven fractional
+    ///     digits.
     /// </summary>
     private static string IsoUtcMs(long unixMs) =>
-        DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        DateTimeOffset.FromUnixTimeMilliseconds(unixMs)
+                      .UtcDateTime
+                      .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
 }

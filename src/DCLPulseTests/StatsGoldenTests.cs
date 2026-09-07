@@ -1,3 +1,5 @@
+using Pulse;
+using Pulse.Clusters;
 using Pulse.Stats;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -17,11 +19,15 @@ namespace DCLPulseTests;
 [TestFixture]
 public class StatsGoldenTests
 {
+    private PresenceScenario world;
     private StatsRouter router;
 
     [OneTimeSetUp]
-    public void BuildWorld() =>
-        router = StatsFixtureWorld.RouterOver(StatsFixtureWorld.Build());
+    public void BuildWorld()
+    {
+        world = StatsFixtureWorld.Build();
+        router = StatsFixtureWorld.RouterOver(world);
+    }
 
     [TestCase("realms.json")]
     [TestCase("realms-main-peers.json")]
@@ -48,6 +54,143 @@ public class StatsGoldenTests
         Assert.That(response.Status, Is.EqualTo(fixture["status"]!.GetValue<int>()), golden);
 
         JsonGolden.AssertMatches(fixture["body"], BodyOf(response), golden);
+    }
+
+    /// <summary>
+    ///     The 404 body of <c>/peers/{id}</c>, asserted as the bytes on the wire rather than only
+    ///     structurally. <c>peer</c> has to be <em>present</em> and null: a consumer replacing
+    ///     worlds-content-server's <c>/wallet/:wallet/connected-world</c> tests <c>'peer' in body</c>
+    ///     or <c>body.peer === null</c>, and the published OpenAPI declares the key required — so
+    ///     omitting it turns a legitimate "not online" answer into a malformed one.
+    /// </summary>
+    [Test]
+    public void PeersSingleNotFound_WritesTheNullPeerKey()
+    {
+        StatsResponse response = Request($"/peers/{StatsFixtureWorld.OFFLINE_WALLET}");
+
+        Assert.That(response.Status, Is.EqualTo(404));
+        Assert.That(Encoding.UTF8.GetString(response.Body!), Is.EqualTo("{\"ok\":false,\"peer\":null}"));
+    }
+
+    /// <summary>
+    ///     The golden harness itself, because a harness that cannot see a missing key makes every
+    ///     null the contract pins unasserted — which is how the <c>peer</c> key above went missing
+    ///     while its golden test was green.
+    /// </summary>
+    [Test]
+    public void GoldenHarness_FailsWhenAKeyTheGoldenPinsAsNullIsAbsent()
+    {
+        List<string> differences = JsonGolden.Differences(
+            JsonNode.Parse("""{"ok":false,"peer":null}"""),
+            JsonNode.Parse("""{"ok":false}"""));
+
+        Assert.That(differences, Has.Exactly(1).Contains("$.peer: missing"));
+    }
+
+    [Test]
+    public void GoldenHarness_AcceptsTheKeyPresentWithNull()
+    {
+        Assert.That(
+            JsonGolden.Differences(
+                JsonNode.Parse("""{"ok":false,"peer":null}"""),
+                JsonNode.Parse("""{"ok":false,"peer":null}""")),
+            Is.Empty);
+    }
+
+    /// <summary>
+    ///     And a golden with no <c>body</c> at all still means "no body" — <c>/health</c> and the
+    ///     404s that answer with nothing — which is a different statement from a null-valued key.
+    /// </summary>
+    [Test]
+    public void GoldenHarness_StillReadsAGoldenWithoutABodyAsNoBody()
+    {
+        Assert.That(JsonGolden.Differences(null, null), Is.Empty);
+
+        Assert.That(JsonGolden.Differences(null, JsonNode.Parse("""{"ok":true}""")),
+            Has.Exactly(1).Contains("expected no body"));
+    }
+
+    /// <summary>
+    ///     <c>lastUpdated</c> is a machine-readable timestamp, so it must not depend on the
+    ///     container's locale: <c>:</c> is the culture's time separator, and under a culture that
+    ///     spells it <c>.</c> the field would come out as <c>2026-09-04T09.52.47.834Z</c>, which every
+    ///     JS consumer's <c>new Date(...)</c> reads as Invalid Date.
+    /// </summary>
+    [Test]
+    [SetCulture("fi-FI")]
+    public void LastUpdated_IsFormattedInvariantlyOfTheAmbientCulture()
+    {
+        string lastUpdated = BodyOf(Request("/realms"))!["lastUpdated"]!.GetValue<string>();
+
+        Assert.That(lastUpdated, Is.EqualTo("2026-09-04T09:52:47.834Z"));
+    }
+
+    /// <summary>
+    ///     <c>/comms/</c> is a second spelling of the four legacy paths and of nothing else. Stripping
+    ///     it before matching every route answered <c>/comms/realms</c>, <c>/comms/status</c>,
+    ///     <c>/comms/about</c> and the realm-scoped routes as well — unversioned public surface nobody
+    ///     asked for, which becomes hard to withdraw once a caller depends on it.
+    /// </summary>
+    [TestCase("/comms/realms")]
+    [TestCase("/comms/status")]
+    [TestCase("/comms/about")]
+    [TestCase("/comms/health")]
+    [TestCase("/comms/realms/main/peers")]
+    [TestCase("/comms/realms/main/islands")]
+    [TestCase("/comms/peers/0x0000000000000000000000000000000000000001")]
+    [TestCase("/comms/metrics")]
+    [TestCase("/comms")]
+    public void CommsPrefix_IsNotASecondSpellingOfEveryRoute(string path)
+    {
+        StatsResponse response = Request(path);
+
+        Assert.That(response.Status, Is.EqualTo(404), path);
+        Assert.That(response.Body, Is.Null, path);
+    }
+
+    /// <summary>
+    ///     The legacy set keeps working under the prefix, query exception included — the four paths
+    ///     <c>redirects.json</c> lists are exactly what <c>/comms/</c> is for.
+    /// </summary>
+    [TestCase("/comms/peers", 308)]
+    [TestCase("/comms/parcels", 308)]
+    [TestCase("/comms/islands", 308)]
+    [TestCase("/comms/islands/C1", 308)]
+    [TestCase("/comms/peers?id=0x0000000000000000000000000000000000000001", 200)]
+    [TestCase("/comms/peers?all=true", 200)]
+    public void CommsPrefix_StillAnswersTheLegacyPaths(string path, int status)
+    {
+        Assert.That(Request(path).Status, Is.EqualTo(status), path);
+    }
+
+    /// <summary>
+    ///     Island membership, against a naive scan of the pass it was built from. The view indexes
+    ///     members per cluster in one pass instead of rescanning the whole peer array per island, and
+    ///     what must not change is the answer — including the address ordering inside each island.
+    /// </summary>
+    [Test]
+    public void Islands_ListExactlyTheirMembers_HoweverTheViewIndexesThem()
+    {
+        StatsBoardView view = StatsBoardView.Read(
+            world.ClusterBoard, world.SnapshotBoard, world.ParcelEncoder, world.Clock);
+
+        ClusterPass pass = world.ClusterBoard.Current;
+
+        Assert.That(pass.Clusters, Is.Not.Empty);
+
+        foreach (ClusterInfo cluster in pass.Clusters)
+        {
+            string[] expected = pass.Peers
+                                    .Where(peer => string.Equals(peer.ClusterId, cluster.Id, StringComparison.Ordinal))
+                                    .Select(static peer => CanonicalName.Of(peer.Wallet))
+                                    .OrderBy(static address => address, StringComparer.Ordinal)
+                                    .ToArray();
+
+            IslandResult island = view.IslandIn(cluster.Realm, cluster.Id)!;
+
+            Assert.That(island.Peers.Select(static peer => peer.Address).ToArray(), Is.EqualTo(expected), cluster.Id);
+            Assert.That(expected, Is.Not.Empty, cluster.Id);
+        }
     }
 
     /// <summary>

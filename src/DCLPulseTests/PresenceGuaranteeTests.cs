@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Microsoft.Extensions.Logging.Abstractions;
+using NATS.Client.Core;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
@@ -127,6 +128,65 @@ public class PresenceGuaranteeTests
         scenario.RunPass();
 
         AssertSingleExit(scenario, Wallet(1), MAIN);
+    }
+
+    /// <summary>
+    ///     ...and the case that makes the exit <b>wallet-scoped</b> (A1). The handshake accepts the
+    ///     new session at once and the evicted slot is only cleaned
+    ///     <c>Peers:DisconnectionCleanTimeoutMs</c> later, so by the time the cleanup runs the wallet
+    ///     is already standing somewhere on a newer connection. Consumers key presence by wallet, so
+    ///     withdrawing it here takes a peer that is online offline — and if both entries land in one
+    ///     batch, per-address coalescing keeps the exit and the new placement is never seen at all.
+    ///     <para />
+    ///     The newer placement is the whole of this wallet's presence, so the stale slot's departure
+    ///     is not news.
+    /// </summary>
+    [Test]
+    public void DuplicateSessionKick_ForAWalletAlreadyPlacedOnANewerSlot_EmitsNoExit()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        // The second client instance handshakes: the existing session is kicked and the new one is
+        // placed on its own slot, for the same wallet.
+        scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
+        scenario.Place(P2, Wallet(1), MAIN, 5, 5);
+        scenario.RunPass();
+
+        // ...and only then does the evicted slot's cleanup run.
+        scenario.Remove(P1);
+        scenario.RunPass();
+
+        Assert.That(Entries(scenario.NextBatch(T0 + 2000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
+            "the feed must carry the new placement and no exit for a wallet that is still online");
+
+        scenario.RunPass();
+
+        Assert.That(scenario.NextBatch(T0 + 4000), Is.Null);
+    }
+
+    /// <summary>
+    ///     The same rule the other way round: once the newer connection goes too, the wallet is on no
+    ///     slot of this server and the exit is due. Otherwise A1 would turn into "a wallet that ever
+    ///     had two sessions never leaves".
+    /// </summary>
+    [Test]
+    public void WhenTheLastConnectionOfAWalletIsCleanedUp_TheExitIsPublished()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        scenario.Place(P2, Wallet(1), MAIN, 5, 5);
+        scenario.RunPass();
+        scenario.NextBatch(T0 + 2000);
+
+        scenario.Remove(P1);
+        scenario.RunPass();
+
+        Assert.That(scenario.NextBatch(T0 + 4000), Is.Null, "the wallet is still placed on the newer slot");
+
+        scenario.Remove(P2);
+        scenario.RunPass();
+
+        Assert.That(Entries(scenario.NextBatch(T0 + 6000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -" }));
     }
 
     /// <summary>
@@ -321,36 +381,171 @@ public class PresenceGuaranteeTests
     ///     consumers never run on a delta stream that is known to be incomplete.
     /// </summary>
     [Test]
-    public void OutboxEviction_ForcesASnapshot_LabelledEviction()
+    public void OutboxEviction_ForcesASnapshot_LabelledEviction_OnTheVeryNextTurn()
     {
-        var scenario = new PresenceScenario(channelCapacity: 2);
+        PresenceScenario scenario = EvictingScenario();
 
-        scenario.Place(P1, Wallet(1), MAIN, -1, 0);
-        scenario.Place(P2, Wallet(2), MAIN, 5, 5);
-        scenario.Place(P3, Wallet(3), COZYFARM, 0, 0);
-        scenario.RunPass();
-        scenario.NextBatch(T0);
+        // Past the eviction coalescing window, so the eviction below is the one being measured
+        // rather than one already covered by an earlier snapshot.
+        scenario.Clock.UnixTimeMs = T0 + 20_000;
 
         // Three wallets change inside one interval against a two-entry outbox, so the third insert
-        // drops the first — a change that no consumer will ever receive.
+        // drops one of them — a change that no consumer will ever receive.
         scenario.Move(P1, MAIN, -2, 0);
         scenario.Move(P2, MAIN, 6, 5);
         scenario.Move(P3, COZYFARM, 1, 1);
         scenario.RunPass();
 
-        scenario.RunPass();
+        // No second pass: the eviction was caused by the deltas this pass published, and the pass
+        // answers the request it raised before it returns. "Immediately after any outbox eviction"
+        // is the next turn, not the turn after the pass after it.
+        List<(ParcelChangesBatch Batch, PresenceSnapshotReason? Reason)> turn =
+            scenario.NextTurnWithReasons(T0 + 20_000);
 
-        (ParcelChangesBatch? batch, PresenceSnapshotReason? reason) = scenario.NextBatchWithReason(T0 + 2000);
+        Assert.That(turn, Has.Count.EqualTo(2), "the pending deltas, and then the snapshot behind them");
 
-        Assert.That(reason, Is.EqualTo(PresenceSnapshotReason.Eviction));
-        Assert.That(batch!.Snapshot, Is.True);
+        Assert.That(turn[0].Reason, Is.Null);
+        Assert.That(turn[0].Batch.Snapshot, Is.False);
 
-        Assert.That(Entries(batch), Is.EqualTo(new[]
+        // Which of the three was dropped is the outbox's admission order, not a contract; that two
+        // survived and still go out is the A2 half — a snapshot does not swallow them.
+        Assert.That(turn[0].Batch.Changes, Has.Count.EqualTo(2),
+            "what survived the eviction still goes out — the snapshot repairs what did not");
+
+        Assert.That(turn[1].Reason, Is.EqualTo(PresenceSnapshotReason.Eviction));
+        Assert.That(turn[1].Batch.Snapshot, Is.True);
+        Assert.That(turn[1].Batch.Seq, Is.EqualTo(turn[0].Batch.Seq + 1), "the snapshot takes the next seq");
+
+        Assert.That(Entries(turn[1].Batch), Is.EqualTo(new[]
         {
             $"{Wallet(1)} {MAIN} -2,0",
             $"{Wallet(2)} {MAIN} 6,5",
             $"{Wallet(3)} {COZYFARM} 1,1",
         }), "the snapshot must carry the evicted peer's current state, which is what repairs the loss");
+    }
+
+    /// <summary>
+    ///     An eviction means the broker is already behind, and a full-population snapshot is the
+    ///     largest message this feed can produce — so raising one per batch for as long as the outbox
+    ///     keeps evicting is the worst thing to do at that moment. Eviction snapshots are coalesced to
+    ///     at most one per
+    ///     <c>Presence:SnapshotIntervalMs / NatsPublisher.EVICTION_SNAPSHOT_INTERVAL_DIVISOR</c> — 15 s
+    ///     on the defaults — while the first one is still immediate, which is the half that repairs
+    ///     the loss.
+    /// </summary>
+    [Test]
+    public void SustainedEviction_RaisesOneSnapshotPerCoalescingWindow_NotOnePerBatch()
+    {
+        PresenceScenario scenario = EvictingScenario();
+
+        Assert.That(EvictOnce(scenario, step: 1, at: T0 + 20_000), Is.True, "the first eviction snapshots at once");
+
+        // Same window: the loss is repaired by the snapshot that has just gone out, and a second full
+        // snapshot two seconds later would say the same thing at the worst possible moment.
+        Assert.That(EvictOnce(scenario, step: 2, at: T0 + 22_000), Is.False);
+        Assert.That(EvictOnce(scenario, step: 3, at: T0 + 24_000), Is.False);
+
+        // Past the window, a still-evicting outbox is worth restating the world for.
+        Assert.That(EvictOnce(scenario, step: 4, at: T0 + 20_000 + 15_000), Is.True);
+    }
+
+    /// <summary>
+    ///     Moves three wallets against a two-entry outbox at wall-clock <paramref name="at" /> — so
+    ///     one change is evicted — and reports whether the turn that follows carried an eviction
+    ///     snapshot. The clock is set before the pass, because the request is raised inside it.
+    /// </summary>
+    private static bool EvictOnce(PresenceScenario scenario, int step, long at)
+    {
+        scenario.Clock.UnixTimeMs = at;
+
+        scenario.Move(P1, MAIN, -2 - step, 0);
+        scenario.Move(P2, MAIN, 6 + step, 5);
+        scenario.Move(P3, COZYFARM, 1 + step, 1);
+        scenario.RunPass();
+        scenario.DrainClusterOutbox();
+
+        return scenario.NextTurnWithReasons(at)
+                       .Any(static published => published.Reason == PresenceSnapshotReason.Eviction);
+    }
+
+    /// <summary>
+    ///     A snapshot never discards a pending change (A2). It supersedes the <em>placements</em>
+    ///     among them — it states each of those peers' position itself — but it cannot name an exit:
+    ///     the departed peer's slot is already cleared, so <c>CollectLivePresence</c> does not list
+    ///     it. Clearing the pending set therefore made that exit path publish nothing at all, while
+    ///     C1 §2 says it publishes exactly one entry.
+    ///     <para />
+    ///     So the batch that was pending when the snapshot was collected goes out first, under its own
+    ///     <c>seq</c>, and the snapshot follows on the next one — both on the wire, in that order.
+    /// </summary>
+    [Test]
+    public void ASnapshotDoesNotDiscardAPendingExit_ItPublishesItFirst()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        // The interval deadline passes on a turn with nothing to send, raising the request.
+        Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null);
+
+        // The peer leaves before the pass that answers it, so the snapshot cannot name it.
+        scenario.Remove(P1);
+        scenario.RunPass();
+
+        List<(ParcelChangesBatch Batch, PresenceSnapshotReason? Reason)> turn =
+            scenario.NextTurnWithReasons(T0 + 62_000);
+
+        Assert.That(turn, Has.Count.EqualTo(2), "the pending exit, and then the snapshot");
+
+        Assert.That(turn[0].Batch.Snapshot, Is.False);
+        Assert.That(Entries(turn[0].Batch), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -" }),
+            "the exit is the pending batch, and it has to reach consumers");
+
+        Assert.That(turn[1].Batch.Snapshot, Is.True);
+        Assert.That(turn[1].Reason, Is.EqualTo(PresenceSnapshotReason.Interval));
+        Assert.That(turn[1].Batch.Seq, Is.EqualTo(turn[0].Batch.Seq + 1));
+        Assert.That(Entries(turn[1].Batch), Is.Empty, "and the server is empty, which the snapshot says");
+    }
+
+    /// <summary>
+    ///     A rebuilt broker connection restates the world. A consumer that subscribed while Pulse was
+    ///     disconnected holds nothing for this <c>server_name</c>, and the consumer rule tells it to
+    ///     hold and wait on anything that is not a snapshot — so resuming mid-delta leaves it frozen
+    ///     for up to a snapshot interval.
+    /// </summary>
+    [Test]
+    public async Task AReconnect_MakesTheNextBatchASnapshot()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        // The first open is the one the constructor already raised Start for; every open after it is
+        // a reconnect.
+        await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("first"));
+        await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("rebuilt"));
+
+        scenario.RunPass();
+
+        (ParcelChangesBatch? batch, PresenceSnapshotReason? reason) = scenario.NextBatchWithReason(T0 + 2000);
+
+        Assert.That(batch!.Snapshot, Is.True);
+        Assert.That(reason, Is.EqualTo(PresenceSnapshotReason.Start));
+        Assert.That(Entries(batch), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -1,0" }));
+    }
+
+    /// <summary>
+    ///     <c>PeerIndex</c> is a recycled transport slot. Nothing releases one today except the
+    ///     cleanup that clears the tracker's slot, but the codebase already guards the same class of
+    ///     aliasing for the observer view — and if a slot were ever reused without it, a new wallet
+    ///     landing on the departed one's parcel would publish nothing, and the next snapshot would
+    ///     report the peer that left as standing there.
+    /// </summary>
+    [Test]
+    public void ANewWalletOnARecycledSlot_IsPublished_EvenAtTheSameParcel()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        scenario.Place(P1, Wallet(2), MAIN, -1, 0);
+        scenario.RunPass();
+
+        Assert.That(Entries(scenario.NextBatch(T0 + 2000)!), Is.EqualTo(new[] { $"{Wallet(2)} {MAIN} -1,0" }));
     }
 
     // ── C1.5 canonical identifiers ─────────────────────────────────
@@ -458,6 +653,39 @@ public class PresenceGuaranteeTests
         scenario.RunPass();
 
         Assert.That(scenario.NextBatch(T0 + 4000), Is.Null, "the exit must be published exactly once");
+    }
+
+    /// <summary>
+    ///     Three peers in a two-entry outbox, with the opening snapshot delivered and the cluster feed
+    ///     drained — so the next pass in which all three move is the one that evicts, and nothing
+    ///     else has evicted before it.
+    ///     <para />
+    ///     That last part needs doing explicitly: the two feeds share <c>Nats:ChannelCapacity</c> and
+    ///     the one <c>CountDropped</c> path, and the cluster feed publishes three first-time
+    ///     assignments in the opening pass, so it evicts one of its own and raises the presence
+    ///     snapshot request that goes with it. Real, and the reason eviction snapshots are coalesced
+    ///     at all — but not what these two tests are about, so it is answered and cleared here.
+    /// </summary>
+    private static PresenceScenario EvictingScenario()
+    {
+        var scenario = new PresenceScenario(channelCapacity: 2);
+
+        scenario.Place(P1, Wallet(1), MAIN, -1, 0);
+        scenario.Place(P2, Wallet(2), MAIN, 5, 5);
+        scenario.Place(P3, Wallet(3), COZYFARM, 0, 0);
+        scenario.RunPass();
+        scenario.NextBatch(T0);
+
+        Assert.That(scenario.Publisher.DroppedCount, Is.EqualTo(1),
+            "the shared outbox bound evicts one of the three first-time cluster assignments");
+
+        Assert.That(scenario.DrainClusterOutbox(), Is.GreaterThan(0));
+
+        // Answers and delivers the snapshot that cluster-feed eviction asked for.
+        scenario.RunPass();
+        scenario.NextBatch(T0 + 2000);
+
+        return scenario;
     }
 
     private static PeerIndex[] DrainDisconnects(MessagePipe pipe)

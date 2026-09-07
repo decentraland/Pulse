@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Google.Protobuf;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -334,6 +335,75 @@ internal sealed class PresenceScenario
         return Publisher.TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? reason)
             ? (batch, reason)
             : (null, null);
+    }
+
+    /// <summary>
+    ///     Empties the cluster feed's outbox, as a connected broker's drain loop does, and reports how
+    ///     many messages it took.
+    ///     <para />
+    ///     Load-bearing for any test about presence eviction: the two feeds share
+    ///     <c>Nats:ChannelCapacity</c> and the one <c>CountDropped</c> path, so an undelivered backlog
+    ///     of cluster assignments evicts — and forces a presence snapshot — quite apart from anything
+    ///     the presence outbox did. Draining it is what leaves the presence outbox as the only thing
+    ///     that can evict.
+    /// </summary>
+    public int DrainClusterOutbox()
+    {
+        var drained = 0;
+
+        while (Publisher.TryDequeueNext(out string _, out IMessage? message))
+        {
+            Publisher.Return(message);
+            drained++;
+        }
+
+        return drained;
+    }
+
+    /// <summary>
+    ///     Every batch one turn of the publish loop would put on the wire, in order — the loop drains
+    ///     up to <see cref="NatsPublisher.MAX_PARCEL_BATCHES_PER_TURN" /> batches per tick, because a
+    ///     snapshot travels behind the delta batch that was pending when it was collected (A2).
+    ///     <para />
+    ///     Each batch is cloned: the publisher owns one reused instance, so the caller would otherwise
+    ///     be handed the same object twice.
+    /// </summary>
+    public List<ParcelChangesBatch> NextTurn(long serverTimeMs)
+    {
+        Clock.UnixTimeMs = serverTimeMs;
+
+        var batches = new List<ParcelChangesBatch>();
+
+        for (var i = 0; i < NatsPublisher.MAX_PARCEL_BATCHES_PER_TURN; i++)
+        {
+            if (!Publisher.TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? _))
+                break;
+
+            batches.Add(batch.Clone());
+        }
+
+        return batches;
+    }
+
+    /// <summary>
+    ///     <see cref="NextTurn" /> with each batch's snapshot reason alongside it, for the cadence
+    ///     tests.
+    /// </summary>
+    public List<(ParcelChangesBatch Batch, PresenceSnapshotReason? Reason)> NextTurnWithReasons(long serverTimeMs)
+    {
+        Clock.UnixTimeMs = serverTimeMs;
+
+        var batches = new List<(ParcelChangesBatch, PresenceSnapshotReason?)>();
+
+        for (var i = 0; i < NatsPublisher.MAX_PARCEL_BATCHES_PER_TURN; i++)
+        {
+            if (!Publisher.TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? reason))
+                break;
+
+            batches.Add((batch.Clone(), reason));
+        }
+
+        return batches;
     }
 
     /// <summary>

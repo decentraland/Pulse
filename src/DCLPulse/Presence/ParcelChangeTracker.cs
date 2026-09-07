@@ -95,6 +95,18 @@ public sealed class ParcelChangeTracker
             for (var i = 0; i < pass.Peers.Count; i++)
                 Observe(pass.Peers[i], publishChange: !snapshot);
 
+            // An outbox eviction is raised by the deltas this pass has just published, so the
+            // request for the snapshot that repairs it does not exist until the loop above has run.
+            // Answering it here rather than leaving it for the next pass is what makes C1.4's
+            // "immediately after any outbox eviction" the very next batch turn instead of the turn
+            // after the pass after it — the state is right here, and one pass later it would already
+            // have moved on.
+            if (!snapshot && feed.TryTakeParcelSnapshotRequest(out PresenceSnapshotReason raisedByThisPass))
+            {
+                snapshot = true;
+                reason = raisedByThisPass;
+            }
+
             if (snapshot)
                 feed.PublishParcelSnapshot(CollectLivePresence(), reason);
         }

@@ -918,6 +918,13 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
         {
             Interlocked.Increment(ref reconnectCount);
             PulseMetrics.Nats.RECONNECTS.Add(1);
+
+            // A consumer that subscribed while this connection was down holds nothing for this
+            // server_name, and the consumer rule tells it to hold and wait on anything that is not a
+            // snapshot — so resuming mid-delta can leave it frozen for a whole snapshot interval.
+            // Labelled Start for the same reason the opening batch is: as far as the wire is
+            // concerned this is a fresh stream.
+            RequestParcelSnapshot(PresenceSnapshotReason.Start);
         }
 
         MarkConnected();

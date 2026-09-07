@@ -1,24 +1,23 @@
 using Microsoft.Extensions.Options;
-using Pulse.FeatureFlags;
 using Pulse.Metrics;
+using Pulse.Stats;
 using System.Net;
-using System.Text.Json;
 
 namespace Pulse;
 
+/// <summary>
+///     The HTTP surface. <c>/metrics</c> lives here because it is the one route with a bearer token
+///     and its own content type; everything else — the read-only stats surface of iteration-2 C2, plus
+///     <c>/health</c> and <c>/about</c> — is answered by <see cref="StatsRouter" />, which needs no
+///     <see cref="HttpListener" /> to be tested against the contract goldens.
+/// </summary>
 public sealed class HttpService(
     ILogger<HttpService> logger,
     IOptions<HttpServiceOptions> options,
     IMetricsCollector metricsCollector,
     MetricsBearerToken metricsBearerToken,
-    PulseFlagsConfigurationProvider featureFlagsProvider) : BackgroundService
+    StatsRouter statsRouter) : BackgroundService
 {
-    private static readonly string COMMIT_HASH = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
-
-    // camelCase members, verbatim dictionary keys: the override map is keyed by configuration paths
-    // ("Transport:Hardening:IpLimiter:Enabled") that must read back exactly as typed.
-    private static readonly JsonSerializerOptions ABOUT_JSON = new () { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         string host = OperatingSystem.IsWindows() ? "localhost" : "+";
@@ -28,7 +27,7 @@ public sealed class HttpService(
         listener.Prefixes.Add(prefix);
         listener.Start();
 
-        logger.LogInformation("Health check listening on {Prefix}", prefix);
+        logger.LogInformation("HTTP surface listening on {Prefix}", prefix);
 
         try
         {
@@ -38,32 +37,10 @@ public sealed class HttpService(
 
                 try
                 {
-                    switch (ctx.Request.Url?.AbsolutePath)
-                    {
-                        case "/health":
-                            ctx.Response.StatusCode = 200;
-                            break;
-                        case "/about":
-                            ctx.Response.StatusCode = 200;
-                            ctx.Response.ContentType = "application/json";
-                            await ctx.Response.OutputStream.WriteAsync(BuildAboutResponse(), stoppingToken);
-                            break;
-                        case "/metrics":
-                            if (!AuthorizeMetrics(ctx.Request))
-                            {
-                                ctx.Response.StatusCode = 401;
-                                break;
-                            }
-
-                            ctx.Response.StatusCode = 200;
-                            ctx.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
-                            await using (var writer = new StreamWriter(ctx.Response.OutputStream))
-                                PrometheusFormatter.Write(writer, metricsCollector.TakeSnapshot());
-                            break;
-                        default:
-                            ctx.Response.StatusCode = 404;
-                            break;
-                    }
+                    if (ctx.Request.Url?.AbsolutePath == "/metrics")
+                        await WriteMetricsAsync(ctx, stoppingToken);
+                    else
+                        await WriteStatsAsync(ctx, stoppingToken);
 
                     ctx.Response.Close();
                 }
@@ -81,14 +58,40 @@ public sealed class HttpService(
         }
     }
 
-    /// <summary>
-    ///     Serialises the current <c>/about</c> body. Built per request rather than cached: the
-    ///     feature-flag overrides change whenever a new remote document is applied, and the point of
-    ///     reporting them is to show what this task is running right now.
-    /// </summary>
-    private byte[] BuildAboutResponse() =>
-        JsonSerializer.SerializeToUtf8Bytes(
-            new AboutResponse(COMMIT_HASH, featureFlagsProvider.AppliedOverrides), ABOUT_JSON);
+    private async Task WriteMetricsAsync(HttpListenerContext ctx, CancellationToken token)
+    {
+        if (!AuthorizeMetrics(ctx.Request))
+        {
+            ctx.Response.StatusCode = 401;
+            return;
+        }
+
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
+
+        await using var writer = new StreamWriter(ctx.Response.OutputStream);
+
+        PrometheusFormatter.Write(writer, metricsCollector.TakeSnapshot());
+
+        await writer.FlushAsync(token);
+    }
+
+    private async Task WriteStatsAsync(HttpListenerContext ctx, CancellationToken token)
+    {
+        StatsResponse response = statsRouter.Handle(
+            ctx.Request.Url?.AbsolutePath ?? "/", StatsQuery.Parse(ctx.Request.Url?.Query));
+
+        ctx.Response.StatusCode = response.Status;
+
+        if (response.Location is { } location)
+            ctx.Response.Headers["Location"] = location;
+
+        if (response.Body is not { } body) return;
+
+        ctx.Response.ContentType = "application/json";
+
+        await ctx.Response.OutputStream.WriteAsync(body, token);
+    }
 
     private bool AuthorizeMetrics(HttpListenerRequest request)
     {
@@ -101,14 +104,4 @@ public sealed class HttpService(
                && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
                && header.AsSpan(7).Equals(metricsBearerToken.Value, StringComparison.Ordinal);
     }
-
-    /// <summary>
-    ///     Body of <c>/about</c>. <paramref name="FeatureFlagOverrides" /> is the remote
-    ///     configuration this task is running with, reported verbatim: the remote document may set
-    ///     any configuration key, so whatever it sets is what appears here — on an endpoint that
-    ///     takes no bearer token. Whoever authors the document decides what this endpoint publishes.
-    /// </summary>
-    private readonly record struct AboutResponse(
-        string CommitHash,
-        IReadOnlyDictionary<string, string?> FeatureFlagOverrides);
 }

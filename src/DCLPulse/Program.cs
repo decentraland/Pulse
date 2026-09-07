@@ -14,6 +14,7 @@ using Pulse.Metrics.Console;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Presence;
+using Pulse.Stats;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
@@ -324,6 +325,11 @@ else
 
 builder.Services.Configure<HttpServiceOptions>(
     builder.Configuration.GetSection(HttpServiceOptions.SECTION_NAME));
+
+// The read-only stats surface (iteration-2 C2). Reads the same boards the clustering pass publishes,
+// so it adds no state of its own and nothing here can change what the server does.
+builder.Services.AddSingleton(ServiceIdentity.FromEnvironment());
+builder.Services.AddSingleton<StatsRouter>();
 
 builder.Services.AddSingleton<MetricsBearerToken>();
 builder.Services.AddSingleton<CommsBearerToken>();

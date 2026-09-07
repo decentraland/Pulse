@@ -400,6 +400,42 @@ Two failures are indistinguishable from something else in the table above and ca
 
 - **A rejected credential.** The connection never opens, so `connected` stays 0 and reads exactly like an unreachable broker. `Authentication error: …` from the client, and `NATS server error (AuthorizationViolation): …` from the publisher, are what separate the two. Pulse sets `IgnoreAuthErrorAbort`, so the client keeps retrying rather than giving up permanently: the feed recovers on its own once the credential is fixed, and stays down until then.
 - **A rejected publish.** The client raises this from its read loop without closing the socket, so `connected` stays 1 and `published` keeps climbing while nothing reaches a subscriber — a publish is not acknowledged, so the broker refusing it does not fail the call, and `publish_failed` stays zero too. `NATS server error (PermissionsViolation): …` is the only signal.
+## Presence feed metrics
+
+The `engine.parcel_changes` feed (see [presence-feed.md](presence-feed.md)). Recorded once per
+published batch on the presence loop, never on the per-tick or per-packet path. Delivery itself is
+counted by the NATS series above, which these two do not duplicate: they answer what a batch
+contained and why it was a snapshot.
+
+### Presence Batch Size
+
+`dcl_pulse_presence_batch_size` — entries per published batch, snapshots included.
+
+The observation **count** is the number of batches, so one instrument answers both questions an
+operator asks of this feed: `rate(dcl_pulse_presence_batch_size_count[5m])` is its cadence — which
+should sit at `1 / Presence:BatchIntervalMs` when anything is moving and below it when the server is
+idle, since an empty delta is not published — and the buckets are how much each batch said. Buckets
+are exponential over the reachable range (a batch cannot exceed the peers this server holds) and the
+first admits **zero**, because an empty snapshot is a real message: it says this server holds nobody,
+which a consumer has no other way to learn.
+
+A delta bounded at `Nats:ChannelCapacity` distinct addresses means the outbox filled, so a sustained
+batch size at the capacity is the same signal as `dcl_pulse_nats_dropped_total` rising.
+
+### Presence Snapshots
+
+`dcl_pulse_presence_snapshots_total{reason="start"|"interval"|"eviction"}` — full snapshots
+published, by what forced one.
+
+| Signal | Meaning |
+|---|---|
+| One `start` per process, then a steady trickle of `interval` | Healthy. `interval` should tick once per `Presence:SnapshotIntervalMs` |
+| `start` climbing | The process is restarting; each restart resets `seq` and re-announces its whole state |
+| **Any rate of `eviction`** | The outbox is losing presence changes, so the delta stream is incomplete and consumers are being repaired by brute force. Same lever as `dcl_pulse_nats_dropped_total`: raise `Nats:ChannelCapacity`. Left alone, snapshot traffic grows with the loss rate while consumer state gets no fresher |
+| No `interval` at all with the feed enabled | Either `Presence:SnapshotIntervalMs` is non-positive, or the clustering pass has stopped — the tracker is what answers a snapshot request, so a stalled pass leaves the request outstanding and the recovery deadline unenforced |
+
+Both series stay at zero when the feed is off — no broker configured, or `Presence:Enabled` false.
+
 ## Feature flags — no metrics
 
 Runtime configuration polled from the remote `pulse.json` document has **no Prometheus series and no

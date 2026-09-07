@@ -350,6 +350,45 @@ For full debugging workflows (local + remote Fargate, Rider setup, logpoints, po
 
 ---
 
+## Outbound surfaces — presence feed & stats HTTP
+
+Pulse is the platform's source of online-player information. Two surfaces carry it, and both are
+derived from the same `ClusterTracker` pass, so what the feed says and what HTTP serves cannot
+disagree by more than one pass interval.
+
+**`engine.parcel_changes`** (`src/DCLPulse/Presence/`, `Clusters/NatsPublisher.Presence.cs`) —
+`decentraland.pulse.ParcelChangesBatch`: which wallet is on which parcel of which realm, batched
+every `Presence:BatchIntervalMs`, with a full `snapshot=true` batch on start, every
+`Presence:SnapshotIntervalMs`, and after any outbox eviction. Two invariants to preserve when
+touching it:
+
+- **Exits come from one place.** `PeerSimulation.CleanupDisconnectedPeer` calls
+  `ParcelChangeTracker.OnPeerRemoved`, and every way a peer can leave is a transport disconnect that
+  ends there exactly once. Do **not** also derive exits from "present last pass, missing in this
+  one" — that double-emits, and it races a pass still in flight when the peer disconnected.
+- **`seq` is stamped per assembled batch and never reused.** A publish that throws leaves a real gap,
+  which is what it is; consumers hold their state and are corrected by the next snapshot. Do not
+  retry a batch under its old `seq`.
+
+[docs/presence-feed.md](docs/presence-feed.md) is the consumer-facing reference — guarantees,
+the `seq`-gap rule, config and metrics.
+
+**Stats HTTP** (`src/DCLPulse/Stats/`) — the read-only routes archipelago-stats used to answer,
+re-sourced from Pulse's boards and scoped by realm: `/realms`, `/realms/{realm}/peers|parcels|
+islands`, all-realms `/peers` lookups, `/status`, `/about`, `/health`. `StatsRouter` owns routing and
+`StatsBoardView` the single read of `ClusterBoard` + `SnapshotBoard`; `HttpService` keeps only
+`/metrics`, which is the one route with a bearer token. Shapes and ordering are a frozen contract —
+[docs/openapi.yaml](docs/openapi.yaml) — and are pinned by golden tests against the fixture pack
+copied into `src/DCLPulseTests/Fixtures/iteration-2/`. Add routes to the router, not to
+`HttpService`.
+
+Realms and wallet addresses are canonical **lowercase** everywhere: `CanonicalName.Of` runs in
+`FieldValidator` on every ingest path (handshake seed, teleport, scene-listener AoI), because realms
+are the partition key `RealmSpatialGrids`, the presence feed and the `/realms/{realm}` routes all
+compare `Ordinal`.
+
+---
+
 ## Files / Components Expected
 
 Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/Protocol/Directory.Build.props`); only the generated C# under `src/Protocol/Generated/` is committed here.
@@ -358,6 +397,9 @@ Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/P
 - `decentraland/pulse/pulse_client.proto` — client→server messages and the `ClientMessage` envelope
 - `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and its only quantized message (`PlayerStateDeltaTier0`)
 - `decentraland/pulse/pulse_shared.proto` — types referenced by both directions (`PlayerState`, `GlideState`, `PlayerAnimationFlags`); imported by both client and server protos
+- `decentraland/pulse/pulse_presence.proto` — `ParcelChangesBatch` / `ParcelChange` / `Parcel`, the `engine.parcel_changes` presence feed
+- `decentraland/pulse/pulse_clusters.proto` — `PeerClusterChange`, the `peer.{addr}.cluster_change` feed
+- `kernel/comms/v3/archipelago.proto` — `IslandStatusMessage` / `ServiceDiscoveryMessage`, for `engine.islands` and `engine.discovery`
 - `protoc-gen-bitwise` — Node/JS plugin in the protocol repo (wrappers in `tools/protoc-gen-bitwise/`), reads `CodeGeneratorRequest`, emits the `*.Bitwise.cs` quantized-accessor partials
 - `Quantize` (C#, `src/Protocol/Generated/Quantize.cs`) — static quantization helpers (`Encode` / `Decode`, power-law `EncodePower` / `DecodePower`) backing the generated `{Field}Quantized` accessors
 

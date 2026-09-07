@@ -430,8 +430,8 @@ published, by what forced one.
 | Signal | Meaning |
 |---|---|
 | One `start` per process, then a steady trickle of `interval` | Healthy. `interval` should tick once per `Presence:SnapshotIntervalMs` |
-| `start` climbing | The process is restarting; each restart resets `seq` and re-announces its whole state |
-| **Any rate of `eviction`** | The outbox is losing presence changes, so the delta stream is incomplete and consumers are being repaired by brute force. Same lever as `dcl_pulse_nats_dropped_total`: raise `Nats:ChannelCapacity`. Left alone, snapshot traffic grows with the loss rate while consumer state gets no fresher |
+| `start` climbing | The process is restarting — or the broker connection is being rebuilt, which also re-announces the whole state, since a consumer that subscribed during the outage holds nothing. Cross-check `dcl_pulse_nats_reconnects_total` before assuming a crash loop |
+| **Any rate of `eviction`** | The outbox is losing changes — presence or cluster assignments, the counter is shared — so the delta stream is incomplete and consumers are being repaired by brute force. Same lever as `dcl_pulse_nats_dropped_total`: raise `Nats:ChannelCapacity`. Bounded at one per quarter of `Presence:SnapshotIntervalMs`, so it climbs far more slowly than `dropped` under sustained loss; a flat `eviction` rate at the bound with `dropped` still climbing means loss is continuous, not a burst |
 | No `interval` at all with the feed enabled | Either `Presence:SnapshotIntervalMs` is non-positive, or the clustering pass has stopped — the tracker is what answers a snapshot request, so a stalled pass leaves the request outstanding and the recovery deadline unenforced |
 
 Both series stay at zero when the feed is off — no broker configured, or `Presence:Enabled` false.

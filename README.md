@@ -118,7 +118,8 @@ Realm segments match case-insensitively and responses carry the canonical lowerc
 nobody is in is an empty realm (200, empty list), never a 404. The unscoped archipelago-stats paths
 (`/peers`, `/parcels`, `/islands`, `/islands/:id`, and their `/comms/`-prefixed copies) answer
 `308 Location: /realms/main/…`, preserving the query string — except `/peers` with an `id` or `all`
-parameter, which is answered directly across all realms.
+parameter, which is answered directly across all realms. The `/comms/` prefix is accepted on those
+four paths only; `/comms/` anything else is a 404.
 
 Full reference, including shapes and the normative ordering: [docs/openapi.yaml](docs/openapi.yaml).
 
@@ -128,14 +129,16 @@ Nothing is published unless `Nats:Url` is set; with no broker configured Pulse r
 
 | Subject | Message | When |
 |---|---|---|
-| `engine.parcel_changes` | `decentraland.pulse.ParcelChangesBatch` | every `Presence:BatchIntervalMs` (2 s), plus a full snapshot on start, every `Presence:SnapshotIntervalMs` (60 s), and after any outbox eviction |
+| `engine.parcel_changes` | `decentraland.pulse.ParcelChangesBatch` | every `Presence:BatchIntervalMs` (2 s), plus a full snapshot on start and on reconnect, every `Presence:SnapshotIntervalMs` (60 s), and after an outbox eviction |
 | `peer.{addr}.cluster_change` | `decentraland.pulse.PeerClusterChange` | per published cluster assignment change |
 | `engine.islands` | `kernel.comms.v3.IslandStatusMessage` | per clustering pass |
 | `engine.discovery` | `kernel.comms.v3.ServiceDiscoveryMessage` | timer, default 10 s |
 
 `engine.parcel_changes` is the platform's presence feed — the guarantees it holds, the consumer rule
 for `seq` gaps and snapshots, and its configuration and metrics are in
-[docs/presence-feed.md](docs/presence-feed.md).
+[docs/presence-feed.md](docs/presence-feed.md). Every batch is stamped with `Nats:ServerName`, which
+**must be unique per replica**: consumers replace their whole presence state per `server_name`. It
+defaults to `pulse-<hostname>`, so a deployment gets that for free.
 
 ## Metrics & Dashboard
 

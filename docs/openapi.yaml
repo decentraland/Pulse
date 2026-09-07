@@ -60,6 +60,16 @@ info:
 
     None. This surface says who is standing where, which every client in a realm learns from the
     comms feed anyway. `/metrics` is the exception and keeps its bearer token.
+
+    ### The `/comms/` prefix
+
+    `/comms/peers`, `/comms/parcels`, `/comms/islands` and `/comms/islands/{id}` are accepted as a
+    second spelling of those four legacy paths, and answer exactly what the unprefixed path does
+    (a 308 into `/realms/main/…`, or the all-realms lookup when `/comms/peers` carries `id` or
+    `all`). The prefix is **not** accepted on anything else — `/comms/realms`, `/comms/status`,
+    `/comms/about`, `/comms/health` and `/comms/realms/{realm}/…` are 404 — so it stays a
+    compatibility shim for the endpoints archipelago-stats published under it rather than a second
+    name for this whole surface.
   version: 1.0.0
   contact:
     name: Decentraland
@@ -110,7 +120,14 @@ paths:
                     format: date-time
                     description: |
                       ISO-8601 UTC with milliseconds — the clustering pass these counts were read
-                      from, not the time the response was written.
+                      from, not the time the response was written. Culture-independent: always
+                      `yyyy-MM-ddTHH:mm:ss.fffZ`.
+
+                      `1970-01-01T00:00:00.000Z` means no pass has completed yet, so every list on
+                      this surface is empty for a reason that is not "nobody is online": normally
+                      the first `Clusters:PassIntervalMs` after a restart, and permanently if
+                      `Clusters:Enabled` is false. Treat an epoch value as "no data", not as a clock
+                      fault.
                     examples: ['2026-09-04T14:08:57.801Z']
   /realms/{realm}/peers:
     get:

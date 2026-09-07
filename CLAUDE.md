@@ -358,8 +358,8 @@ disagree by more than one pass interval.
 
 **`engine.parcel_changes`** (`src/DCLPulse/Presence/`, `Clusters/NatsPublisher.Presence.cs`) —
 `decentraland.pulse.ParcelChangesBatch`: which wallet is on which parcel of which realm, batched
-every `Presence:BatchIntervalMs`, with a full `snapshot=true` batch on start, every
-`Presence:SnapshotIntervalMs`, and after any outbox eviction. Two invariants to preserve when
+every `Presence:BatchIntervalMs`, with a full `snapshot=true` batch on start, on reconnect, every
+`Presence:SnapshotIntervalMs`, and after an outbox eviction (coalesced). Invariants to preserve when
 touching it:
 
 - **Exits come from one place.** `PeerSimulation.CleanupDisconnectedPeer` calls
@@ -369,6 +369,12 @@ touching it:
 - **`seq` is stamped per assembled batch and never reused.** A publish that throws leaves a real gap,
   which is what it is; consumers hold their state and are corrected by the next snapshot. Do not
   retry a batch under its old `seq`.
+- **An exit is wallet-scoped, and a snapshot discards nothing.** `OnPeerRemoved` publishes only when
+  the wallet is left on no slot of this server (otherwise a duplicate-session kick withdraws a peer
+  that is online on its newer connection); and whatever was pending when a snapshot was collected is
+  published *ahead* of it under its own `seq`, because the snapshot lists live peers and so cannot
+  name an exit. Both are contract amendments A1/A2 — they have tests in `PresenceGuaranteeTests`
+  named after them.
 
 [docs/presence-feed.md](docs/presence-feed.md) is the consumer-facing reference — guarantees,
 the `seq`-gap rule, config and metrics.

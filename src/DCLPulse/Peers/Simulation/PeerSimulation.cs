@@ -201,7 +201,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
     /// <summary>
     ///     Scene listeners have no snapshot of their own — their interest set is the per-realm
-    ///     parcel set the peer announced, always at TIER_0, positional messages only. The
+    ///     parcel set the peer announced, always at TIER_0, positional and emote messages
+    ///     (no profile-version announcements). The
     ///     descriptor is re-read every tick, so a <c>SceneListenerUpdate</c> takes effect on the
     ///     next one. Everything downstream (views, diffs, resync, sweeps) is the shared pipeline.
     /// </summary>
@@ -451,7 +452,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // so the observer can scrub the animation forward instead of staying idle. Treated as
         // the eviction case: we only know the emote through the ledger-carried latest snapshot,
         // not a real EmoteStart event, so the tripwire should warn (not error) on seq collisions.
-        if (!positionalOnly && latestSnapshot.Emote is { EmoteId: not null } activeEmote)
+        if (latestSnapshot.Emote is { EmoteId: not null } activeEmote)
         {
             SendEmoteStarted(observerId, ref view, subjectId, latestSnapshot, activeEmote, fromEviction: true);
             view.LastSentEmote = activeEmote;
@@ -503,7 +504,6 @@ public sealed class PeerSimulation : IPeerSimulation
                                      && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
 
         if (emoteStartIsEffective
-            && !positionalOnly
             && lastEmoteStart!.Value.Emote is { EmoteId: not null } emote
             && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartSeq == view.LastSentEmote?.StartSeq))
         {

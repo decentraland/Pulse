@@ -33,6 +33,11 @@ public readonly record struct StatsResponse(int Status, byte[]? Body = null, str
 ///     One JSON configuration for the whole stats surface: camelCase members, and proto3-style
 ///     omission is <em>not</em> wanted here — a peer with no realm is not a peer, and every field in
 ///     these shapes is one archipelago-stats always sent, so nothing is dropped for being default.
+///     <para />
+///     Nulls are omitted, which is what lets one <see cref="PeerResult" /> serve both the
+///     realm-scoped routes (no <c>realm</c> per entry — the envelope carries it) and the all-realms
+///     ones. A shape that has to write its null says so per property with
+///     <c>[JsonIgnore(Condition = JsonIgnoreCondition.Never)]</c>; see <see cref="PeerResponse" />.
 /// </summary>
 public static class StatsJson
 {
@@ -73,7 +78,17 @@ public sealed record RealmsResponse(IReadOnlyList<RealmSummary> Realms, string L
 /// </summary>
 public sealed record PeersResponse(bool Ok, string? Realm, IReadOnlyList<PeerResult> Peers);
 
-public sealed record PeerResponse(bool Ok, PeerResult? Peer);
+/// <summary>
+///     <c>/peers/{id}</c>. <c>peer</c> is written even when it is null, against
+///     <see cref="StatsJson.OPTIONS" />' omission of nulls: the 404 body is
+///     <c>{"ok":false,"peer":null}</c> per the contract and this repo's own <c>openapi.yaml</c>, and a
+///     consumer that tests <c>'peer' in body</c> or validates the published schema reads a body
+///     without the key as malformed rather than as "not online".
+/// </summary>
+public sealed record PeerResponse(
+    bool Ok,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    PeerResult? Peer);
 
 public sealed record ErrorResponse(bool Ok, string Error);
 

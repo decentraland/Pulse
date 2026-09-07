@@ -20,8 +20,10 @@ namespace Pulse.Clusters;
 ///             the same eviction counter, as an undelivered cluster assignment;
 ///         </item>
 ///         <item>
-///             a full snapshot, which replaces every pending change because it already states each
-///             of those peers' current position, and which a later snapshot replaces in turn;
+///             a full snapshot, which a later snapshot replaces in turn — but which never discards a
+///             pending change (A2): the batch that was pending when it was collected goes out ahead
+///             of it under its own <c>seq</c>, because the snapshot supersedes the placements among
+///             those changes but cannot name an exit, whose slot is already gone;
 ///         </item>
 ///         <item>
 ///             a snapshot <em>request</em>, raised by this class (start, interval, eviction) and
@@ -38,6 +40,28 @@ namespace Pulse.Clusters;
 /// </summary>
 public sealed partial class NatsPublisher
 {
+    /// <summary>
+    ///     What <see cref="PresenceOptions.SnapshotIntervalMs" /> is divided by to bound eviction
+    ///     snapshots: at most one per quarter of the recovery deadline, 15 s on the defaults.
+    ///     <para />
+    ///     An eviction means the broker is already behind, and a full-population snapshot is the
+    ///     largest message this feed can produce — so raising one per batch for as long as the outbox
+    ///     keeps evicting (a slow broker with more than <see cref="NatsOptions.ChannelCapacity" />
+    ///     peers reassigning) would push the biggest message it has at exactly the moment it is
+    ///     already dropping messages. The first eviction is still answered immediately, which is the
+    ///     half that repairs the loss; the ones inside the window are already covered by it.
+    /// </summary>
+    internal const int EVICTION_SNAPSHOT_INTERVAL_DIVISOR = 4;
+
+    /// <summary>
+    ///     Batches one turn of the presence cadence may publish. Two, because a snapshot is published
+    ///     behind the delta batch that was pending when it was collected (A2) — never more, so a
+    ///     producer that keeps enqueueing cannot hold the turn and turn the cadence into a busy loop.
+    ///     Anything raised after the snapshot was collected is newer than it and goes out on the next
+    ///     turn, in order, which is the cadence C1.4 specifies.
+    /// </summary>
+    internal const int MAX_PARCEL_BATCHES_PER_TURN = 2;
+
     // Presence outbox, under the same outboxLock as the cluster feed: every mutation here already
     // sits next to one of those (a pass publishes assignments and presence in the same breath), so
     // sharing the lock keeps one ordering to reason about instead of two.
@@ -45,6 +69,17 @@ public sealed partial class NatsPublisher
     private readonly Queue<string> parcelChangeOrder = new ();
     private IReadOnlyList<PeerPresence>? pendingParcelSnapshot;
     private PresenceSnapshotReason pendingParcelSnapshotReason;
+
+    // Changes that were already pending when a snapshot was collected. They are older than the
+    // snapshot, so they go out ahead of it under their own seq (A2) rather than being cleared: the
+    // snapshot supersedes the placements among them — it states those peers' positions itself — but
+    // it cannot name an exit, because OnPeerRemoved cleared that slot and CollectLivePresence no
+    // longer lists the peer. Clearing them made that exit path publish nothing at all.
+    //
+    // Latest-wins per address, and deliberately not capped at ChannelCapacity: the bound here is the
+    // number of addresses this server holds, and dropping an entry is the loss this staging exists
+    // to prevent.
+    private readonly Dictionary<string, PendingParcelChange> parcelChangesAheadOfSnapshot = new (StringComparer.Ordinal);
 
     // The batch instance the presence loop owns, reused across batches exactly like the discovery
     // heartbeat's: every field is rewritten before each send, and only after the previous send's
@@ -62,6 +97,11 @@ public sealed partial class NatsPublisher
     private PresenceSnapshotReason? parcelSnapshotRequest;
 
     private long lastParcelSnapshotUnixMs;
+
+    // When an eviction snapshot was last requested, which is what
+    // EVICTION_SNAPSHOT_INTERVAL_DIVISOR bounds. Zero means none yet, so the first eviction of the
+    // process is always answered at once.
+    private long lastEvictionSnapshotRequestUnixMs;
 
     // Monotonic per server_name, from 1, and shared by snapshots and deltas — a snapshot is a batch
     // with a flag set, not a separate stream. Reset by a process restart and nothing else, which is
@@ -122,13 +162,16 @@ public sealed partial class NatsPublisher
     {
         if (!presenceEnabled) return;
 
-        int superseded;
+        var superseded = 0;
 
         lock (outboxLock)
         {
-            // Every pending change names a peer this snapshot also names, with state the snapshot has
-            // already superseded — and delivering them after it would move a peer backwards.
-            superseded = pendingParcelChangeByAddress.Count;
+            // Staged rather than cleared (A2): these changes are older than the snapshot, so they are
+            // published ahead of it under their own seq. Delivering them *after* it would move a peer
+            // backwards, and dropping them loses every exit the snapshot cannot name.
+            foreach (KeyValuePair<string, PendingParcelChange> pending in pendingParcelChangeByAddress)
+                parcelChangesAheadOfSnapshot[pending.Key] = pending.Value;
+
             pendingParcelChangeByAddress.Clear();
             parcelChangeOrder.Clear();
 
@@ -163,14 +206,35 @@ public sealed partial class NatsPublisher
     /// <summary>
     ///     Raises a snapshot request, which the tracker answers on its next pass. First-wins: a
     ///     request already waiting keeps its original reason, so the label reports what first made
-    ///     the delta stream insufficient rather than whatever fired last.
+    ///     the delta stream insufficient rather than whatever fired last — and an eviction that
+    ///     happens while any request is outstanding is repaired by that snapshot anyway.
+    ///     <para />
+    ///     Eviction requests are additionally coalesced to one per
+    ///     <see cref="PresenceOptions.SnapshotIntervalMs" /> /
+    ///     <see cref="EVICTION_SNAPSHOT_INTERVAL_DIVISOR" />, measured from the last one raised. A
+    ///     non-positive snapshot interval leaves them unbounded, which is the reading that follows
+    ///     from the operator having turned the recovery deadline off.
     /// </summary>
     private void RequestParcelSnapshot(PresenceSnapshotReason reason)
     {
         if (!presenceEnabled) return;
 
         lock (outboxLock)
-            parcelSnapshotRequest ??= reason;
+        {
+            if (parcelSnapshotRequest is not null) return;
+
+            if (reason == PresenceSnapshotReason.Eviction)
+            {
+                long now = timeProvider.UnixTimeMs;
+                int window = Math.Max(0, presenceOptions.SnapshotIntervalMs) / EVICTION_SNAPSHOT_INTERVAL_DIVISOR;
+
+                if (now - lastEvictionSnapshotRequestUnixMs < window) return;
+
+                lastEvictionSnapshotRequestUnixMs = now;
+            }
+
+            parcelSnapshotRequest = reason;
+        }
     }
 
     /// <summary>
@@ -181,6 +245,11 @@ public sealed partial class NatsPublisher
     ///     Entries are ordered by address so a batch is a function of its content alone: two servers
     ///     with the same state produce the same bytes, and the wire fixtures can be compared byte for
     ///     byte. <paramref name="snapshotReason" /> is non-null exactly when the batch is a snapshot.
+    ///     <para />
+    ///     Three things can be waiting, and they go out in the order they happened: the changes that
+    ///     were pending when a snapshot was collected, then that snapshot, then anything raised after
+    ///     it. That is what makes a snapshot lossless in both directions (A2) — an exit it cannot name
+    ///     still reaches consumers, and a move newer than it is not overwritten by it.
     ///     <para />
     ///     Internal so the batch — and the bytes it serializes to — can be asserted without a broker.
     /// </summary>
@@ -195,11 +264,21 @@ public sealed partial class NatsPublisher
 
         lock (outboxLock)
         {
-            snapshot = pendingParcelSnapshot;
-            pendingParcelSnapshot = null;
+            snapshot = null;
 
-            if (snapshot is not null)
+            if (parcelChangesAheadOfSnapshot.Count > 0)
+            {
+                foreach (KeyValuePair<string, PendingParcelChange> pending in parcelChangesAheadOfSnapshot)
+                    parcelBatchScratch.Add(pending.Value);
+
+                parcelChangesAheadOfSnapshot.Clear();
+            }
+            else if (pendingParcelSnapshot is { } collected)
+            {
+                snapshot = collected;
                 snapshotReason = pendingParcelSnapshotReason;
+                pendingParcelSnapshot = null;
+            }
             else
             {
                 if (pendingParcelChangeByAddress.Count == 0) return false;
@@ -302,10 +381,16 @@ public sealed partial class NatsPublisher
     }
 
     /// <summary>
-    ///     Publishes a batch once per <see cref="PresenceOptions.BatchIntervalMs" />. Sent straight to
-    ///     the connection rather than through the wake-signalled drain: a batch does not exist until
-    ///     the timer fires, so there is nothing to queue. A fault that ends the loop is logged once
-    ///     and cancels <paramref name="loops" />.
+    ///     Publishes up to <see cref="MAX_PARCEL_BATCHES_PER_TURN" /> batches once per
+    ///     <see cref="PresenceOptions.BatchIntervalMs" />. Sent straight to the connection rather than
+    ///     through the wake-signalled drain: a batch does not exist until the timer fires, so there is
+    ///     nothing to queue. A fault that ends the loop is logged once and cancels
+    ///     <paramref name="loops" />.
+    ///     <para />
+    ///     More than one per turn only when a snapshot is travelling behind the batch that was pending
+    ///     when it was collected (A2). Awaiting each publish before assembling the next is what keeps
+    ///     the reused batch instance safe — the client has serialized it by the time its task
+    ///     completes.
     /// </summary>
     private async Task PublishParcelChangesPeriodicallyAsync(NatsConnection connection, CancellationTokenSource loops)
     {
@@ -317,8 +402,11 @@ public sealed partial class NatsPublisher
 
             while (!token.IsCancellationRequested)
             {
-                if (TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? _))
+                for (var sent = 0; sent < MAX_PARCEL_BATCHES_PER_TURN; sent++)
                 {
+                    if (!TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? _))
+                        break;
+
                     try
                     {
                         await connection.PublishAsync(

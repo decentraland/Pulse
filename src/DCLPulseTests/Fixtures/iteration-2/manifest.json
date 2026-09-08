@@ -1,7 +1,6 @@
 {
   "generatedBy": "tools/manifest.js",
   "files": {
-    ".gitattributes": "fdc6a1e4a7917c472b7b213b179d5958e3cef21bdc0e580a3d89f1ff41fbd7ac",
     "hot-scenes/fixture.json": "0163ee98bfb424b0efcc0ab983facae9fb92687fb041069420ffab123117d843",
     "hot-scenes/reference/content.ts": "a192434ed727dde832d131600381e7913176d4257f64de99a9acd939e0fab6d2",
     "hot-scenes/reference/hot-scenes-handler.spec.ts": "729158579d87cac56477e022086800d2c2f98797cf715bc511873f0cb9f6a37e",

@@ -22,6 +22,14 @@ namespace Pulse.Presence;
 ///         </item>
 ///     </list>
 ///     <para />
+///     Slots are per connection, but the feed is <b>per wallet</b>: consumers key presence by
+///     address, so both kinds of entry are reduced to one per wallet before they go out — an exit by
+///     <see cref="IsPlaced" /> (A1) and a snapshot by <see cref="CollectLivePresence" /> (C1.3). Both
+///     exist for the same window: a duplicate-session kick or a fast reconnect leaves a wallet
+///     standing on two slots for a whole <c>Peers:DisconnectionCleanTimeoutMs</c>, because the
+///     evicted connection leaves the spatial grid at once while its slot is cleared only by the
+///     cleanup.
+///     <para />
 ///     Exits are deliberately <b>not</b> derived from "present last pass, missing in this one".
 ///     Every way a peer can leave — clean disconnect, auth/idle timeout, duplicate-session kick,
 ///     <c>BanEnforcer</c> eviction, <c>PeerDefense</c> kick — ends in the same
@@ -46,9 +54,19 @@ public sealed class ParcelChangeTracker
     private readonly Lock stateLock = new ();
     private readonly Slot[] slots;
 
-    // Slots currently holding a published presence, so a snapshot list is sized once instead of
-    // grown, and an idle server does not walk the whole table to find nothing.
+    // Slots currently holding a published presence, which bounds a snapshot — one entry per slot
+    // before the per-wallet reduction — so its list is sized once instead of grown, and an idle
+    // server does not walk the whole table to find nothing.
     private int liveCount;
+
+    // Which pass a slot was last seen in, and the order placements were written in. Both are needed
+    // only to tell a wallet's live connection from the stale one it is briefly duplicated on
+    // (CollectLivePresence): the pass number, because the kicked connection stops being observed as
+    // soon as it leaves the spatial grid, and the placement order for the instant before that, where
+    // both connections are still in the grid and the one that has just handshaked is the newer
+    // placement. ulong at one pass per second, so neither can wrap.
+    private ulong passStamp;
+    private ulong placementStamp;
 
     public ParcelChangeTracker(
         IClusterFeedPublisher feed,
@@ -91,6 +109,8 @@ public sealed class ParcelChangeTracker
         lock (stateLock)
         {
             bool snapshot = feed.TryTakeParcelSnapshotRequest(out PresenceSnapshotReason reason);
+
+            passStamp++;
 
             for (var i = 0; i < pass.Peers.Count; i++)
                 Observe(pass.Peers[i], publishChange: !snapshot);
@@ -198,6 +218,11 @@ public sealed class ParcelChangeTracker
 
         ref Slot slot = ref slots[index];
 
+        // Stamped before the unchanged early-return below, because "this slot is still in the pass"
+        // has to be true of a peer that is standing still — that is the commonest state of the live
+        // connection whose duplicate is being cleaned up.
+        slot.SeenAtPass = passStamp;
+
         parcelEncoder.Decode(info.Parcel, out int x, out int z);
 
         var parcel = new ParcelCoord(x, z);
@@ -233,29 +258,80 @@ public sealed class ParcelChangeTracker
 
         slot.Realm = realm;
         slot.Parcel = parcel;
+        slot.PlacedAt = ++placementStamp;
 
         if (publishChange)
             feed.PublishParcelChange(slot.Address!, realm, parcel);
     }
 
     /// <summary>
-    ///     Every peer with a published presence, which is the whole of what a snapshot carries: one
+    ///     Every wallet with a published presence, which is the whole of what a snapshot carries: one
     ///     non-null entry per active peer with a known realm and parcel.
+    ///     <para />
+    ///     Reduced <b>per address, not per slot</b> (C1.3). Slots are per connection, and A1's window
+    ///     puts one wallet on two of them for a whole <c>Peers:DisconnectionCleanTimeoutMs</c>: the
+    ///     evicted connection is off the spatial grid immediately but its slot is cleared only by
+    ///     <c>PeerSimulation</c>'s cleanup. A snapshot naming both entries would tell a last-write-wins
+    ///     consumer that the wallet is wherever the stale one happened to sort — uncorrected until the
+    ///     wallet moves or the first snapshot after the cleanup, up to a whole
+    ///     <c>Presence:SnapshotIntervalMs</c> — and it would also stop the batch order being a function
+    ///     of the batch's content, since two entries for one address tie under the publisher's
+    ///     address-only comparator.
+    ///     <para />
+    ///     The dictionary is one allocation per snapshot, beside the list that is allocated anyway, and
+    ///     snapshots are bounded by <c>Presence:SnapshotIntervalMs</c> and the eviction coalescing
+    ///     window rather than by anything a peer can drive.
     /// </summary>
     private List<PeerPresence> CollectLivePresence()
     {
         var presence = new List<PeerPresence>(liveCount);
+        var entryByAddress = new Dictionary<string, (int Entry, int Slot)>(liveCount, StringComparer.Ordinal);
 
         for (var index = 0; index < slots.Length; index++)
         {
             Slot slot = slots[index];
 
-            if (slot.Realm is { } realm)
-                presence.Add(new PeerPresence(slot.Address!, realm, slot.Parcel));
+            if (slot.Realm is not { } realm) continue;
+
+            string address = slot.Address!;
+            var entry = new PeerPresence(address, realm, slot.Parcel);
+
+            if (!entryByAddress.TryGetValue(address, out (int Entry, int Slot) held))
+            {
+                entryByAddress[address] = (presence.Count, index);
+                presence.Add(entry);
+
+                continue;
+            }
+
+            if (!Supersedes(slot, slots[held.Slot])) continue;
+
+            // Replaced in place, so the entry keeps the position the wallet first took: the publisher
+            // sorts the batch by address anyway, and a wallet's presence is one entry wherever it sits.
+            presence[held.Entry] = entry;
+            entryByAddress[address] = (held.Entry, index);
         }
 
         return presence;
     }
+
+    /// <summary>
+    ///     Which of two slots holding one wallet is that wallet's presence. The slot the latest pass
+    ///     saw wins: a kicked connection leaves the spatial grid at once, so it stops being observed a
+    ///     full <c>Peers:DisconnectionCleanTimeoutMs</c> before its slot is cleared, and one pass is
+    ///     enough to separate it from the connection that is still standing there.
+    ///     <para />
+    ///     Both seen in the same pass means both connections really were in the grid — the instant
+    ///     between <c>HandshakeHandlerBase.EvictDuplicateSession</c> calling
+    ///     <c>transport.Disconnect</c> and the lifecycle event it raises being drained — and there the
+    ///     newer placement wins, which is the session that has just handshaked. Slot order decides
+    ///     nothing either way: the allocator's free list hands out the oldest freed index, so it is as
+    ///     likely to be below the stale slot as above it.
+    /// </summary>
+    private static bool Supersedes(in Slot candidate, in Slot held) =>
+        candidate.SeenAtPass != held.SeenAtPass
+            ? candidate.SeenAtPass > held.SeenAtPass
+            : candidate.PlacedAt > held.PlacedAt;
 
     /// <summary>
     ///     What one peer slot carries between passes. <see cref="Realm" /> doubles as the occupancy
@@ -271,5 +347,11 @@ public sealed class ParcelChangeTracker
 
         public string? Realm;
         public ParcelCoord Parcel;
+
+        // Recency, for the per-wallet reduction alone: the pass this slot was last observed in, and
+        // the order its current placement was written in. Zero on an empty slot, which is right —
+        // nothing compares against a slot with no realm.
+        public ulong SeenAtPass;
+        public ulong PlacedAt;
     }
 }

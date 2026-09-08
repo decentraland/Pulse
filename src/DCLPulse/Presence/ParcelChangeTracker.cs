@@ -66,7 +66,7 @@ public sealed class ParcelChangeTracker
     // both connections are still in the grid and the one that has just handshaked is the newer
     // placement. ulong at one pass per second, so neither can wrap.
     private ulong passStamp;
-    private ulong placementStamp;
+    private ulong occupancyStamp;
 
     public ParcelChangeTracker(
         IClusterFeedPublisher feed,
@@ -247,6 +247,10 @@ public sealed class ParcelChangeTracker
             && string.Equals(slot.Realm, realm, StringComparison.Ordinal))
             return;
 
+        // Whether this slot's occupancy starts here, which is what OccupiedAt stamps — read before
+        // slot.Realm is written below, since that is what makes an empty slot recognizable.
+        bool acquired = slot.Realm is null || !sameWallet;
+
         if (slot.Realm is null)
             liveCount++;
 
@@ -258,7 +262,17 @@ public sealed class ParcelChangeTracker
 
         slot.Realm = realm;
         slot.Parcel = parcel;
-        slot.PlacedAt = ++placementStamp;
+
+        // Stamped on acquisition only, never on a later move. The reduction's tie-break has to be
+        // recency of the *session*, and a kicked connection keeps moving for a whole client round
+        // trip after transport.Disconnect — its ENet disconnect is queued, so the lifecycle event
+        // that takes it off the spatial grid waits on the client's ack. A stamp rewritten on every
+        // change would therefore be the stale slot's whenever the kicked client took one more step
+        // in the tie pass, and which of the two moved last is decided by grid.GetOccupiedCells()
+        // order, which is spatial. Occupancy order is monotone in session age; placement order is
+        // not.
+        if (acquired)
+            slot.OccupiedAt = ++occupancyStamp;
 
         if (publishChange)
             feed.PublishParcelChange(slot.Address!, realm, parcel);
@@ -324,14 +338,19 @@ public sealed class ParcelChangeTracker
     ///     Both seen in the same pass means both connections really were in the grid — the instant
     ///     between <c>HandshakeHandlerBase.EvictDuplicateSession</c> calling
     ///     <c>transport.Disconnect</c> and the lifecycle event it raises being drained — and there the
-    ///     newer placement wins, which is the session that has just handshaked. Slot order decides
-    ///     nothing either way: the allocator's free list hands out the oldest freed index, so it is as
-    ///     likely to be below the stale slot as above it.
+    ///     newer <b>occupancy</b> wins, which is the session that has just handshaked. Occupancy, not
+    ///     the newer placement: the kicked connection is still on the wire for a client round trip and
+    ///     is very often the one that moved most recently, so a placement-recency tie-break would name
+    ///     the parcel the player has just left. A session's occupancy always starts after the
+    ///     occupancy of the session it kicks, whatever either of them does afterwards.
+    ///     <para />
+    ///     Slot order decides nothing either way: the allocator's free list hands out the oldest freed
+    ///     index, so it is as likely to be below the stale slot as above it.
     /// </summary>
     private static bool Supersedes(in Slot candidate, in Slot held) =>
         candidate.SeenAtPass != held.SeenAtPass
             ? candidate.SeenAtPass > held.SeenAtPass
-            : candidate.PlacedAt > held.PlacedAt;
+            : candidate.OccupiedAt > held.OccupiedAt;
 
     /// <summary>
     ///     What one peer slot carries between passes. <see cref="Realm" /> doubles as the occupancy
@@ -349,9 +368,10 @@ public sealed class ParcelChangeTracker
         public ParcelCoord Parcel;
 
         // Recency, for the per-wallet reduction alone: the pass this slot was last observed in, and
-        // the order its current placement was written in. Zero on an empty slot, which is right —
-        // nothing compares against a slot with no realm.
+        // the order this occupancy was acquired in — not the order its current parcel was written
+        // in, which a still-connected kicked session can refresh (see Supersedes). Zero on an empty
+        // slot, which is right — nothing compares against a slot with no realm.
         public ulong SeenAtPass;
-        public ulong PlacedAt;
+        public ulong OccupiedAt;
     }
 }

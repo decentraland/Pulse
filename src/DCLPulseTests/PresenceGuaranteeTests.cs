@@ -434,6 +434,34 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
+    ///     The adverse half of that instant: the kicked client is still walking. Its
+    ///     <c>transport.Disconnect</c> leaves as ENet's <em>queued</em> disconnect, so the lifecycle
+    ///     event that takes it off the spatial grid waits on the client's acknowledgement — a round
+    ///     trip during which its position messages keep being processed and keep moving it between
+    ///     cells. The tie pass can therefore observe the <em>stale</em> slot as a change too, and
+    ///     which of the two changed last is then decided by <c>grid.GetOccupiedCells()</c> order,
+    ///     which is spatial and uncorrelated with which session is newer.
+    ///     <para />
+    ///     So the tie-break has to be recency of the <em>session</em> — which slot's occupancy started
+    ///     later — rather than recency of the placement: the kicked session's occupancy always started
+    ///     before the session that kicked it, whereas its last step can easily be the most recent
+    ///     thing that happened. On the other reading the snapshot names the parcel the player has just
+    ///     left — or, with the two clients in two realms, the realm the player is not in — and strands
+    ///     it there for up to <c>Presence:SnapshotIntervalMs</c>: once the kicked slot leaves the grid
+    ///     the surviving slot is observed unchanged, so nothing re-states it, and A1 suppresses the
+    ///     stale slot's exit.
+    /// </summary>
+    [Test]
+    public void ASnapshotTakenWhileTheKickedSlotIsStillWalking_CarriesTheNewerSessionsSlot()
+    {
+        // Both intra-cell orders, because the order the pass observes the two peers in is the order
+        // they entered the cell they share — and either one is a real arrival order for the two
+        // position messages behind it. One of the two always stamps the kicked slot last.
+        AssertTheWalkingKickedSlotIsSuperseded(kickedStepsLast: true);
+        AssertTheWalkingKickedSlotIsSuperseded(kickedStepsLast: false);
+    }
+
+    /// <summary>
     ///     The order of a batch is a function of its content — "two servers with the same state
     ///     produce the same bytes", which is what lets the wire fixtures be compared byte for byte —
     ///     and a duplicated address quietly breaks it: two entries for one wallet compare equal under
@@ -457,6 +485,47 @@ public class PresenceGuaranteeTests
 
         Assert.That(IntervalSnapshotBytes(descending, T0 + 60_000), Is.EqualTo(first),
             "and so do two servers holding that state on different slots");
+    }
+
+    /// <summary>
+    ///     One wallet on two slots inside A1's window with <b>both</b> slots changing in the tie pass:
+    ///     the kicked connection takes one more step, into the grid cell the new session was placed in
+    ///     — parcels <c>1,1</c> and <c>5,5</c> both sit inside one 100-unit cell — so the pass observes
+    ///     the two in the order they entered that cell, and <paramref name="kickedStepsLast" /> picks
+    ///     which order that is.
+    /// </summary>
+    private static void AssertTheWalkingKickedSlotIsSuperseded(bool kickedStepsLast)
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        // The kick with the client still on the wire: no lifecycle event is dispatched, so P1 keeps
+        // its place in the spatial grid and its position messages keep being processed — the state
+        // PeersManager.HandleDisconnected has not yet undone.
+        scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
+
+        if (kickedStepsLast)
+        {
+            scenario.Place(P2, Wallet(1), MAIN, 5, 5);
+            scenario.Move(P1, MAIN, 1, 1);
+        }
+        else
+        {
+            scenario.Move(P1, MAIN, 1, 1);
+            scenario.Place(P2, Wallet(1), MAIN, 5, 5);
+        }
+
+        Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null,
+            "the interval deadline passes on a turn with nothing to send");
+
+        scenario.RunPass();
+
+        ParcelChangesBatch batch = scenario.NextBatchWithReason(T0 + 62_000).Batch!;
+
+        AssertOneEntryPerAddress(batch);
+
+        Assert.That(Entries(batch), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
+            "this wallet's presence is the session that has just handshaked, not the kicked "
+          + $"connection's last step (kicked stepped last: {kickedStepsLast})");
     }
 
     /// <summary>

@@ -295,6 +295,11 @@ public sealed partial class NatsPublisher
             foreach (PeerPresence presence in snapshot)
                 parcelBatchScratch.Add(new PendingParcelChange(presence.Address, presence.Realm, presence.Parcel));
 
+        // A total order, and only because every source above is keyed by address: the two pending
+        // maps by construction, and the snapshot list by ParcelChangeTracker.CollectLivePresence,
+        // which reduces a wallet briefly standing on two slots to one entry (C1.3). Two entries for
+        // one address would compare equal, and List<T>.Sort is not stable — so the emitted order
+        // would stop being a function of the batch's content and the stale entry could land last.
         parcelBatchScratch.Sort(static (a, b) => string.CompareOrdinal(a.Address, b.Address));
 
         FillParcelBatch(snapshotReason is not null);

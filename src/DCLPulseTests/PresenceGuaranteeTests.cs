@@ -31,6 +31,7 @@ public class PresenceGuaranteeTests
     private static readonly PeerIndex P1 = new (1);
     private static readonly PeerIndex P2 = new (2);
     private static readonly PeerIndex P3 = new (3);
+    private static readonly PeerIndex P4 = new (4);
 
     private static string Wallet(int n) => IterationTwoFixtures.Wallet(n);
 
@@ -301,6 +302,230 @@ public class PresenceGuaranteeTests
         scenario.RunPass();
 
         AssertSingleExit(scenario, Wallet(1), MAIN);
+    }
+
+    // ── C1.3 in a snapshot ─────────────────────────────────────────
+
+    /// <summary>
+    ///     C1.3 is a property of a <em>batch</em>, so it binds a snapshot exactly as it binds a delta
+    ///     — and the snapshot is the harder half, because it is assembled by walking slots rather than
+    ///     the per-address outbox. A1's window is where that breaks: a duplicate-session kick takes the
+    ///     evicted connection off the spatial grid at once, but its tracker slot is cleared only by the
+    ///     cleanup a full <c>Peers:DisconnectionCleanTimeoutMs</c> later, so for five seconds by design
+    ///     the wallet stands on two slots.
+    ///     <para />
+    ///     A snapshot that named both would tell a last-write-wins consumer — comms-gatekeeper's
+    ///     <c>applyChange</c> is one — that the wallet is wherever the stale entry happened to sort,
+    ///     and nothing would correct it until the wallet moved or the first snapshot after the cleanup,
+    ///     up to <c>Presence:SnapshotIntervalMs</c> later.
+    /// </summary>
+    [Test]
+    public void AnIntervalSnapshot_OfAWalletOnTwoSlots_CarriesItOnce_AtTheLiveSlot()
+    {
+        PresenceScenario scenario = DuplicateSlotScenario();
+
+        // The interval deadline passes on a turn with nothing to send, and the next pass answers it.
+        Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null);
+
+        scenario.RunPass();
+
+        (ParcelChangesBatch? batch, PresenceSnapshotReason? reason) = scenario.NextBatchWithReason(T0 + 62_000);
+
+        Assert.That(reason, Is.EqualTo(PresenceSnapshotReason.Interval));
+        AssertOneEntryPerAddress(batch!);
+
+        Assert.That(Entries(batch!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
+            "the snapshot must place the wallet on its live connection, not on the slot being cleaned up");
+    }
+
+    /// <summary>
+    ///     The same for the snapshot a rebuilt broker connection raises — the one path that makes this
+    ///     window <em>more</em> reachable, since a client's reconnect and Pulse's own reconnect are
+    ///     often the same network event.
+    /// </summary>
+    [Test]
+    public async Task AReconnectSnapshot_OfAWalletOnTwoSlots_CarriesItOnce_AtTheLiveSlot()
+    {
+        PresenceScenario scenario = DuplicateSlotScenario();
+
+        // The first open is the one the constructor already raised Start for; every open after it is
+        // a reconnect.
+        await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("first"));
+        await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("rebuilt"));
+
+        scenario.RunPass();
+
+        (ParcelChangesBatch? batch, PresenceSnapshotReason? reason) = scenario.NextBatchWithReason(T0 + 4000);
+
+        Assert.That(reason, Is.EqualTo(PresenceSnapshotReason.Start));
+        AssertOneEntryPerAddress(batch!);
+        Assert.That(Entries(batch!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }));
+    }
+
+    /// <summary>
+    ///     And for the eviction snapshot, which is the worst place to duplicate a wallet: it is the
+    ///     batch that exists to repair a delta stream a consumer is known to have holes in, so there
+    ///     is nothing else left to correct it with.
+    /// </summary>
+    [Test]
+    public void AnEvictionSnapshot_OfAWalletOnTwoSlots_CarriesItOnce_AtTheLiveSlot()
+    {
+        PresenceScenario scenario = DuplicateSlotScenario(channelCapacity: 2);
+
+        // The two feeds share Nats:ChannelCapacity and the one CountDropped path, so whatever the
+        // cluster feed evicted while this state was built is answered and delivered first — see
+        // EvictingScenario. After this the presence outbox is the only thing that can evict.
+        scenario.DrainClusterOutbox();
+        scenario.RunPass();
+        scenario.NextTurn(T0 + 4000);
+
+        // Past the eviction coalescing window, so the eviction below is the one being measured.
+        scenario.Clock.UnixTimeMs = T0 + 20_000;
+
+        // Three distinct wallets change inside one interval against a two-entry outbox, so one of
+        // them is dropped and the snapshot that repairs it is taken while the first is on two slots.
+        scenario.Place(P3, Wallet(3), MAIN, 9, 9);
+        scenario.Place(P4, Wallet(4), MAIN, 8, 8);
+        scenario.Move(P2, MAIN, 6, 6);
+        scenario.RunPass();
+        scenario.DrainClusterOutbox();
+
+        List<(ParcelChangesBatch Batch, PresenceSnapshotReason? Reason)> turn =
+            scenario.NextTurnWithReasons(T0 + 20_000);
+
+        (ParcelChangesBatch Batch, PresenceSnapshotReason? Reason) published =
+            turn.Single(static candidate => candidate.Reason == PresenceSnapshotReason.Eviction);
+
+        AssertOneEntryPerAddress(published.Batch);
+
+        Assert.That(Entries(published.Batch), Is.EqualTo(new[]
+        {
+            $"{Wallet(1)} {MAIN} 6,6",
+            $"{Wallet(3)} {MAIN} 9,9",
+            $"{Wallet(4)} {MAIN} 8,8",
+        }));
+    }
+
+    /// <summary>
+    ///     The instant before all of those: between <c>HandshakeHandlerBase.EvictDuplicateSession</c>
+    ///     calling <c>transport.Disconnect</c> and the lifecycle event it produces being drained, both
+    ///     connections really are in the spatial grid, so one pass observes the wallet twice. The entry
+    ///     then has to be the placement that has just handshaked — the slot that was kicked is on its
+    ///     way out and its parcel is not news.
+    /// </summary>
+    [Test]
+    public void ASnapshotTakenBeforeTheKickedSlotLeavesTheGrid_CarriesTheNewerPlacementOnce()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
+        scenario.Place(P2, Wallet(1), MAIN, 5, 5);
+
+        Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null);
+
+        scenario.RunPass();
+
+        ParcelChangesBatch batch = scenario.NextBatchWithReason(T0 + 62_000).Batch!;
+
+        AssertOneEntryPerAddress(batch);
+
+        Assert.That(Entries(batch), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
+            "the newer placement is this wallet's presence; the kicked slot's parcel is not");
+    }
+
+    /// <summary>
+    ///     The order of a batch is a function of its content — "two servers with the same state
+    ///     produce the same bytes", which is what lets the wire fixtures be compared byte for byte —
+    ///     and a duplicated address quietly breaks it: two entries for one wallet compare equal under
+    ///     the address-only comparator, so their relative order is whatever the sort behind it makes of
+    ///     the slot order rather than something the content decides.
+    ///     <para />
+    ///     Driven with the transport slots both ways round, which is what a FIFO free list produces:
+    ///     the wallet's stale connection is the low index on one server and the high index on the
+    ///     other, and the two servers hold the same state either way.
+    /// </summary>
+    [Test]
+    public void TwoServersHoldingOneWalletOnTwoSlots_ProduceTheSameSnapshotBytes()
+    {
+        PresenceScenario ascending = DuplicateSlotScenario(staleSlot: P1, liveSlot: P2);
+        PresenceScenario descending = DuplicateSlotScenario(staleSlot: P2, liveSlot: P1);
+
+        byte[] first = IntervalSnapshotBytes(ascending, T0 + 60_000);
+
+        Assert.That(IntervalSnapshotBytes(ascending, T0 + 130_000), Is.EqualTo(first),
+            "two collections of one unchanged state have to produce the same bytes");
+
+        Assert.That(IntervalSnapshotBytes(descending, T0 + 60_000), Is.EqualTo(first),
+            "and so do two servers holding that state on different slots");
+    }
+
+    /// <summary>
+    ///     A wallet on two slots, in the state A1 leaves behind: the evicted connection is off the
+    ///     spatial grid (phase 1 of the disconnect, which the lifecycle event does at once) but its
+    ///     tracker slot is still there, because only <c>CleanupDisconnectedPeer</c> clears it and that
+    ///     runs a full <c>Peers:DisconnectionCleanTimeoutMs</c> later. The opening snapshot and the new
+    ///     placement's delta have both been delivered, so the next batch is the snapshot under test.
+    /// </summary>
+    private static PresenceScenario DuplicateSlotScenario(
+        int channelCapacity = 1024, PeerIndex? staleSlot = null, PeerIndex? liveSlot = null)
+    {
+        PeerIndex stale = staleSlot ?? P1;
+        PeerIndex live = liveSlot ?? P2;
+
+        var scenario = new PresenceScenario(channelCapacity: channelCapacity);
+
+        scenario.Place(stale, Wallet(1), MAIN, -1, 0);
+        scenario.Authenticate(stale);
+        scenario.RunPass();
+        scenario.NextBatch(T0);
+
+        // The second client instance handshakes: the existing session is kicked, its lifecycle event
+        // takes it off the grid, and the new session is allocated a free index and placed at once.
+        scenario.Transport.Disconnect(stale, DisconnectReason.DUPLICATE_SESSION);
+        scenario.DispatchDisconnected(stale);
+        scenario.Place(live, Wallet(1), MAIN, 5, 5);
+        scenario.RunPass();
+
+        Assert.That(Entries(scenario.NextBatch(T0 + 2000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
+            "the new placement goes out as a delta, and no exit does (A1)");
+
+        return scenario;
+    }
+
+    /// <summary>
+    ///     One interval snapshot's bytes, with the two fields that are meant to differ between batches
+    ///     — <c>seq</c> and <c>server_time</c> — zeroed, so what is compared is the entries and the
+    ///     order they were written in.
+    /// </summary>
+    private static byte[] IntervalSnapshotBytes(PresenceScenario scenario, long at)
+    {
+        Assert.That(scenario.NextBatch(at), Is.Null, "the deadline passes on a turn with nothing to send");
+
+        scenario.RunPass();
+
+        (ParcelChangesBatch? batch, PresenceSnapshotReason? reason) = scenario.NextBatchWithReason(at + 2000);
+
+        Assert.That(reason, Is.EqualTo(PresenceSnapshotReason.Interval));
+
+        ParcelChangesBatch normalized = batch!.Clone();
+
+        normalized.Seq = 0;
+        normalized.ServerTime = 0;
+
+        return PresenceScenario.Serialize(normalized);
+    }
+
+    /// <summary>
+    ///     C1.3 read off a whole batch: each address once, and ascending — which is also what makes
+    ///     the batch order a function of its content, since the comparator ties on equal addresses and
+    ///     the sort behind it is not stable.
+    /// </summary>
+    private static void AssertOneEntryPerAddress(ParcelChangesBatch batch)
+    {
+        string[] addresses = batch.Changes.Select(static change => change.Address).ToArray();
+
+        Assert.That(addresses, Is.Unique, "within one batch a wallet appears at most once (C1.3)");
+        Assert.That(addresses, Is.Ordered.Using<string>(StringComparer.Ordinal));
     }
 
     // ── C1.4 cadence ───────────────────────────────────────────────

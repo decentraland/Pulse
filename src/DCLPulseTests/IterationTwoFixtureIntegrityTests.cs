@@ -29,12 +29,33 @@ public class IterationTwoFixtureIntegrityTests
     ///     Read off the file rather than from <c>git check-attr</c>, so it holds wherever the tests run.
     /// </summary>
     [Test]
-    public void TheFixtureAttributes_ClassifyTheBinFixturesAsBinary_After_TheGenericTextRule()
+    public void TheFixtureAttributes_ClassifyTheBinFixturesAsBinary_After_TheGenericTextRule() =>
+        AssertBinFixturesResolveToTextUnset(
+            File.ReadAllLines(IterationTwoFixtures.Path(".gitattributes")));
+
+    /// <summary>
+    ///     What the check above is entitled to require is the <em>resolved</em> attribute, not one
+    ///     spelling of it: <c>binary</c> is a built-in macro for <c>-text -diff</c>, so placed after
+    ///     the generic rule it leaves <c>text</c> unset exactly as the explicit form does. A pack
+    ///     refresh — or a hand edit — that writes the macro is correct, and must not fail here and
+    ///     send the next person to debug a non-bug in the fixture pipeline.
+    /// </summary>
+    [TestCase("*.bin -text -diff -merge", TestName = "TheFixtureAttributes_AcceptTheExplicitSpelling")]
+    [TestCase("*.bin binary", TestName = "TheFixtureAttributes_AcceptTheBinaryMacro")]
+    public void EitherSpellingOfTheBinRule_IsAccepted_WhenItComesAfterTheGenericRule(string binRule) =>
+        AssertBinFixturesResolveToTextUnset(["# a comment", "* text=auto eol=lf", "", binRule]);
+
+    /// <summary>
+    ///     The two assertions that carry the contract — a generic rule exists, and the <c>.bin</c> rule
+    ///     comes after it, since the last matching line wins per attribute — plus the one that says the
+    ///     <c>.bin</c> rule actually turns <c>text</c> off, in either of the spellings that do.
+    /// </summary>
+    private static void AssertBinFixturesResolveToTextUnset(IEnumerable<string> gitattributes)
     {
-        string[] rules = File.ReadAllLines(IterationTwoFixtures.Path(".gitattributes"))
-                             .Select(static line => line.Trim())
-                             .Where(static line => line.Length > 0 && !line.StartsWith('#'))
-                             .ToArray();
+        string[] rules = gitattributes
+                        .Select(static line => line.Trim())
+                        .Where(static line => line.Length > 0 && !line.StartsWith('#'))
+                        .ToArray();
 
         int generic = Array.FindLastIndex(rules, static rule => rule.StartsWith("* ", StringComparison.Ordinal));
         int binary = Array.FindLastIndex(rules, static rule => rule.StartsWith("*.bin ", StringComparison.Ordinal));
@@ -44,7 +65,11 @@ public class IterationTwoFixtureIntegrityTests
         Assert.That(binary, Is.GreaterThan(generic),
             "the *.bin rule has to come after the generic one: in gitattributes the last matching line wins per attribute");
 
-        Assert.That(rules[binary], Does.Contain("-text"),
-            "an explicit -text is what stops text=auto from normalizing line endings inside the fixture bytes");
+        string[] attributes = rules[binary].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[1..];
+
+        Assert.That(attributes.Contains("-text") || attributes.Contains("binary"), Is.True,
+            $"the *.bin rule has to resolve to `text: unset`, which is what stops text=auto from "
+          + $"normalizing line endings inside the fixture bytes — either an explicit `-text` or the "
+          + $"`binary` macro that expands to it. Got: `{rules[binary]}`");
     }
 }

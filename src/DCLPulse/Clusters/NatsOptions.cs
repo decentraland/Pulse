@@ -32,9 +32,15 @@ public sealed class NatsOptions
 
     /// <summary>
     ///     The unconfigured <see cref="ServerName" />: <c>pulse-</c> plus the machine name, which is
-    ///     the pod name under Kubernetes and the container id under plain Docker. Resolved once —
-    ///     <see cref="Environment.MachineName" /> cannot change while the process runs, and
-    ///     <c>server_name</c> has to be stable for its lifetime (C1.5).
+    ///     the pod name under default Kubernetes networking and the container id under plain Docker.
+    ///     Resolved once — <see cref="Environment.MachineName" /> cannot change while the process
+    ///     runs, and <c>server_name</c> has to be stable for its lifetime (C1.5).
+    ///     <para />
+    ///     Unique per <b>host</b>, not per process: under <c>hostNetwork: true</c> or a
+    ///     deployment-wide <c>spec.hostname</c> every pod on a node resolves the node's name, and two
+    ///     Pulse processes on one machine share it by definition. Those deployments have to configure
+    ///     <see cref="ServerName" /> explicitly — nothing here can detect the collision, since each
+    ///     process only ever sees its own value.
     /// </summary>
     public static readonly string HOST_DEFAULT_SERVER_NAME = "pulse-" + Environment.MachineName;
 

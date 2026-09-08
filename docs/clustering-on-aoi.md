@@ -184,7 +184,7 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 | Option (`Nats`) | Default | Meaning |
 | --- | --- | --- |
 | `Url` | — | Broker URL; unset = feed disabled (stats-only mode) |
-| `ServerName` | `pulse-<hostname>` | `server_name` on `engine.discovery` and `engine.parcel_changes`. **Must be unique per replica** — presence consumers replace their state per `server_name` ([presence-feed.md](presence-feed.md#server_name-must-be-unique-per-replica)) |
+| `ServerName` | `pulse-<hostname>` | `server_name` on `engine.discovery` and `engine.parcel_changes`, and the NATS connection name. **Must be unique per replica** — presence consumers replace their state per `server_name`; the default is unique per *host*, so set it explicitly under `hostNetwork: true`, a fixed `spec.hostname`, or several processes per machine ([presence-feed.md](presence-feed.md#server_name-must-be-unique-per-replica)) |
 | `DiscoveryIntervalMs` | 10000 | Heartbeat cadence; must stay well under archipelago-stats' 90 s health window |
 | `ChannelCapacity` | 1024 | Max distinct peers with an undelivered assignment |
 

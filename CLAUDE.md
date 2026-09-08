@@ -369,12 +369,17 @@ touching it:
 - **`seq` is stamped per assembled batch and never reused.** A publish that throws leaves a real gap,
   which is what it is; consumers hold their state and are corrected by the next snapshot. Do not
   retry a batch under its old `seq`.
-- **An exit is wallet-scoped, and a snapshot discards nothing.** `OnPeerRemoved` publishes only when
-  the wallet is left on no slot of this server (otherwise a duplicate-session kick withdraws a peer
-  that is online on its newer connection); and whatever was pending when a snapshot was collected is
-  published *ahead* of it under its own `seq`, because the snapshot lists live peers and so cannot
-  name an exit. Both are contract amendments A1/A2 — they have tests in `PresenceGuaranteeTests`
-  named after them.
+- **Every batch is per wallet, not per slot, and a snapshot discards nothing.** Slots are per
+  connection and a wallet sits on two of them for a whole `Peers:DisconnectionCleanTimeoutMs` after a
+  duplicate-session kick or a fast reconnect, so both entry points reduce per address:
+  `OnPeerRemoved` publishes an exit only when the wallet is left on no slot of this server (otherwise
+  the kick withdraws a peer that is online on its newer connection), and `CollectLivePresence` emits
+  one entry per wallet, at the slot the latest pass saw — never the stale one, whose parcel a
+  last-write-wins consumer would otherwise hold until the next snapshot. Keep the `Slot` recency
+  stamps in step with any new way of writing a slot. Meanwhile whatever was pending when a snapshot
+  was collected is published *ahead* of it under its own `seq`, because the snapshot lists live peers
+  and so cannot name an exit. All of it is C1.3 plus amendments A1/A2 — every clause has a test in
+  `PresenceGuaranteeTests` named after it.
 
 [docs/presence-feed.md](docs/presence-feed.md) is the consumer-facing reference — guarantees,
 the `seq`-gap rule, config and metrics.

@@ -67,9 +67,15 @@ Two spellings matter on the wire and are easy to get wrong:
    presence by wallet replaces; one keying by `(realm, wallet)` must remove the wallet from every
    other realm on seeing it in a new one.
 4. **Within a batch a wallet appears at most once, with its latest state.** A peer running across
-   parcels costs one entry per batch interval, not one per step.
+   parcels costs one entry per batch interval, not one per step. This holds for a snapshot as well as
+   a delta, and a snapshot is the case worth spelling out: entries are per **wallet**, not per
+   connection, so a wallet briefly standing on two connections — the
+   `Peers:DisconnectionCleanTimeoutMs` window after a duplicate-session kick or a fast reconnect —
+   appears once, at the connection that is actually placed. Consumers may therefore apply a batch as
+   a straight last-write-wins per address, in wire order, without checking for repeats.
 5. **`realm` and `address` are lowercase**, canonicalized at ingest (handshake and teleport), and
-   `server_name` is the same string for the life of the process — **and unique per process**, see
+   `server_name` is the same string for the life of the process — **and unique per replica**, which
+   the `pulse-<hostname>` default gives you per *host* rather than per process, see
    [Configuration](#configuration).
 
 ## Cadence
@@ -83,7 +89,7 @@ Two spellings matter on the wire and are easy to get wrong:
 | after an outbox eviction | `snapshot=true` (`reason=eviction`), on the next batch turn, coalesced to at most one per quarter of `Presence:SnapshotIntervalMs` |
 
 A snapshot is a batch with the flag set, not a separate stream: it takes the next `seq` like any
-other. It carries one non-null entry per active peer with a known realm and parcel, and an **empty**
+other. It carries one non-null entry per active **wallet** with a known realm and parcel, and an **empty**
 snapshot is meaningful — it says this server holds nobody, which a consumer has no other way to
 learn.
 
@@ -164,10 +170,27 @@ population from every consumer's presence map once per snapshot interval, and th
 streams read as a permanent `seq` gap that freezes consumers in between — all of it silent on the
 Pulse side, because both instances look perfectly healthy.
 
-So `Nats:ServerName` is left blank in `appsettings.json` and defaults to `pulse-` plus the machine
-name, which is the pod name under Kubernetes and the container id under plain Docker. Set it
-explicitly only to something already unique per process (never a deployment-wide literal); the value
-the process resolved is logged at startup on the `NATS publisher started` line.
+So `Nats:ServerName` is left blank in `appsettings.json` and defaults to `pulse-` plus
+`Environment.MachineName` — the pod name under default Kubernetes networking, the container id under
+plain Docker. The value the process resolved is logged at startup on the `NATS publisher started`
+line, which is the one place to read it back.
+
+**That default is unique per host, not per process.** Wherever the hostname is not the pod's own it
+is the node's: `hostNetwork: true` — a plausible choice for a UDP game server — gives every pod on a
+node the node name, a deployment-wide `spec.hostname` gives every pod the same name everywhere, and
+two Pulse processes on one machine share it by definition. In any of those, set `Nats:ServerName`
+explicitly, to something already unique per replica (never a deployment-wide literal). Nothing
+detects the collision for you: the startup line prints the same value on each replica and looks
+correct on both, and the symptom shows up only at the consumer, as the mutual deletion above.
+
+`Nats:ServerName` is not presence-only. The same value is the `server_name` on the
+`engine.discovery` heartbeat and the NATS client's connection name — what `/connz` and
+`nats server report connections` display. `appsettings.json` shipped the literal `pulse` before this
+feed existed, so a deploy that changes no configuration moves all three onto `pulse-<hostname>`: an
+operator artefact matching the old literal (a `/connz` filter, a Grafana rule or dashboard variable
+pinned to `server_name="pulse"`) stops matching after the rollout, silently. Nothing in the platform
+reads it — archipelago-stats' discovery consumer takes `currentTime` and `userCount` and never looks
+at `server_name` — but an operator's own tooling might.
 
 Batch size is bounded by `Nats:ChannelCapacity` (default 1024) for a delta, and by the peers this
 server holds for a snapshot.

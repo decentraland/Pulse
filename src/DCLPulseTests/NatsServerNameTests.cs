@@ -18,8 +18,11 @@ namespace DCLPulseTests;
 public class NatsServerNameTests
 {
     /// <summary>
-    ///     The unconfigured default. The machine name is the pod name in Kubernetes and the container
-    ///     id under plain Docker, so two replicas of one deployment never share it.
+    ///     The unconfigured default. The machine name is the pod name under default Kubernetes
+    ///     networking and the container id under plain Docker, so two replicas of one deployment do
+    ///     not share it — unless the pod's hostname is the node's (<c>hostNetwork: true</c>, a fixed
+    ///     <c>spec.hostname</c>) or two processes run on one machine, which is why the docs tell those
+    ///     deployments to configure it.
     /// </summary>
     [Test]
     public void ServerName_DefaultsToTheHostname_WhenNotConfigured()

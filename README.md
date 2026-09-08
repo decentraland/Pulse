@@ -138,7 +138,9 @@ Nothing is published unless `Nats:Url` is set; with no broker configured Pulse r
 for `seq` gaps and snapshots, and its configuration and metrics are in
 [docs/presence-feed.md](docs/presence-feed.md). Every batch is stamped with `Nats:ServerName`, which
 **must be unique per replica**: consumers replace their whole presence state per `server_name`. It
-defaults to `pulse-<hostname>`, so a deployment gets that for free.
+defaults to `pulse-<hostname>`, so a deployment on default Kubernetes networking gets that for
+free — but the default is unique per *host*, so a deployment with `hostNetwork: true`, a fixed
+`spec.hostname`, or several Pulse processes per machine has to set it explicitly.
 
 ## Metrics & Dashboard
 

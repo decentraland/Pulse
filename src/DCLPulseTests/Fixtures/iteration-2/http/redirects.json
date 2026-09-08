@@ -1,5 +1,5 @@
 {
-  "rule": "Legacy unscoped paths (and their /comms/ copies) answer 308 with Location under /realms/main/…, preserving the query string. Exception: /peers and /comms/peers with an `id` or `all` query parameter are handled directly (all realms, see peers-by-id.json / peers-all.json).",
+  "rule": "Legacy unscoped paths (and their /comms/ copies) answer 308 with Location under /realms/main/…, preserving the query string. Exceptions handled directly (all realms): /peers and /comms/peers with an `id` or `all` query parameter (peers-by-id.json / peers-all.json), and /peers/:id and /comms/peers/:id (peers-single.json).",
   "cases": [
     {
       "path": "/peers",
@@ -50,6 +50,16 @@
       "path": "/comms/peers?id=0x0000000000000000000000000000000000000001",
       "status": 200,
       "golden": "peers-by-id.json (same handler as /peers?id=)"
+    },
+    {
+      "path": "/comms/peers/0x0000000000000000000000000000000000000003",
+      "status": 200,
+      "golden": "peers-single.json (same handler as /peers/:id — stats served this alias; keep it live)"
+    },
+    {
+      "path": "/comms/peers/0x0000000000000000000000000000000000000009",
+      "status": 404,
+      "golden": "peers-single-404.json"
     },
     {
       "path": "/peers?all=true",

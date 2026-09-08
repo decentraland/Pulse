@@ -126,10 +126,13 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     <c>/comms/</c> is a second spelling of the four legacy paths and of nothing else. Stripping
-    ///     it before matching every route answered <c>/comms/realms</c>, <c>/comms/status</c>,
-    ///     <c>/comms/about</c> and the realm-scoped routes as well — unversioned public surface nobody
-    ///     asked for, which becomes hard to withdraw once a caller depends on it.
+    ///     <c>/comms/</c> is a second spelling of the paths archipelago-stats published under it and of
+    ///     nothing else. Stripping it before matching every route answered <c>/comms/realms</c>,
+    ///     <c>/comms/status</c>, <c>/comms/about</c> and the realm-scoped routes as well — unversioned
+    ///     public surface nobody asked for, which becomes hard to withdraw once a caller depends on it.
+    ///     <para />
+    ///     <c>/comms/peers/{id}</c> left this list with A5: stats served that alias with a live 200, so
+    ///     it is answered rather than declined. One segment deeper is still nothing.
     /// </summary>
     [TestCase("/comms/realms")]
     [TestCase("/comms/status")]
@@ -137,7 +140,8 @@ public class StatsGoldenTests
     [TestCase("/comms/health")]
     [TestCase("/comms/realms/main/peers")]
     [TestCase("/comms/realms/main/islands")]
-    [TestCase("/comms/peers/0x0000000000000000000000000000000000000001")]
+    [TestCase("/comms/peers/0x0000000000000000000000000000000000000001/extra")]
+    [TestCase("/comms/parcels/extra")]
     [TestCase("/comms/metrics")]
     [TestCase("/comms")]
     public void CommsPrefix_IsNotASecondSpellingOfEveryRoute(string path)
@@ -149,8 +153,9 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     The legacy set keeps working under the prefix, query exception included — the four paths
-    ///     <c>redirects.json</c> lists are exactly what <c>/comms/</c> is for.
+    ///     The legacy set keeps working under the prefix, both exceptions included — the paths
+    ///     <c>redirects.json</c> lists are exactly what <c>/comms/</c> is for: four that redirect,
+    ///     <c>/comms/peers</c> carrying a query parameter, and <c>/comms/peers/{id}</c> (A5).
     /// </summary>
     [TestCase("/comms/peers", 308)]
     [TestCase("/comms/parcels", 308)]
@@ -158,9 +163,41 @@ public class StatsGoldenTests
     [TestCase("/comms/islands/C1", 308)]
     [TestCase("/comms/peers?id=0x0000000000000000000000000000000000000001", 200)]
     [TestCase("/comms/peers?all=true", 200)]
+    [TestCase("/comms/peers/0x0000000000000000000000000000000000000003", 200)]
+    [TestCase("/comms/peers/0x0000000000000000000000000000000000000009", 404)]
     public void CommsPrefix_StillAnswersTheLegacyPaths(string path, int status)
     {
         Assert.That(Request(path).Status, Is.EqualTo(status), path);
+    }
+
+    /// <summary>
+    ///     A5: <c>/comms/peers/{id}</c> is <em>served</em>, not redirected — archipelago-stats answered
+    ///     that alias with a live 200 and consumers still call it, so a 308 (or the 404 it used to get
+    ///     here) breaks a caller that works in production today.
+    ///     <para />
+    ///     Asserted as "the same answer as the unprefixed path", byte for byte, rather than against a
+    ///     restatement of the golden: the contract is that the two paths are one handler, so a change to
+    ///     the peer shape, the <c>realm</c> field or the 404 body cannot land on one of them only. Every
+    ///     branch of the route is driven through it — a peer in Genesis City, a peer in a world, a
+    ///     wallet that is offline, and a wallet spelled in another casing.
+    /// </summary>
+    [TestCase("0x0000000000000000000000000000000000000001", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInGenesisCity")]
+    [TestCase("0x0000000000000000000000000000000000000003", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInAWorld")]
+    [TestCase("0x0000000000000000000000000000000000000009", 404, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAWalletThatIsOffline")]
+    [TestCase("0X0000000000000000000000000000000000000003", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAWalletInAnotherCasing")]
+    public void CommsPeersSingle_IsServedExactlyLikePeersSingle(string wallet, int expected)
+    {
+        StatsResponse direct = Request($"/peers/{wallet}");
+        StatsResponse aliased = Request($"/comms/peers/{wallet}");
+
+        // Both halves of the comparison have to be a real answer, or two routes that answered nothing
+        // would satisfy the equality below.
+        Assert.That(direct.Status, Is.EqualTo(expected), wallet);
+        Assert.That(BodyText(direct), Is.Not.Null, wallet);
+
+        Assert.That(aliased.Status, Is.EqualTo(direct.Status), wallet);
+        Assert.That(aliased.Location, Is.Null, "the alias is served, not redirected");
+        Assert.That(BodyText(aliased), Is.EqualTo(BodyText(direct)), wallet);
     }
 
     /// <summary>
@@ -268,7 +305,39 @@ public class StatsGoldenTests
                 Assert.That(response.Location, Is.EqualTo(location.GetValue<string>()), path);
             else
                 Assert.That(response.Location, Is.Null, $"{path} is answered directly, not redirected");
+
+            if (entry["golden"] is { } golden)
+                AssertAnsweredLikeItsGolden(golden.GetValue<string>(), path, response);
         }
+    }
+
+    /// <summary>
+    ///     A row that names a golden instead of a <c>Location</c> claims the path is answered by the
+    ///     same handler as that golden, so where the row <em>is</em> the golden's own request modulo the
+    ///     <c>/comms/</c> prefix, the body has to be the golden's body. That is what makes the A5 rows
+    ///     say something: <c>/comms/peers/0x…3</c> has to return <c>peers-single.json</c> and the
+    ///     unknown wallet <c>peers-single-404.json</c>, not merely 200 and 404.
+    ///     <para />
+    ///     A row whose request differs from its golden's — <c>/comms/peers?id=</c> carries one id where
+    ///     <c>peers-by-id.json</c> asks for three — is the same handler on a different input, and the
+    ///     golden test proper already pins that input.
+    /// </summary>
+    private static void AssertAnsweredLikeItsGolden(string golden, string path, StatsResponse response)
+    {
+        // "peers-single.json (same handler as /peers/:id — ...)": the note after the filename is prose.
+        string file = golden.Split(' ')[0];
+
+        JsonNode fixture = IterationTwoFixtures.Json($"http/{file}");
+
+        string unprefixed = path.StartsWith("/comms/", StringComparison.Ordinal)
+            ? path["/comms".Length..]
+            : path;
+
+        if (!string.Equals(RequestPathOf(fixture), unprefixed, StringComparison.Ordinal)) return;
+
+        Assert.That(response.Status, Is.EqualTo(fixture["status"]!.GetValue<int>()), path);
+
+        JsonGolden.AssertMatches(fixture["body"], BodyOf(response), $"{file} via {path}");
     }
 
     /// <summary>
@@ -362,6 +431,13 @@ public class StatsGoldenTests
 
     private static JsonNode? BodyOf(StatsResponse response) =>
         response.Body is { } body ? JsonNode.Parse(Encoding.UTF8.GetString(body)) : null;
+
+    /// <summary>
+    ///     The body as the bytes on the wire, or null when there is none — so two responses compare
+    ///     on what a caller actually receives, key order and number formatting included.
+    /// </summary>
+    private static string? BodyText(StatsResponse response) =>
+        response.Body is { } body ? Encoding.UTF8.GetString(body) : null;
 
     /// <summary>
     ///     <paramref name="count" /> distinct wallets, none of them online, so the only thing under

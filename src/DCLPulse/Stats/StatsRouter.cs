@@ -34,7 +34,9 @@ namespace Pulse.Stats;
 ///         <item>
 ///             the legacy unscoped paths answer 308 into <c>/realms/main/…</c> with the query string
 ///             intact, so a caller written against archipelago-stats keeps working while it is
-///             updated.
+///             updated — except the two that are all-realms lookups and are therefore served where
+///             they stand: <c>/peers</c> carrying <c>id</c> or <c>all</c>, and <c>/peers/{id}</c>.
+///             Both are reachable under the <c>/comms/</c> prefix as well.
 ///         </item>
 ///     </list>
 /// </summary>
@@ -69,7 +71,7 @@ public sealed class StatsRouter(
         string[] segments = absolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
         // The /comms/ prefix is a second spelling of the legacy paths — and of nothing else. Stripped
-        // before matching, but only for those four: /comms/realms, /comms/status and the rest would
+        // before matching, but only for those: /comms/realms, /comms/status and the rest would
         // otherwise be new unversioned public surface that nobody asked for and that becomes hard to
         // withdraw once a caller depends on it.
         if (segments is ["comms", ..])
@@ -105,13 +107,21 @@ public sealed class StatsRouter(
     }
 
     /// <summary>
-    ///     The paths archipelago-stats answered unscoped, which are the only ones the <c>/comms/</c>
-    ///     prefix is a second spelling of. <c>/peers</c> is in the set whether or not a query
-    ///     parameter turns it into an all-realms lookup — <c>/comms/peers?id=…</c> is answered
-    ///     directly, exactly like <c>/peers?id=…</c>.
+    ///     The paths archipelago-stats answered under the <c>/comms/</c> prefix, which are the only
+    ///     ones it is a second spelling of. Membership here decides whether the prefix is accepted and
+    ///     nothing else: what the path then answers is the switch above, unchanged — which is the
+    ///     point, since the contract is that the prefixed and unprefixed spellings are one route.
+    ///     <para />
+    ///     So <c>/peers</c> is in the set whether or not a query parameter turns it into an all-realms
+    ///     lookup (<c>/comms/peers?id=…</c> is answered directly, exactly like
+    ///     <c>/peers?id=…</c>), and <c>/peers/{id}</c> is in it because stats served
+    ///     <c>/comms/peers/{id}</c> with a live 200 (iteration-2 amendment A5). Callers of that alias
+    ///     exist in production, so it is answered rather than redirected — and a 308 could not stand
+    ///     in for it anyway: it would point at <c>/realms/main/peers/{id}</c>, which is not a route,
+    ///     and it would scope an all-realms lookup to Genesis City.
     /// </summary>
     private static bool IsLegacyPath(string[] segments) =>
-        segments is ["peers"] or ["parcels"] or ["islands"] or ["islands", _];
+        segments is ["peers"] or ["peers", _] or ["parcels"] or ["islands"] or ["islands", _];
 
     private StatsResponse Realms()
     {

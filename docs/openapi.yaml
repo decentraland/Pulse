@@ -63,10 +63,14 @@ info:
 
     ### The `/comms/` prefix
 
-    `/comms/peers`, `/comms/parcels`, `/comms/islands` and `/comms/islands/{id}` are accepted as a
-    second spelling of those four legacy paths, and answer exactly what the unprefixed path does
-    (a 308 into `/realms/main/…`, or the all-realms lookup when `/comms/peers` carries `id` or
-    `all`). The prefix is **not** accepted on anything else — `/comms/realms`, `/comms/status`,
+    `/comms/peers`, `/comms/peers/{id}`, `/comms/parcels`, `/comms/islands` and
+    `/comms/islands/{id}` are accepted as a second spelling of those legacy paths, and answer
+    exactly what the unprefixed path does — the same status, the same body, the same headers. For
+    four of them that is a 308 into `/realms/main/…`; the two all-realms lookups are served where
+    they stand, namely `/comms/peers` carrying `id` or `all`, and **`/comms/peers/{id}`**, which
+    archipelago-stats answered with a live 200 and which therefore stays live here.
+
+    The prefix is **not** accepted on anything else — `/comms/realms`, `/comms/status`,
     `/comms/about`, `/comms/health` and `/comms/realms/{realm}/…` are 404 — so it stays a
     compatibility shim for the endpoints archipelago-stats published under it rather than a second
     name for this whole surface.
@@ -228,9 +232,10 @@ paths:
       tags: [Peers]
       summary: Look up peers across every realm
       description: |
-        Two all-realms lookups, and the one legacy path that is not simply a redirect. With `id` or
-        `all` this route answers; with neither — the archipelago-stats call — it answers `308
-        Location: /realms/main/peers`, preserving the query string.
+        Two all-realms lookups. With `id` or `all` this route answers; with neither — the
+        archipelago-stats call — it answers `308 Location: /realms/main/peers`, preserving the query
+        string. It is one of the two legacy paths that are not simply a redirect; the other is
+        `/peers/{id}`, which is always served.
 
         Entries carry their `realm`, since there is no envelope to carry it. A realm ending
         `.dcl.eth` means the peer is in a world.
@@ -289,6 +294,10 @@ paths:
       description: |
         Whether a wallet is online and, if so, where. Replaces worlds-content-server's
         `/wallet/:wallet/connected-world`: a `realm` ending `.dcl.eth` is the world name.
+
+        Also served at **`/comms/peers/{id}`**, the spelling archipelago-stats published: same
+        handler, same 200 and 404 bodies, all realms. Not a redirect — a 308 would have to name a
+        realm, and this lookup has none.
       operationId: getPeer
       parameters:
         - name: id

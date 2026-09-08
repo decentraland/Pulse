@@ -109,7 +109,7 @@ surface says who is standing where, which every client in a realm learns from th
 | `GET /realms/{realm}/peers` | peers in one realm — wallet, parcel, world position, `lastPing` |
 | `GET /realms/{realm}/parcels` | occupied parcels with peer counts, busiest first |
 | `GET /realms/{realm}/islands`, `…/islands/{id}` | the clustering pass's groups, in archipelago's island shape |
-| `GET /peers?id=0x…&id=0x…`, `GET /peers?all=true`, `GET /peers/{id}` | all-realms wallet lookups |
+| `GET /peers?id=0x…&id=0x…`, `GET /peers?all=true`, `GET /peers/{id}` | all-realms wallet lookups (also under `/comms/`) |
 | `GET /status` | version, this server's clock, per-realm peer counts |
 | `GET /about`, `GET /health` | commit hash + user count · liveness |
 | `GET /metrics` | Prometheus, bearer token (`WKC_METRICS_BEARER_TOKEN`) |
@@ -117,9 +117,12 @@ surface says who is standing where, which every client in a realm learns from th
 Realm segments match case-insensitively and responses carry the canonical lowercase name; a realm
 nobody is in is an empty realm (200, empty list), never a 404. The unscoped archipelago-stats paths
 (`/peers`, `/parcels`, `/islands`, `/islands/:id`, and their `/comms/`-prefixed copies) answer
-`308 Location: /realms/main/…`, preserving the query string — except `/peers` with an `id` or `all`
-parameter, which is answered directly across all realms. The `/comms/` prefix is accepted on those
-four paths only; `/comms/` anything else is a 404.
+`308 Location: /realms/main/…`, preserving the query string — except the two all-realms lookups,
+which are answered where they stand: `/peers` with an `id` or `all` parameter, and `/peers/:id`.
+Both of those are served under `/comms/` too — `/comms/peers/:id` is the same handler as
+`/peers/:id`, down to the `{"ok":false,"peer":null}` 404 body, because archipelago-stats answered
+that alias with a live 200. The prefix is accepted on those five paths only; `/comms/` anything
+else is a 404.
 
 Full reference, including shapes and the normative ordering: [docs/openapi.yaml](docs/openapi.yaml).
 

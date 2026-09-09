@@ -659,6 +659,25 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Current.Peers.Count(info => info.Wallet == WALLET), Is.EqualTo(1));
     }
 
+    [Test]
+    public void StaleWalletWithNoLiveBinding_IsNotClustered()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var stale = new PeerIndex(0);
+
+        // Still in the grid awaiting its own disconnect, but the wallet has since moved to a peer
+        // that has also fully disconnected — the reverse lookup for it now finds nothing at all,
+        // exercising the guard's miss branch rather than its found-but-different-peer branch.
+        SetupPeer(stale, new Vector3(10, 0, 10), wallet: WALLET);
+        identityBoard.Set(new PeerIndex(1), WALLET);
+        identityBoard.Remove(new PeerIndex(1));
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.GetClusterId(stale), Is.Null);
+        Assert.That(clusterBoard.Current.Clusters, Is.Empty);
+    }
+
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1)
     {
         // Options.Create rather than a substitute: IOptions<T> has a real, trivial implementation, and

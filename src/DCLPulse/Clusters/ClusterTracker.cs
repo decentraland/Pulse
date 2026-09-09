@@ -267,10 +267,12 @@ public sealed class ClusterTracker : BackgroundService
     /// <summary>
     ///     Resolves one occupant into a <see cref="PassMember" />, or skips it. A peer whose snapshot is
     ///     unreadable, whose wallet is unknown, or which is no longer the wallet's live binding in
-    ///     <see cref="IdentityBoard" /> cannot be published as a cluster member. A peer already
-    ///     collected this pass is skipped too: the grid read is weakly consistent, so a peer that
-    ///     changes cell — or realm — mid-enumeration can surface twice, and every later step assumes a
-    ///     peer appears at most once. The grid it was found in first decides the realm it clusters in.
+    ///     <see cref="IdentityBoard" /> cannot be published as a cluster member.
+    ///     A binding goes stale when a duplicate-session eviction rebinds the wallet to a replacement
+    ///     peer while the outgoing one is still in the grid awaiting its transport disconnect.
+    ///     A peer already collected this pass is skipped too: the grid read is weakly consistent, so a peer
+    ///     that changes cell — or realm — mid-enumeration can surface twice, and every later step assumes
+    ///     a peer appears at most once. The grid it was found in first decides the realm it clusters in.
     /// </summary>
     private void TryCollectMember(PeerIndex peer)
     {
@@ -283,12 +285,9 @@ public sealed class ClusterTracker : BackgroundService
 
         if (wallet is null) return;
 
-        // One wallet, one peer. A duplicate-session eviction rebinds the wallet to the replacement
-        // before the outgoing peer's transport disconnect lands, so both sit in the grid for up to
-        // Transport:PeerTimeoutMs. Collecting the outgoing one would address the wallet's feed
-        // subject with the departing session's cluster and list the wallet twice in one topology
-        // snapshot. Outside that overlap the reverse lookup returns the peer itself, so this is a
-        // no-op — one dictionary read per occupant on a 1 Hz thread.
+        // Only the wallet's current live binding is collected; a peer holding a stale one is skipped.
+        // Outside that case the reverse lookup resolves back to this same peer, so the check is a
+        // no-op — one dictionary read per occupant, on the tracker's own 1 Hz thread.
         if (!identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live) || live != peer) return;
 
         state.LastSeenPass = passNumber;

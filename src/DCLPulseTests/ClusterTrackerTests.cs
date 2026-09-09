@@ -19,6 +19,7 @@ public class ClusterTrackerTests
 
     private const string REALM = "realm-a";
     private const string OTHER_REALM = "realm-b";
+    private const string WALLET = "0xduplicate";
 
     private RealmSpatialGrids grids;
     private SnapshotBoard snapshotBoard;
@@ -610,6 +611,52 @@ public class ClusterTrackerTests
 
         Assert.That(clusterBoard.Current.Clusters, Is.Empty);
         feedPublisher.DidNotReceive().PublishTopology(Arg.Any<ClusterPass>());
+    }
+
+    [Test]
+    public void OutgoingDuplicateSession_IsNotClustered()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        // Far enough apart to form two clusters if both were collected. SetupPeer's identityBoard.Set
+        // rebinds the wallet to `incoming`, exactly as the duplicate-session handshake does before the
+        // outgoing peer's transport disconnect lands.
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Current.GetClusterId(outgoing), Is.Null);
+        Assert.That(clusterBoard.Current.GetClusterId(incoming), Is.Not.Null);
+        Assert.That(clusterBoard.Current.Clusters, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void OutgoingDuplicateSession_DoesNotPublishOnTheWalletsSubject()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), new Vector3(10, 0, 10), wallet: WALLET);
+        SetupPeer(new PeerIndex(1), new Vector3(500, 0, 500), wallet: WALLET);
+
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, Arg.Any<string>(), REALM);
+    }
+
+    [Test]
+    public void DuplicatedWallet_AppearsOnceInThePassRoster()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), new Vector3(10, 0, 10), wallet: WALLET);
+        SetupPeer(new PeerIndex(1), new Vector3(500, 0, 500), wallet: WALLET);
+
+        tracker.RunPass();
+
+        // FillIslandStatus adds one roster entry per ClusterPeerInfo with no de-duplication, so a
+        // second entry here would list the wallet in two islands of one engine.islands snapshot.
+        Assert.That(clusterBoard.Current.Peers.Count(info => info.Wallet == WALLET), Is.EqualTo(1));
     }
 
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1)

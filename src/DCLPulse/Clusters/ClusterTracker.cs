@@ -61,6 +61,15 @@ public sealed class ClusterTracker : BackgroundService
     private readonly PeerClusterState[] peerStates;
     private readonly Dictionary<string, ClusterRecord> clusterRecords = new ();
 
+    // Last assignment published for each wallet, retained across the PeerIndex change of a
+    // duplicate-session eviction. Keyed by wallet rather than PeerIndex: the slot is recycled, and
+    // the outgoing session is about to give its own up, so slot-keyed state cannot survive the change.
+    private readonly Dictionary<string, WalletAssignment> assignmentByWallet = new (StringComparer.OrdinalIgnoreCase);
+
+    // Wallets whose entry aged out, collected before removal so the dictionary is not mutated
+    // mid-enumeration. Cleared and reused between passes.
+    private readonly List<string> expiredWallets = [];
+
     private long passNumber;
     private long nextClusterNumber;
 
@@ -173,6 +182,7 @@ public sealed class ClusterTracker : BackgroundService
 
         int reassignments = PublishAssignmentChanges();
         ForgetVanishedPeers();
+        ForgetExpiredHandovers();
 
         RecordPassMetrics(startTicks, pass.Clusters.Count, reassignments);
     }
@@ -291,6 +301,15 @@ public sealed class ClusterTracker : BackgroundService
         if (!identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live) || live != peer) return;
 
         state.LastSeenPass = passNumber;
+
+        // Keep the wallet's handover entry alive while it has a live peer. Refreshing only on publish
+        // would expire it under a stationary peer — the peer a duplicate session is most likely to
+        // arrive for. A dictionary read and write per occupant, on a 1 Hz thread.
+        if (assignmentByWallet.TryGetValue(wallet, out WalletAssignment seen))
+        {
+            seen.LastSeenPass = passNumber;
+            assignmentByWallet[wallet] = seen;
+        }
 
         members.Add(new PassMember(peer, wallet, snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport));
     }
@@ -638,11 +657,14 @@ public sealed class ClusterTracker : BackgroundService
     /// <summary>
     ///     Emits a feed event for one peer if its assignment — cluster and realm together — differs
     ///     from the last one published, and either the change is exempt from the debounce or the peer
-    ///     has dwelled long enough. Returns whether it published.
+    ///     has dwelled long enough. A slot that has never published may have its assignment replaced
+    ///     first by <see cref="TryHandOverFromOutgoingSession" />. Returns whether it published.
     /// </summary>
     private bool TryPublishAssignment(PassMember member, string clusterId, string realm)
     {
         ref PeerClusterState state = ref peerStates[member.Peer.Value];
+
+        bool handingOver = TryHandOverFromOutgoingSession(in state, member.Wallet, ref clusterId, ref realm);
 
         bool realmChanged = !string.Equals(state.PublishedRealm, realm, StringComparison.Ordinal);
 
@@ -654,10 +676,11 @@ public sealed class ClusterTracker : BackgroundService
             return false;
         }
 
-        // The debounce is bypassed on first assignment, teleport, realm change, and deletion of the
-        // peer's previous cluster — cases where the published assignment is already known to be
-        // wrong, so waiting would only prolong it.
+        // The debounce is bypassed on first assignment, teleport, realm change, deletion of the
+        // peer's previous cluster, and the migration off a handover — cases where the published
+        // assignment is already known to be wrong, so waiting would only prolong it.
         bool immediate = state.PublishedClusterId is null
+                         || state.HandoverPending
                          || member.IsTeleport
                          || realmChanged
                          || !IsClusterLive(state.PublishedClusterId);
@@ -666,10 +689,45 @@ public sealed class ClusterTracker : BackgroundService
 
         state.PublishedClusterId = clusterId;
         state.PublishedRealm = realm;
+        state.HandoverPending = handingOver;
         state.CandidateClusterId = null;
         state.CandidateStreak = 0;
 
+        assignmentByWallet[member.Wallet] = new WalletAssignment
+        {
+            ClusterId = clusterId,
+            Realm = realm,
+            LastSeenPass = passNumber,
+        };
+
         feedPublisher.PublishClusterChange(member.Wallet, clusterId, realm);
+
+        return true;
+    }
+
+    /// <summary>
+    ///     Substitutes the wallet's retained assignment for a slot that has never published, so an
+    ///     incoming session is first announced into the room the outgoing one still holds and LiveKit's
+    ///     duplicate-identity rule supersedes that participant. Returns whether a substitution was
+    ///     made; the caller records it so the peer's own assignment can follow without waiting out the
+    ///     debounce.
+    ///     <para />
+    ///     Deliberately not gated on the retained cluster still existing. When the outgoing peer was
+    ///     that cluster's only member the cluster is already gone from this pass, while its LiveKit
+    ///     room — which outlives it — is exactly what the incoming session has to be steered into.
+    /// </summary>
+    private bool TryHandOverFromOutgoingSession(in PeerClusterState state, string wallet, ref string clusterId, ref string realm)
+    {
+        if (options.HandoverPasses <= 0) return false;
+        if (state.PublishedClusterId is not null) return false;
+        if (!assignmentByWallet.TryGetValue(wallet, out WalletAssignment retained)) return false;
+
+        if (string.Equals(retained.ClusterId, clusterId, StringComparison.Ordinal)
+            && string.Equals(retained.Realm, realm, StringComparison.Ordinal))
+            return false;
+
+        clusterId = retained.ClusterId;
+        realm = retained.Realm;
 
         return true;
     }
@@ -710,6 +768,26 @@ public sealed class ClusterTracker : BackgroundService
 
             state = default(PeerClusterState);
         }
+    }
+
+    /// <summary>
+    ///     Drops handover entries for wallets absent for more than
+    ///     <see cref="ClusterOptions.HandoverPasses" /> passes, which also bounds the map to concurrent
+    ///     wallets plus recently departed ones. The window only has to span a duplicate-session
+    ///     eviction; past it a handover would steer an arriving session into a room nobody is in.
+    /// </summary>
+    private void ForgetExpiredHandovers()
+    {
+        if (assignmentByWallet.Count == 0) return;
+
+        expiredWallets.Clear();
+
+        foreach (KeyValuePair<string, WalletAssignment> entry in assignmentByWallet)
+            if (passNumber - entry.Value.LastSeenPass > options.HandoverPasses)
+                expiredWallets.Add(entry.Key);
+
+        for (var i = 0; i < expiredWallets.Count; i++)
+            assignmentByWallet.Remove(expiredWallets[i]);
     }
 
     private MemberEnumerator MembersOf(int component) =>
@@ -810,7 +888,23 @@ public sealed class ClusterTracker : BackgroundService
         public string? CandidateClusterId;
         public int CandidateStreak;
 
+        // Set on the pass a handover was published, cleared once the peer's own assignment follows.
+        // Exempts that migration from the dwell debounce.
+        public bool HandoverPending;
+
         // Pass this slot was last collected in. Zero means never, or forgotten since.
+        public long LastSeenPass;
+    }
+
+    /// <summary>
+    ///     A wallet's last published assignment. <see cref="LastSeenPass" /> tracks when the wallet was
+    ///     last <i>seen</i> rather than last published: a stationary peer publishes once and never
+    ///     again, and its entry must not expire underneath it.
+    /// </summary>
+    private struct WalletAssignment
+    {
+        public string ClusterId;
+        public string Realm;
         public long LastSeenPass;
     }
 

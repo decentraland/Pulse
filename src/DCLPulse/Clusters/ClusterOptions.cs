@@ -27,4 +27,13 @@ public sealed class ClusterOptions
     ///     Prefix for generated cluster IDs, which are otherwise a monotonic counter.
     /// </summary>
     public string IdPrefix { get; set; } = "C";
+
+    /// <summary>
+    ///     Passes a departed wallet's published assignment is retained for a session handover. A
+    ///     replacement session arriving inside this window is first published into the outgoing
+    ///     session's cluster, so both hold the same LiveKit room and LiveKit's duplicate-identity rule
+    ///     supersedes the outgoing participant; the replacement's own assignment follows on the next
+    ///     pass. Zero disables the handover.
+    /// </summary>
+    public int HandoverPasses { get; set; } = 15;
 }

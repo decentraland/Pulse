@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -977,7 +978,7 @@ public class ClusterTrackerTests
         RemovePeer(outgoing);
         SetupPeer(incoming, new Vector3(10, 0, 10), wallet: WALLET);
 
-        var messagePipe = new MessagePipe(NullLogger<MessagePipe>.Instance, new ServerMessageCounters());
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
         using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
         collector.StartAsync(CancellationToken.None);
 

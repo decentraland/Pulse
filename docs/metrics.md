@@ -373,7 +373,7 @@ Counter of published cluster assignment changes, counted *after* the dwell debou
 
 Counter of incoming sessions published into an *outgoing* session's cluster instead of their own. `dcl_pulse_cluster_handovers_total`.
 
-One handover is one wallet that was connected twice. The incoming session is announced into the room the outgoing one still holds so LiveKit's duplicate-identity rule supersedes that participant, and the incoming session migrates to its own cluster on the next pass — so every handover is normally followed by one `dcl_pulse_cluster_reassignments_total`.
+One handover is one wallet that was connected twice. The incoming session is announced into the room the outgoing one still holds so LiveKit's duplicate-identity rule supersedes that participant, and the incoming session migrates to its own cluster on the next pass — so a full cycle normally adds two to `dcl_pulse_cluster_reassignments_total`, the substituted publish and then the migration.
 
 | Reading | Meaning |
 |---|---|

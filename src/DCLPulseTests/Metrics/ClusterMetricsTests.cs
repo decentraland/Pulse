@@ -52,6 +52,10 @@ public class ClusterMetricsTests
         using (var writer = new StreamWriter(buffer, leaveOpen: true))
             PrometheusFormatter.Write(writer, snapshot);
 
-        Assert.That(Encoding.UTF8.GetString(buffer.ToArray()), Does.Contain("dcl_pulse_cluster_handovers_total"));
+        // Asserted against the snapshot's own value rather than a literal, since the instrument is
+        // static and shared across the fixture run. This is what ties the exported line to the right
+        // snapshot field: the metric name alone would still match if the formatter read a sibling.
+        Assert.That(Encoding.UTF8.GetString(buffer.ToArray()),
+            Does.Contain($"dcl_pulse_cluster_handovers_total {snapshot.Clusters.TotalHandovers}"));
     }
 }

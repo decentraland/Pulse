@@ -1,7 +1,29 @@
 # Island Room — Duplicate-Session Handover — Design
 
 Date: 2026-09-09
-Status: Implemented
+Status: Implemented — **Rule 2 must not be enabled yet, see the warning below**
+
+> [!WARNING]
+> **This document's safety argument is wrong, and the code implementing it is merged.**
+> The whole-branch review found that Rule 2 re-announces a *single* reconnecting client
+> into the island room it is already in — the ordinary outcome of any Pulse-only
+> reconnect inside the retention window, since the explorer reconnects Pulse in place
+> and never touches the island room. `ConnectiveRoom.ChangeRoomsAsync` connects the new
+> room before releasing the old one, both still subscribed, so LiveKit evicts the
+> client's **own** previous participant. With `alfa-stop-on-duplicate-identity` on —
+> the precondition this document calls mandatory — that raises the quit-only modal and
+> a network hiccup terminates the user's only client. With the flag off, the 1 s
+> mutual-eviction loop described under "Deployment precondition" applies instead.
+> Neither flag state is safe while Rule 2 is on.
+>
+> Rule 1 is unaffected and is a strict improvement: it only stops the *outgoing* peer
+> from publishing.
+>
+> The premise below that "no explorer change is needed" is the specific thing that is
+> wrong. Superseding via LiveKit's identity collision cannot be made safe until the
+> explorer distinguishes a self-inflicted `DUPLICATE_IDENTITY` raised during a room
+> swap from a genuine second session. Until then ship with `Clusters:HandoverPasses`
+> set to `0`.
 
 ## Overview
 

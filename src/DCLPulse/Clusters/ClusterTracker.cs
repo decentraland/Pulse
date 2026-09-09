@@ -699,6 +699,9 @@ public sealed class ClusterTracker : BackgroundService
 
         feedPublisher.PublishClusterChange(member.Wallet, clusterId, realm);
 
+        if (handingOver)
+            PulseMetrics.Clusters.HANDOVERS.Add(1);
+
         return true;
     }
 

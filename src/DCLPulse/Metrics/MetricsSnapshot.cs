@@ -70,6 +70,7 @@ public readonly record struct MetricsSnapshot
         public long TotalPasses { get; init; }
         public long TotalPassDurationUs { get; init; }
         public long TotalReassignments { get; init; }
+        public long TotalHandovers { get; init; }
         public long TotalNatsPublished { get; init; }
         public long TotalNatsPublishFailed { get; init; }
         public long TotalNatsDropped { get; init; }

@@ -369,6 +369,19 @@ Counter of published cluster assignment changes, counted *after* the dwell debou
 | Sustained high with a stable cluster count | Peers flapping between two clusters; raise `Clusters:DwellPasses` |
 | Zero while peers move between crowds | Debounce never satisfied, or the feed is wedged — cross-check pass count |
 
+#### Session handovers
+
+Counter of incoming sessions published into an *outgoing* session's cluster instead of their own. `dcl_pulse_cluster_handovers_total`.
+
+One handover is one wallet that was connected twice. The incoming session is announced into the room the outgoing one still holds so LiveKit's duplicate-identity rule supersedes that participant, and the incoming session migrates to its own cluster on the next pass — so every handover is normally followed by one `dcl_pulse_cluster_reassignments_total`.
+
+| Reading | Meaning |
+|---|---|
+| Zero | No wallet has held two sessions since start |
+| A steady trickle | Ordinary reconnect churn — clients recovering from network drops |
+| A sustained spike | Clients reconnect-looping, or one wallet is being shared. Correlate with `dcl_pulse_peers_disconnected_total` and the `DUPLICATE_SESSION` disconnect reason |
+| Non-zero while `alfa-stop-on-duplicate-identity` is off in the explorer | Actively harmful: the superseded client retries its cached token every second and the two sessions evict each other. Enable the flag or set `Clusters:HandoverPasses` to 0 |
+
 ### NATS Published / Publish Failed / Dropped / Superseded / Reconnects / Connected
 
 Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_publish_failed_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.

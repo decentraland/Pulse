@@ -34,6 +34,14 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.clusters.reassignments");
 
         /// <summary>
+        ///     Incoming sessions published into an outgoing session's cluster rather than their own, so
+        ///     both hold one LiveKit room and the outgoing participant is superseded. One per duplicate
+        ///     session observed.
+        /// </summary>
+        public static readonly Counter<long> HANDOVERS =
+            METER.CreateCounter<long>("pulse.clusters.handovers");
+
+        /// <summary>
         ///     Peers placed in a cluster this pass, recorded as a delta against the previous pass.
         ///     Paired with <see cref="COUNT" /> rather than pre-averaged, so the mean cluster size is
         ///     <c>peers / count</c> and stays aggregatable across instances.

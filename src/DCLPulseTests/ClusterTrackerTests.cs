@@ -3,6 +3,8 @@ using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse.InterestManagement;
 using Pulse.Clusters;
+using Pulse.Messaging;
+using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse;
@@ -952,6 +954,75 @@ public class ClusterTrackerTests
 
         feedPublisher.DidNotReceive().PublishClusterChange(WALLET, outgoingCluster, Arg.Any<string>());
         feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM);
+    }
+
+    /// <summary>
+    ///     A reconnect that lands back in the cluster the wallet already held is a no-op
+    ///     substitution, not a supersede, and the handover counter must not move for it.
+    /// </summary>
+    [Test]
+    public void ReconnectIntoTheSameCluster_DoesNotCountAsAHandover()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        // Two bystanders keep the crowd's sticky ID alive across the session change, so the
+        // replacement lands in the very cluster the ledger remembers.
+        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
+        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        tracker.RunPass();
+
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(10, 0, 10), wallet: WALLET);
+
+        var messagePipe = new MessagePipe(NullLogger<MessagePipe>.Instance, new ServerMessageCounters());
+        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
+        collector.StartAsync(CancellationToken.None);
+
+        // Deltas, not absolutes: PulseMetrics instruments are static and shared across the fixture run.
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        tracker.RunPass();
+        tracker.RunPass();
+
+        MetricsSnapshot after = collector.TakeSnapshot();
+
+        Assert.That(after.Clusters.TotalHandovers - before.Clusters.TotalHandovers, Is.EqualTo(0));
+    }
+
+    /// <summary>
+    ///     A no-op substitution must not arm the dwell bypass. Otherwise a reconnect that lands back
+    ///     in its own cluster would let the peer's very next genuine reassignment skip the dwell
+    ///     debounce it should have waited out.
+    /// </summary>
+    [Test]
+    public void NoOpSubstitution_DoesNotArmTheDwellBypass()
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        // Two bystanders keep the crowd's cluster alive through and after the session change, so
+        // neither pass below can be waved through by the cluster-deletion bypass.
+        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
+        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        tracker.RunPass();
+
+        // Replacement lands at the crowd's own position, so retained == computed: a no-op substitution.
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(10, 0, 10), wallet: WALLET);
+        tracker.RunPass();
+
+        feedPublisher.ClearReceivedCalls();
+
+        // Same realm, no teleport — HandoverPending is the only bypass left that could fire here.
+        MovePeer(incoming, new Vector3(500, 0, 500));
+        tracker.RunPass();
+
+        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), REALM);
     }
 
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int handoverPasses = 15)

@@ -1,10 +1,19 @@
 # Island Room — Duplicate-Session Handover — Design
 
 Date: 2026-09-09
-Status: Implemented — **Rule 2 must not be enabled yet, see the warning below**
+Status: Implemented — **ships only after the explorer fix below, see the warning**
+
+> [!IMPORTANT]
+> **Deploy order: unity-explorer `e2676167c5` first, Pulse second.**
+> The explorer fix that makes Rule 2 safe teaches `ArchipelagoIslandRoom` to refuse re-joining an
+> island it already holds. Until that build reaches a user, Rule 2 will force-quit their client on
+> an ordinary reconnect, for the reason set out below. Anyone on an older client is exposed the
+> moment Pulse's handover goes live, so `Clusters:HandoverPasses` stays `0` until explorer
+> adoption is sufficient — and note that key is not currently reachable from any deploy workflow,
+> so flipping it means a redeploy.
 
 > [!WARNING]
-> **This document's safety argument is wrong, and the code implementing it is merged.**
+> **This document's original safety argument was wrong. The explorer fix above is what corrects it.**
 > The whole-branch review found that Rule 2 re-announces a *single* reconnecting client
 > into the island room it is already in — the ordinary outcome of any Pulse-only
 > reconnect inside the retention window, since the explorer reconnects Pulse in place
@@ -19,11 +28,11 @@ Status: Implemented — **Rule 2 must not be enabled yet, see the warning below*
 > Rule 1 is unaffected and is a strict improvement: it only stops the *outgoing* peer
 > from publishing.
 >
-> The premise below that "no explorer change is needed" is the specific thing that is
-> wrong. Superseding via LiveKit's identity collision cannot be made safe until the
-> explorer distinguishes a self-inflicted `DUPLICATE_IDENTITY` raised during a room
-> swap from a genuine second session. Until then ship with `Clusters:HandoverPasses`
-> set to `0`.
+> The premise below that "no explorer change is needed" is the specific thing that was
+> wrong. Superseding via LiveKit's identity collision is only safe once the explorer stops
+> re-joining a room it already holds — which unity-explorer `e2676167c5` now does, keyed on
+> the `IslandId` the server already sends and the client had been discarding. A reconnecting
+> room counts as held there too, since it still occupies its island server-side.
 
 ## Overview
 

@@ -61,14 +61,9 @@ public sealed class ClusterTracker : BackgroundService
     private readonly PeerClusterState[] peerStates;
     private readonly Dictionary<string, ClusterRecord> clusterRecords = new ();
 
-    // Last assignment published for each wallet, retained across the PeerIndex change of a
-    // duplicate-session eviction. Keyed by wallet rather than PeerIndex: the slot is recycled, and
-    // the outgoing session is about to give its own up, so slot-keyed state cannot survive the change.
+    // Last assignment published for each wallet. Keyed by wallet rather than PeerIndex so an
+    // entry outlives the slot it was written from.
     private readonly Dictionary<string, WalletAssignment> assignmentByWallet = new (StringComparer.OrdinalIgnoreCase);
-
-    // Wallets whose entry aged out, collected before removal so the dictionary is not mutated
-    // mid-enumeration. Cleared and reused between passes.
-    private readonly List<string> expiredWallets = [];
 
     private long passNumber;
     private long nextClusterNumber;
@@ -177,7 +172,8 @@ public sealed class ClusterTracker : BackgroundService
         clusterBoard.Publish(pass);
 
         // Topology before the per-peer events, so a snapshot declaring a cluster is published ahead
-        // of the assignments that reference it.
+        // of the assignments that reference it. A handover assignment is the exception: it names the
+        // outgoing session's cluster, which this pass need not contain.
         feedPublisher.PublishTopology(pass);
 
         int reassignments = PublishAssignmentChanges();
@@ -302,9 +298,8 @@ public sealed class ClusterTracker : BackgroundService
 
         state.LastSeenPass = passNumber;
 
-        // Keep the wallet's handover entry alive while it has a live peer. Refreshing only on publish
-        // would expire it under a stationary peer — the peer a duplicate session is most likely to
-        // arrive for. A dictionary read and write per occupant, on a 1 Hz thread.
+        // Refreshing only on publish would expire the entry under a stationary peer, which publishes
+        // once and never again.
         if (assignmentByWallet.TryGetValue(wallet, out WalletAssignment seen))
         {
             seen.LastSeenPass = passNumber;
@@ -670,6 +665,8 @@ public sealed class ClusterTracker : BackgroundService
 
         if (!realmChanged && string.Equals(state.PublishedClusterId, clusterId, StringComparison.Ordinal))
         {
+            // The peer's own assignment has caught up with what was published, handed over or not.
+            state.HandoverPending = false;
             state.CandidateClusterId = null;
             state.CandidateStreak = 0;
 
@@ -778,16 +775,10 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private void ForgetExpiredHandovers()
     {
-        if (assignmentByWallet.Count == 0) return;
-
-        expiredWallets.Clear();
-
-        foreach (KeyValuePair<string, WalletAssignment> entry in assignmentByWallet)
-            if (passNumber - entry.Value.LastSeenPass > options.HandoverPasses)
-                expiredWallets.Add(entry.Key);
-
-        for (var i = 0; i < expiredWallets.Count; i++)
-            assignmentByWallet.Remove(expiredWallets[i]);
+        // Removing during enumeration is supported since .NET Core 3.0, same as PruneVanishedClusters.
+        foreach ((string wallet, WalletAssignment assignment) in assignmentByWallet)
+            if (passNumber - assignment.LastSeenPass > options.HandoverPasses)
+                assignmentByWallet.Remove(wallet);
     }
 
     private MemberEnumerator MembersOf(int component) =>
@@ -897,9 +888,13 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     A wallet's last published assignment. <see cref="LastSeenPass" /> tracks when the wallet was
-    ///     last <i>seen</i> rather than last published: a stationary peer publishes once and never
-    ///     again, and its entry must not expire underneath it.
+    ///     A wallet's last published assignment, retained across the <see cref="PeerIndex" /> change of
+    ///     a duplicate-session eviction: the outgoing session is about to give up its own slot, so
+    ///     slot-keyed state could not survive the change.
+    ///     <para />
+    ///     <see cref="LastSeenPass" /> tracks when the wallet was last <i>seen</i> rather than last
+    ///     published: a stationary peer publishes once and never again, and its entry must not expire
+    ///     underneath it.
     /// </summary>
     private struct WalletAssignment
     {

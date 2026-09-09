@@ -676,6 +676,11 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Current.Clusters, Is.Empty);
     }
 
+    /// <summary>
+    ///     A replacement session must be published into the LiveKit room the outgoing session still
+    ///     holds, not the cluster its own position would compute to, so LiveKit's duplicate-identity
+    ///     rule can supersede the outgoing participant.
+    /// </summary>
     [Test]
     public void IncomingSession_IsFirstPublishedIntoTheOutgoingSessionsCluster()
     {
@@ -689,8 +694,7 @@ public class ClusterTrackerTests
         string outgoingCluster = ClusterIdOf(outgoing);
         feedPublisher.ClearReceivedCalls();
 
-        // The replacement arrives far away, so its own cluster differs from the one whose LiveKit room
-        // the outgoing session still holds.
+        // The replacement arrives far away, so its own cluster differs from the outgoing one.
         RemovePeer(outgoing);
         SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
 
@@ -699,6 +703,11 @@ public class ClusterTrackerTests
         feedPublisher.Received(1).PublishClusterChange(WALLET, outgoingCluster, REALM);
     }
 
+    /// <summary>
+    ///     The migration off a handover is exempt from the dwell debounce, so the peer's own cluster
+    ///     follows in the very next pass rather than being held in the outgoing session's LiveKit room
+    ///     for <see cref="ClusterOptions.DwellPasses" /> passes.
+    /// </summary>
     [Test]
     public void AfterAHandover_ThePeersOwnClusterFollowsImmediatelyDespiteDwell()
     {
@@ -718,13 +727,12 @@ public class ClusterTrackerTests
 
         tracker.RunPass();
 
-        // One pass, not DwellPasses: the migration off a handover is exempt from the debounce, which
-        // would otherwise hold the session in the outgoing one's room.
+        // One pass, not DwellPasses.
         feedPublisher.Received(1).PublishClusterChange(WALLET, ownCluster, REALM);
     }
 
     [Test]
-    public void HandoverIntoASurvivingCrowd_IsANoOpAndPublishesOnce()
+    public void ReconnectIntoTheSameCluster_PublishesOnce()
     {
         ClusterTracker tracker = CreateTracker();
         var outgoing = new PeerIndex(0);
@@ -751,6 +759,42 @@ public class ClusterTrackerTests
     }
 
     [Test]
+    public void AfterAHandoverIntoASurvivingCluster_TheOwnClusterFollowsWithoutWaitingOutTheDwell()
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        // Two bystanders keep the outgoing session's cluster alive across the session change, so the
+        // migration off the handover cannot be waved through by the cluster-deletion bypass.
+        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
+        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        tracker.RunPass();
+
+        string crowdCluster = ClusterIdOf(outgoing);
+        feedPublisher.ClearReceivedCalls();
+
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM);
+
+        string ownCluster = ClusterIdOf(incoming);
+        feedPublisher.ClearReceivedCalls();
+
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ownCluster, REALM);
+    }
+
+    /// <summary>
+    ///     The outgoing session's LiveKit room outlives the cluster it was published into, so the
+    ///     handover must fire even when that cluster no longer exists by the time the replacement
+    ///     arrives.
+    /// </summary>
+    [Test]
     public void Handover_FiresEvenWhenTheRememberedClusterNoLongerExists()
     {
         ClusterTracker tracker = CreateTracker();
@@ -764,8 +808,7 @@ public class ClusterTrackerTests
         RemovePeer(outgoing);
 
         // A pass with the wallet absent, so its cluster is pruned and is demonstrably not live when the
-        // replacement arrives. The outgoing session's LiveKit room outlives the cluster, which is why
-        // the handover must not be gated on liveness.
+        // replacement arrives.
         tracker.RunPass();
         Assert.That(clusterBoard.Current.Clusters, Is.Empty);
         feedPublisher.ClearReceivedCalls();
@@ -776,6 +819,11 @@ public class ClusterTrackerTests
         feedPublisher.Received(1).PublishClusterChange(WALLET, outgoingCluster, REALM);
     }
 
+    /// <summary>
+    ///     The room the replacement must collide in is still the outgoing session's, so a handover
+    ///     across a realm change carries the retained realm along with the retained cluster rather than
+    ///     the replacement's own.
+    /// </summary>
     [Test]
     public void Handover_CarriesTheRememberedRealmWhenTheSessionsRealmsDiffer()
     {
@@ -790,8 +838,7 @@ public class ClusterTrackerTests
         RemovePeer(outgoing);
         feedPublisher.ClearReceivedCalls();
 
-        // The replacement authenticates into a different world. The room it must collide in is still
-        // the outgoing session's, so the retained realm rides along with the retained cluster.
+        // The replacement authenticates into a different world.
         SetupPeer(incoming, new Vector3(10, 0, 10), OTHER_REALM, WALLET);
         tracker.RunPass();
 

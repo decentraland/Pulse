@@ -269,9 +269,16 @@ t0+1s Pass N+1: B computes C_b ≠ C_a. HandoverPending makes it immediate.
       Publishes (W, C_b). B migrates to island-C_b.
 ```
 
-When `C_a == C_b` — the ordinary reconnect, same player, same place — the
-substitution is a no-op, there is no hop, and the sequence collapses to a single
-publish.
+When the remembered and computed clusters coincide the substitution is a no-op and
+the sequence collapses to a single publish. That happens when the replacement lands
+in a cluster that still carries the same sticky ID — rejoining a crowd that survived,
+whose other members carry the `PreviousPassClusterId` the ID is inherited through.
+
+A player who was **alone** does get a hop, even reconnecting on the same spot: their
+cluster keeps no members across the gap, so inheritance has nothing to measure
+overlap against and the replacement is minted a fresh ID. The handover then steers it
+into an ID this pass no longer knows — which is precisely the intent, since that is
+where the outgoing LiveKit participant still is.
 
 ## Testing
 

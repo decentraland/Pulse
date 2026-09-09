@@ -506,9 +506,8 @@ In `src/DCLPulse/Clusters/ClusterTracker.cs`, after the `clusterRecords` field:
 
 ```csharp
     // Last assignment published for each wallet, retained across the PeerIndex change of a
-    // duplicate-session eviction. Keyed by wallet because the feed subject and the LiveKit
-    // participant identity both are; peerStates cannot serve, being indexed by the recycled slot the
-    // outgoing session is about to give up.
+    // duplicate-session eviction. Keyed by wallet rather than PeerIndex: the slot is recycled, and
+    // the outgoing session is about to give its own up, so slot-keyed state cannot survive the change.
     private readonly Dictionary<string, WalletAssignment> assignmentByWallet = new (StringComparer.OrdinalIgnoreCase);
 
     // Wallets whose entry aged out, collected before removal so the dictionary is not mutated

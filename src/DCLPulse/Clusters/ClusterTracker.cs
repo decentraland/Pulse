@@ -6,6 +6,7 @@ using Pulse.Peers.Simulation;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Pulse.Clusters;
@@ -300,11 +301,10 @@ public sealed class ClusterTracker : BackgroundService
 
         // Refreshing only on publish would expire the entry under a stationary peer, which publishes
         // once and never again.
-        if (assignmentByWallet.TryGetValue(wallet, out WalletAssignment seen))
-        {
+        ref WalletAssignment seen = ref CollectionsMarshal.GetValueRefOrNullRef(assignmentByWallet, wallet);
+
+        if (!Unsafe.IsNullRef(ref seen))
             seen.LastSeenPass = passNumber;
-            assignmentByWallet[wallet] = seen;
-        }
 
         members.Add(new PassMember(peer, wallet, snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport));
     }

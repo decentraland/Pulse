@@ -36,7 +36,7 @@ public static partial class PulseMetrics
         /// <summary>
         ///     Incoming sessions published into an outgoing session's cluster rather than their own, so
         ///     both hold one LiveKit room and the outgoing participant is superseded. One per duplicate
-        ///     session observed.
+        ///     session whose replacement computed a different cluster than the retained one.
         /// </summary>
         public static readonly Counter<long> HANDOVERS =
             METER.CreateCounter<long>("pulse.clusters.handovers");

@@ -994,6 +994,43 @@ public class ClusterTrackerTests
     }
 
     /// <summary>
+    ///     A reconnect that lands in a different cluster than the one the wallet already held is a
+    ///     real substitution, and the handover counter must move for it.
+    /// </summary>
+    [Test]
+    public void ReconnectIntoADifferentCluster_CountsAsAHandover()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        // Two bystanders keep the crowd's sticky ID alive across the session change, so the
+        // replacement's own computed cluster is provably different from the retained one.
+        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
+        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        tracker.RunPass();
+
+        // Far from the crowd, so this pass computes a different cluster than the retained one.
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
+
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
+        collector.StartAsync(CancellationToken.None);
+
+        // Deltas, not absolutes: PulseMetrics instruments are static and shared across the fixture run.
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        tracker.RunPass();
+        tracker.RunPass();
+
+        MetricsSnapshot after = collector.TakeSnapshot();
+
+        Assert.That(after.Clusters.TotalHandovers - before.Clusters.TotalHandovers, Is.EqualTo(1));
+    }
+
+    /// <summary>
     ///     A no-op substitution must not arm the dwell bypass. Otherwise a reconnect that lands back
     ///     in its own cluster would let the peer's very next genuine reassignment skip the dwell
     ///     debounce it should have waited out.
@@ -1024,6 +1061,44 @@ public class ClusterTrackerTests
         tracker.RunPass();
 
         feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), REALM);
+    }
+
+    /// <summary>
+    ///     Once the peer's own cluster catches up with the handed-over one, the pending flag must
+    ///     drop, so a later genuine reassignment waits out the dwell debounce like any other.
+    /// </summary>
+    [Test]
+    public void HandoverPending_IsClearedWhenTheOwnClusterCatchesUp()
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        // Two bystanders keep the crowd's cluster alive throughout, so no pass below can be waved
+        // through by the cluster-deletion bypass.
+        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
+        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        tracker.RunPass();
+        string crowdCluster = ClusterIdOf(outgoing);
+        feedPublisher.ClearReceivedCalls();
+
+        // Replacement arrives far away: the handover publishes the crowd's cluster.
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
+        tracker.RunPass();
+        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM);
+
+        // It then walks into the crowd: computed equals published, the unchanged branch.
+        MovePeer(incoming, new Vector3(10, 0, 10));
+        tracker.RunPass();
+        Assert.That(ClusterIdOf(incoming), Is.EqualTo(crowdCluster));
+        feedPublisher.ClearReceivedCalls();
+
+        // Leaving again is an ordinary reassignment: one pass must not publish under a 3-pass dwell.
+        MovePeer(incoming, new Vector3(500, 0, 500));
+        tracker.RunPass();
+        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), Arg.Any<string>());
     }
 
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int handoverPasses = 15)

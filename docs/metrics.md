@@ -377,7 +377,7 @@ One handover is one wallet that was connected twice. The incoming session is ann
 
 | Reading | Meaning |
 |---|---|
-| Zero | No wallet has held two sessions since start |
+| Zero | No replacement session has been steered into a different cluster than the one its wallet already held. Duplicate sessions that reconnect into the same cluster are superseded without moving this counter |
 | A steady trickle | Ordinary reconnect churn — clients recovering from network drops |
 | A sustained spike | Clients reconnect-looping, or one wallet is being shared. Correlate with `dcl_pulse_peers_disconnected_total` and the `DUPLICATE_SESSION` disconnect reason |
 | Non-zero while `alfa-stop-on-duplicate-identity` is off in the explorer | Actively harmful: the superseded client retries its cached token every second and the two sessions evict each other. Enable the flag or set `Clusters:HandoverPasses` to 0 |

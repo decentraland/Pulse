@@ -1,7 +1,7 @@
 # Island Room — Duplicate-Session Handover — Design
 
 Date: 2026-09-09
-Status: Approved, not implemented
+Status: Implemented
 
 ## Overview
 

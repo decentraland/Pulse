@@ -1,5 +1,7 @@
 # Island Room Duplicate-Session Handover Implementation Plan
 
+> **Superseded (2026-09-10).** The handover (Rule 2) was removed; see `unity-explorer/docs/superpowers/specs/2026-09-10-duplicate-session-supersede-design.md`. Rule 1 stands.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make a duplicate session's supersede deterministic — exactly one peer publishes per wallet, and an incoming session is first announced into the outgoing session's cluster so LiveKit's `DUPLICATE_IDENTITY` evicts the outgoing participant.

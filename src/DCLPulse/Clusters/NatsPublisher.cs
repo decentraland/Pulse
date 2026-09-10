@@ -250,7 +250,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         }
     }
 
-    public void PublishClusterChange(string wallet, string clusterId, string realm)
+    public void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session)
     {
         if (!feedEnabled) return;
 
@@ -260,9 +260,13 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
         try
         {
-            // Both of the rented message's fields are rewritten, so nothing survives the previous peer.
+            // Every field of the rented message is rewritten, so nothing survives the previous peer.
+            // Proto3 strings default to "", which is also what "no displaced session" is on the wire.
             rented.ClusterId = clusterId;
             rented.Realm = realm;
+            rented.Session = session.Session;
+            rented.DisplacedSession = session.DisplacedSession ?? string.Empty;
+            rented.DisplacedClusterId = session.DisplacedClusterId ?? string.Empty;
 
             // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
             // chain carried. The subject is also the coalescing key, so per-subject latest-wins is

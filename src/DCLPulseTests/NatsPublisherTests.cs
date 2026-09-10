@@ -56,7 +56,7 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: string.Empty);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xwallet0", null, null));
         publisher.PublishTopology(MakePass());
 
         Assert.That(publisher.PublishedCount, Is.Zero);
@@ -123,7 +123,7 @@ public class NatsPublisherTests
         NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 2);
 
         for (var i = 0; i < 5; i++)
-            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", "realm-a");
+            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", "realm-a", new ClusterSession($"0xwallet{i}", null, null));
 
         // Capacity 2, five distinct peers — the three longest-admitted are evicted to make room.
         Assert.That(publisher.DroppedCount, Is.EqualTo(3));
@@ -152,7 +152,7 @@ public class NatsPublisherTests
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 2);
 
         for (var i = 0; i < 5; i++)
-            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", REALM);
+            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", REALM, new ClusterSession($"0xwallet{i}", null, null));
 
         Assert.That(publisher.DroppedCount, Is.EqualTo(3));
         Assert.That(publisher.PublishFailedCount, Is.Zero, "no publish was even attempted");
@@ -170,9 +170,9 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 1);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
-        publisher.PublishClusterChange("0xwallet0", "C2", "realm-a");
-        publisher.PublishClusterChange("0xwallet0", "C3", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xwallet0", null, null));
+        publisher.PublishClusterChange("0xwallet0", "C2", "realm-a", new ClusterSession("0xwallet0", null, null));
+        publisher.PublishClusterChange("0xwallet0", "C3", "realm-a", new ClusterSession("0xwallet0", null, null));
 
         Assert.That(publisher.DroppedCount, Is.Zero, "a peer's own newer assignment must not count as loss");
         Assert.That(publisher.SupersededCount, Is.EqualTo(2));
@@ -191,7 +191,7 @@ public class NatsPublisherTests
         // Two rounds over the same four peers: coalescing per peer, so nothing is lost.
         for (var round = 0; round < 2; round++)
             for (var i = 0; i < 4; i++)
-                publisher.PublishClusterChange($"0xwallet{i}", $"C{round}", "realm-a");
+                publisher.PublishClusterChange($"0xwallet{i}", $"C{round}", "realm-a", new ClusterSession($"0xwallet{i}", null, null));
 
         Assert.That(publisher.DroppedCount, Is.Zero);
         Assert.That(publisher.SupersededCount, Is.EqualTo(4));
@@ -218,8 +218,8 @@ public class NatsPublisherTests
         // Capacity is fully consumed by peer assignments; topology must not compete for it.
         NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 2);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
-        publisher.PublishClusterChange("0xwallet1", "C1", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xwallet0", null, null));
+        publisher.PublishClusterChange("0xwallet1", "C1", "realm-a", new ClusterSession("0xwallet1", null, null));
 
         for (var i = 0; i < 20; i++)
             publisher.PublishTopology(MakePass());
@@ -238,7 +238,7 @@ public class NatsPublisherTests
         NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 4);
 
         // Enqueued changes-first on purpose: the outbox, not the call order, must decide delivery.
-        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xwallet0", null, null));
         publisher.PublishTopology(MakePass());
 
         Assert.That(DrainSubjects(publisher)[0], Is.EqualTo("engine.islands"));
@@ -250,7 +250,7 @@ public class NatsPublisherTests
         NatsPublisher publisher = CreatePublisher(url: "nats://localhost:4222", channelCapacity: 8);
 
         for (var i = 0; i < 8; i++)
-            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", "realm-a");
+            publisher.PublishClusterChange($"0xwallet{i}", $"C{i}", "realm-a", new ClusterSession($"0xwallet{i}", null, null));
 
         Assert.That(publisher.DroppedCount, Is.Zero);
     }
@@ -414,11 +414,41 @@ public class NatsPublisherTests
     }
 
     [Test]
+    public void PublishClusterChange_CarriesTheSessionAndTheDisplacedSession()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+
+        publisher.PublishClusterChange("0xWallet", "C7", "main",
+            new ClusterSession("0xsession-b", "0xsession-a", "C3"));
+
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+
+        Assert.That(queued.ClusterId, Is.EqualTo("C7"));
+        Assert.That(queued.Realm, Is.EqualTo("main"));
+        Assert.That(queued.Session, Is.EqualTo("0xsession-b"));
+        Assert.That(queued.DisplacedSession, Is.EqualTo("0xsession-a"));
+        Assert.That(queued.DisplacedClusterId, Is.EqualTo("C3"));
+    }
+
+    [Test]
+    public void PublishClusterChange_WithoutADisplacedSession_LeavesThoseFieldsEmpty()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+
+        publisher.PublishClusterChange("0xWallet", "C7", "main", new ClusterSession("0xsession-b", null, null));
+
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+
+        Assert.That(queued.DisplacedSession, Is.Empty);
+        Assert.That(queued.DisplacedClusterId, Is.Empty);
+    }
+
+    [Test]
     public void PublishClusterChange_RoundTripsClusterIdAndRealm()
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
 
-        publisher.PublishClusterChange("0xwallet0", "C7", "realm-b");
+        publisher.PublishClusterChange("0xwallet0", "C7", "realm-b", new ClusterSession("0xwallet0", null, null));
 
         (string subject, IMessage pending) = DequeueNext(publisher);
         PeerClusterChange message = RoundTrip(PeerClusterChange.Parser, pending);
@@ -438,8 +468,8 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 4);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
-        publisher.PublishClusterChange("0xwallet1", "C2", "realm-b");
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xwallet0", null, null));
+        publisher.PublishClusterChange("0xwallet1", "C2", "realm-b", new ClusterSession("0xwallet1", null, null));
 
         (string firstSubject, IMessage firstPending) = DequeueNext(publisher);
         (string secondSubject, IMessage secondPending) = DequeueNext(publisher);
@@ -486,16 +516,16 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 4);
 
-        publisher.PublishClusterChange("0xwallet0", "C0", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C0", REALM, new ClusterSession("0xwallet0", null, null));
         IMessage seeded = SeedFreeList(publisher);
 
         // The first change rents the seeded instance; the second rents a fresh one and must hand the
         // replaced instance back.
-        publisher.PublishClusterChange("0xwallet0", "C1", REALM);
-        publisher.PublishClusterChange("0xwallet0", "C2", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C1", REALM, new ClusterSession("0xwallet0", null, null));
+        publisher.PublishClusterChange("0xwallet0", "C2", REALM, new ClusterSession("0xwallet0", null, null));
 
         // Only reuse of the replaced instance can satisfy this rent without creating another.
-        publisher.PublishClusterChange("0xwallet1", "C3", REALM);
+        publisher.PublishClusterChange("0xwallet1", "C3", REALM, new ClusterSession("0xwallet1", null, null));
 
         Assert.That(publisher.SupersededCount, Is.EqualTo(1));
 
@@ -514,13 +544,13 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 1);
 
-        publisher.PublishClusterChange("0xwallet0", "C0", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C0", REALM, new ClusterSession("0xwallet0", null, null));
         IMessage seeded = SeedFreeList(publisher);
 
         // Capacity one, so each new peer evicts the one before it and must hand its instance back.
-        publisher.PublishClusterChange("0xwallet0", "C1", REALM);
-        publisher.PublishClusterChange("0xwallet1", "C2", REALM);
-        publisher.PublishClusterChange("0xwallet2", "C3", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C1", REALM, new ClusterSession("0xwallet0", null, null));
+        publisher.PublishClusterChange("0xwallet1", "C2", REALM, new ClusterSession("0xwallet1", null, null));
+        publisher.PublishClusterChange("0xwallet2", "C3", REALM, new ClusterSession("0xwallet2", null, null));
 
         Assert.That(publisher.DroppedCount, Is.EqualTo(2));
         Assert.That(DequeueNext(publisher).Message, Is.SameAs(seeded),
@@ -537,10 +567,10 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 4);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a");
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xsession-a", "0xsession-z", "C9"));
         IMessage seeded = SeedFreeList(publisher);
 
-        publisher.PublishClusterChange("0xwallet1", "C2", "realm-b");
+        publisher.PublishClusterChange("0xwallet1", "C2", "realm-b", new ClusterSession("0xsession-b", null, null));
 
         (string subject, IMessage pending) = DequeueNext(publisher);
 
@@ -551,6 +581,9 @@ public class NatsPublisherTests
         Assert.That(subject, Is.EqualTo("peer.0xwallet1.cluster_change"));
         Assert.That(message.ClusterId, Is.EqualTo("C2"));
         Assert.That(message.Realm, Is.EqualTo("realm-b"), "the previous peer's realm must be gone");
+        Assert.That(message.Session, Is.EqualTo("0xsession-b"));
+        Assert.That(message.DisplacedSession, Is.Empty);
+        Assert.That(message.DisplacedClusterId, Is.Empty);
     }
 
     [Test]
@@ -579,15 +612,15 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 4);
 
-        publisher.PublishClusterChange("0xwallet0", "C0", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C0", REALM, new ClusterSession("0xwallet0", null, null));
         IMessage seeded = SeedFreeList(publisher);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C1", REALM, new ClusterSession("0xwallet0", null, null));
         publisher.Dispose();
 
         Assert.That(publisher.TryDequeueNext(out _, out _), Is.False, "the outbox is emptied as it is returned");
 
-        publisher.PublishClusterChange("0xwallet1", "C2", REALM);
+        publisher.PublishClusterChange("0xwallet1", "C2", REALM, new ClusterSession("0xwallet1", null, null));
 
         Assert.That(DequeueNext(publisher).Message, Is.SameAs(seeded),
             "an instance still pending at shutdown must be returned");
@@ -603,8 +636,8 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL, channelCapacity: 4);
 
-        publisher.PublishClusterChange("0xWALLET0", "C1", REALM);
-        publisher.PublishClusterChange("0xwallet0", "C2", REALM);
+        publisher.PublishClusterChange("0xWALLET0", "C1", REALM, new ClusterSession("0xWALLET0", null, null));
+        publisher.PublishClusterChange("0xwallet0", "C2", REALM, new ClusterSession("0xwallet0", null, null));
 
         Assert.That(publisher.SupersededCount, Is.EqualTo(1), "the two spellings are the same peer");
         Assert.That(publisher.DroppedCount, Is.Zero);
@@ -818,7 +851,7 @@ public class NatsPublisherTests
         await publisher.StartAsync(CancellationToken.None);
         WaitForLog(logger, STARTED_LOG);
 
-        publisher.PublishClusterChange("0xwallet0", "C1", REALM);
+        publisher.PublishClusterChange("0xwallet0", "C1", REALM, new ClusterSession("0xwallet0", null, null));
 
         WaitFor(() => publisher.PublishFailedCount > 0, "the drain never recorded a failed publish");
 
@@ -1042,6 +1075,15 @@ public class NatsPublisherTests
 
         return (subject, pending);
     }
+
+    /// <summary>
+    ///     The single <see cref="PeerClusterChange" /> the outbox is expected to hold, dequeued and
+    ///     returned the way the drain loop would — the fixture's accessor for the outbox head, typed
+    ///     to the message these session tests need rather than the <see cref="IMessage" />
+    ///     <see cref="DequeueNext" /> hands back.
+    /// </summary>
+    private static PeerClusterChange DequeueSingleChange(NatsPublisher publisher) =>
+        (PeerClusterChange)DequeueNext(publisher).Message;
 
     /// <summary>
     ///     Encodes a message through the publisher's own serializer and parses the bytes back, so the

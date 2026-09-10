@@ -351,7 +351,7 @@ public class ClusterTrackerBenchmarks
 
     private sealed class NoOpFeedPublisher : IClusterFeedPublisher
     {
-        public void PublishClusterChange(string wallet, string clusterId, string realm) { }
+        public void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session) { }
 
         public void PublishTopology(ClusterPass pass) { }
     }

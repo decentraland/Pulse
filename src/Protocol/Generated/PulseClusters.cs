@@ -25,12 +25,14 @@ namespace Decentraland.Pulse {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "CidkZWNlbnRyYWxhbmQvcHVsc2UvcHVsc2VfY2x1c3RlcnMucHJvdG8SEmRl",
-            "Y2VudHJhbGFuZC5wdWxzZSI2ChFQZWVyQ2x1c3RlckNoYW5nZRISCgpjbHVz",
-            "dGVyX2lkGAEgASgJEg0KBXJlYWxtGAIgASgJYgZwcm90bzM="));
+            "Y2VudHJhbGFuZC5wdWxzZSKAAQoRUGVlckNsdXN0ZXJDaGFuZ2USEgoKY2x1",
+            "c3Rlcl9pZBgBIAEoCRINCgVyZWFsbRgCIAEoCRIPCgdzZXNzaW9uGAMgASgJ",
+            "EhkKEWRpc3BsYWNlZF9zZXNzaW9uGAQgASgJEhwKFGRpc3BsYWNlZF9jbHVz",
+            "dGVyX2lkGAUgASgJYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PeerClusterChange), global::Decentraland.Pulse.PeerClusterChange.Parser, new[]{ "ClusterId", "Realm" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PeerClusterChange), global::Decentraland.Pulse.PeerClusterChange.Parser, new[]{ "ClusterId", "Realm", "Session", "DisplacedSession", "DisplacedClusterId" }, null, null, null, null)
           }));
     }
     #endregion
@@ -86,6 +88,9 @@ namespace Decentraland.Pulse {
     public PeerClusterChange(PeerClusterChange other) : this() {
       clusterId_ = other.clusterId_;
       realm_ = other.realm_;
+      session_ = other.session_;
+      displacedSession_ = other.displacedSession_;
+      displacedClusterId_ = other.displacedClusterId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -126,6 +131,52 @@ namespace Decentraland.Pulse {
       }
     }
 
+    /// <summary>Field number for the "session" field.</summary>
+    public const int SessionFieldNumber = 3;
+    private string session_ = "";
+    /// <summary>
+    /// Session that owns this assignment: the lower-cased ephemeral address of the auth chain the
+    /// peer authenticated with (the wallet itself for a chain without a delegation). Two devices of
+    /// one wallet carry different values; one device's reconnects carry the same one.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Session {
+      get { return session_; }
+      set {
+        session_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "displaced_session" field.</summary>
+    public const int DisplacedSessionFieldNumber = 4;
+    private string displacedSession_ = "";
+    /// <summary>
+    /// Set only on the first publish of a new session for a wallet that still had a retained
+    /// assignment under another session: that other session, and the cluster it was last published
+    /// into. Empty on every other event, including a same-session reconnect.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string DisplacedSession {
+      get { return displacedSession_; }
+      set {
+        displacedSession_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "displaced_cluster_id" field.</summary>
+    public const int DisplacedClusterIdFieldNumber = 5;
+    private string displacedClusterId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string DisplacedClusterId {
+      get { return displacedClusterId_; }
+      set {
+        displacedClusterId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -143,6 +194,9 @@ namespace Decentraland.Pulse {
       }
       if (ClusterId != other.ClusterId) return false;
       if (Realm != other.Realm) return false;
+      if (Session != other.Session) return false;
+      if (DisplacedSession != other.DisplacedSession) return false;
+      if (DisplacedClusterId != other.DisplacedClusterId) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -152,6 +206,9 @@ namespace Decentraland.Pulse {
       int hash = 1;
       if (ClusterId.Length != 0) hash ^= ClusterId.GetHashCode();
       if (Realm.Length != 0) hash ^= Realm.GetHashCode();
+      if (Session.Length != 0) hash ^= Session.GetHashCode();
+      if (DisplacedSession.Length != 0) hash ^= DisplacedSession.GetHashCode();
+      if (DisplacedClusterId.Length != 0) hash ^= DisplacedClusterId.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -178,6 +235,18 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(18);
         output.WriteString(Realm);
       }
+      if (Session.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Session);
+      }
+      if (DisplacedSession.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(DisplacedSession);
+      }
+      if (DisplacedClusterId.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(DisplacedClusterId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -196,6 +265,18 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(18);
         output.WriteString(Realm);
       }
+      if (Session.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Session);
+      }
+      if (DisplacedSession.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(DisplacedSession);
+      }
+      if (DisplacedClusterId.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(DisplacedClusterId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -211,6 +292,15 @@ namespace Decentraland.Pulse {
       }
       if (Realm.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Realm);
+      }
+      if (Session.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Session);
+      }
+      if (DisplacedSession.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(DisplacedSession);
+      }
+      if (DisplacedClusterId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(DisplacedClusterId);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -229,6 +319,15 @@ namespace Decentraland.Pulse {
       }
       if (other.Realm.Length != 0) {
         Realm = other.Realm;
+      }
+      if (other.Session.Length != 0) {
+        Session = other.Session;
+      }
+      if (other.DisplacedSession.Length != 0) {
+        DisplacedSession = other.DisplacedSession;
+      }
+      if (other.DisplacedClusterId.Length != 0) {
+        DisplacedClusterId = other.DisplacedClusterId;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -257,6 +356,18 @@ namespace Decentraland.Pulse {
             Realm = input.ReadString();
             break;
           }
+          case 26: {
+            Session = input.ReadString();
+            break;
+          }
+          case 34: {
+            DisplacedSession = input.ReadString();
+            break;
+          }
+          case 42: {
+            DisplacedClusterId = input.ReadString();
+            break;
+          }
         }
       }
     #endif
@@ -282,6 +393,18 @@ namespace Decentraland.Pulse {
           }
           case 18: {
             Realm = input.ReadString();
+            break;
+          }
+          case 26: {
+            Session = input.ReadString();
+            break;
+          }
+          case 34: {
+            DisplacedSession = input.ReadString();
+            break;
+          }
+          case 42: {
+            DisplacedClusterId = input.ReadString();
             break;
           }
         }

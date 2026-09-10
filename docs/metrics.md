@@ -369,18 +369,18 @@ Counter of published cluster assignment changes, counted *after* the dwell debou
 | Sustained high with a stable cluster count | Peers flapping between two clusters; raise `Clusters:DwellPasses` |
 | Zero while peers move between crowds | Debounce never satisfied, or the feed is wedged — cross-check pass count |
 
-#### Session handovers
+#### Session takeovers
 
-Counter of incoming sessions published into an *outgoing* session's cluster instead of their own. `dcl_pulse_cluster_handovers_total`.
+Counter of first publishes for a *new* session of a wallet whose retained assignment belonged to another session. `dcl_pulse_cluster_takeovers_total`.
 
-One handover is one wallet that was connected twice. The incoming session is announced into the room the outgoing one still holds so LiveKit's duplicate-identity rule supersedes that participant, and the incoming session migrates to its own cluster on the next pass — so a full cycle normally adds two to `dcl_pulse_cluster_reassignments_total`, the substituted publish and then the migration.
+One takeover is one wallet taken over by a second device. The event carries the displaced session and the cluster it was last published into, and comms-gatekeeper removes that participant with a token revocation before minting for the new session. A same-session reconnect — one device coming back — does not move this counter.
 
 | Reading | Meaning |
 |---|---|
-| Zero | No replacement session has been steered into a different cluster than the one its wallet already held. Duplicate sessions that reconnect into the same cluster are superseded without moving this counter |
-| A steady trickle | Ordinary reconnect churn — clients recovering from network drops |
-| A sustained spike | Clients reconnect-looping, or one wallet is being shared. Correlate with `dcl_pulse_peers_disconnected_total` and the `DUPLICATE_SESSION` disconnect reason |
-| Non-zero while `alfa-stop-on-duplicate-identity` is off in the explorer | Actively harmful: the superseded client retries its cached token every second and the two sessions evict each other. Enable the flag or set `Clusters:HandoverPasses` to 0 |
+| Zero | No wallet has been taken over by a second device |
+| A steady trickle | Players switching devices; should be matched one for one by `dcl_gatekeeper_cluster_takeover_evicted_total` |
+| A sustained spike | One wallet shared between devices that keep reconnecting. Correlate with `dcl_pulse_peers_disconnected_total` and the `DUPLICATE_SESSION` disconnect reason |
+| Moving while gatekeeper's `takeover_evicted_total` does not | The eviction is not landing — check `dcl_gatekeeper_cluster_takeover_failed_total` |
 
 ### NATS Published / Publish Failed / Dropped / Superseded / Reconnects / Connected
 

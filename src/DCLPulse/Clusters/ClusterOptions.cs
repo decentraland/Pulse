@@ -19,8 +19,7 @@ public sealed class ClusterOptions
     ///     Consecutive passes that must agree on a new assignment before it is published. Temporal
     ///     hysteresis in place of archipelago's join/leave distance bands, absorbing the cell-boundary
     ///     noise of clustering on grid cells rather than peer-pair distances. Bypassed for first
-    ///     assignment, teleport, realm change, cluster deletion, and the first migration after a
-    ///     session handover.
+    ///     assignment, teleport, realm change, cluster deletion.
     /// </summary>
     public int DwellPasses { get; set; } = 3;
 
@@ -30,11 +29,10 @@ public sealed class ClusterOptions
     public string IdPrefix { get; set; } = "C";
 
     /// <summary>
-    ///     Passes a departed wallet's published assignment is retained for a session handover. A
-    ///     replacement session arriving inside this window is first published into the outgoing
-    ///     session's cluster, so both hold the same LiveKit room and LiveKit's duplicate-identity rule
-    ///     supersedes the outgoing participant; the replacement's own assignment follows on the next
-    ///     pass. Zero disables the handover.
+    ///     Passes a departed wallet's last published assignment is retained. A new session arriving for
+    ///     the wallet inside this window has its first publish name the retained assignment's session
+    ///     and cluster as displaced, so the consumer can remove that participant from the room it still
+    ///     holds. Zero disables the annotation.
     /// </summary>
-    public int HandoverPasses { get; set; } = 15;
+    public int SessionRetentionPasses { get; set; } = 300;
 }

@@ -1,5 +1,7 @@
 # Island Room — Duplicate-Session Handover — Design
 
+> **Superseded (2026-09-10).** The handover (Rule 2) was removed; see `unity-explorer/docs/superpowers/specs/2026-09-10-duplicate-session-supersede-design.md`. Rule 1 stands.
+
 Date: 2026-09-09
 Status: Implemented — **ships only after the explorer fix below, see the warning**
 

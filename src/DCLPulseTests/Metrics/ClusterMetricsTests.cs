@@ -29,22 +29,22 @@ public class ClusterMetricsTests
     public void TearDown() => collector.Dispose();
 
     [Test]
-    public void HandoverInstrument_ReachesTheClustersSnapshot()
+    public void TakeoverInstrument_ReachesTheClustersSnapshot()
     {
         // Deltas, not absolutes: PulseMetrics instruments are static and shared across the fixture run.
         MetricsSnapshot before = collector.TakeSnapshot();
 
-        PulseMetrics.Clusters.HANDOVERS.Add(2);
+        PulseMetrics.Clusters.TAKEOVERS.Add(2);
 
         MetricsSnapshot after = collector.TakeSnapshot();
 
-        Assert.That(after.Clusters.TotalHandovers - before.Clusters.TotalHandovers, Is.EqualTo(2));
+        Assert.That(after.Clusters.TotalTakeovers - before.Clusters.TotalTakeovers, Is.EqualTo(2));
     }
 
     [Test]
-    public void HandoverCounter_ReachesTheMetricsEndpoint()
+    public void TakeoverCounter_ReachesTheMetricsEndpoint()
     {
-        PulseMetrics.Clusters.HANDOVERS.Add(1);
+        PulseMetrics.Clusters.TAKEOVERS.Add(1);
         MetricsSnapshot snapshot = collector.TakeSnapshot();
 
         using var buffer = new MemoryStream();
@@ -56,6 +56,6 @@ public class ClusterMetricsTests
         // static and shared across the fixture run. This is what ties the exported line to the right
         // snapshot field: the metric name alone would still match if the formatter read a sibling.
         Assert.That(Encoding.UTF8.GetString(buffer.ToArray()),
-            Does.Contain($"dcl_pulse_cluster_handovers_total {snapshot.Clusters.TotalHandovers}"));
+            Does.Contain($"dcl_pulse_cluster_takeovers_total {snapshot.Clusters.TotalTakeovers}"));
     }
 }

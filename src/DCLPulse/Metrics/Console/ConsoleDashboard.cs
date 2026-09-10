@@ -138,7 +138,7 @@ public sealed class ConsoleDashboard(
     private readonly GaugeTracker clusterSizeMaxTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker clusterPassDurationTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker clusterReassignmentsTracker = new (SPARKLINE_MAX_SAMPLES);
-    private readonly RateTracker clusterHandoversTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker clusterTakeoversTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsPublishedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsPublishFailedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsDroppedTracker = new (SPARKLINE_MAX_SAMPLES);
@@ -194,7 +194,7 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView clusterSizeMax = new ();
     private readonly RateStatsView clusterPassDuration = new ();
     private readonly RateStatsView clusterReassignments = new ();
-    private readonly RateStatsView clusterHandovers = new ();
+    private readonly RateStatsView clusterTakeovers = new ();
     private readonly RateStatsView natsPublished = new ();
     private readonly RateStatsView natsPublishFailed = new ();
     private readonly RateStatsView natsDropped = new ();
@@ -240,7 +240,7 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline clusterSizeMaxSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline clusterPassDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline clusterReassignmentsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
-    private readonly Sparkline clusterHandoversSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline clusterTakeoversSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsPublishedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsPublishFailedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -460,7 +460,7 @@ public sealed class ConsoleDashboard(
         RateStats clusterSizeMaxStats = clusterSizeMaxTracker.Record(snap.Clusters.ClusterSizeMax);
         RateStats passDurationStats = clusterPassDurationTracker.Record(meanPassUs);
         RateStats reassignmentsRate = clusterReassignmentsTracker.Update(snap.Clusters.TotalReassignments, elapsed);
-        RateStats handoversRate = clusterHandoversTracker.Update(snap.Clusters.TotalHandovers, elapsed);
+        RateStats takeoversRate = clusterTakeoversTracker.Update(snap.Clusters.TotalTakeovers, elapsed);
         RateStats publishedRate = natsPublishedTracker.Update(snap.Clusters.TotalNatsPublished, elapsed);
         RateStats publishFailedRate = natsPublishFailedTracker.Update(snap.Clusters.TotalNatsPublishFailed, elapsed);
         RateStats droppedRate = natsDroppedTracker.Update(snap.Clusters.TotalNatsDropped, elapsed);
@@ -473,7 +473,7 @@ public sealed class ConsoleDashboard(
         clusterSizeMax.Apply(clusterSizeMaxStats, v => v.ToString("N0"));
         clusterPassDuration.Apply(passDurationStats, v => v.ToString("N0"));
         clusterReassignments.Apply(reassignmentsRate, v => v.ToString("N0"));
-        clusterHandovers.Apply(handoversRate, v => v.ToString("N0"));
+        clusterTakeovers.Apply(takeoversRate, v => v.ToString("N0"));
         natsPublished.Apply(publishedRate, v => v.ToString("N0"));
         natsPublishFailed.Apply(publishFailedRate, v => v.ToString("N0"));
         natsDropped.Apply(droppedRate, v => v.ToString("N0"));
@@ -486,7 +486,7 @@ public sealed class ConsoleDashboard(
         ShiftSample(clusterSizeMaxSparkline.Values, snap.Clusters.ClusterSizeMax);
         ShiftSample(clusterPassDurationSparkline.Values, meanPassUs);
         ShiftSample(clusterReassignmentsSparkline.Values, reassignmentsRate.PerSec);
-        ShiftSample(clusterHandoversSparkline.Values, handoversRate.PerSec);
+        ShiftSample(clusterTakeoversSparkline.Values, takeoversRate.PerSec);
         ShiftSample(natsPublishedSparkline.Values, publishedRate.PerSec);
         ShiftSample(natsPublishFailedSparkline.Values, publishFailedRate.PerSec);
         ShiftSample(natsDroppedSparkline.Values, droppedRate.PerSec);
@@ -558,7 +558,7 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Cluster Size (max)", clusterSizeMax, clusterSizeMaxSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Pass Duration (µs)", clusterPassDuration, clusterPassDurationSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Reassignments", clusterReassignments, clusterReassignmentsSparkline.Style(STYLE_PEERS)),
-                RateStatsRow("Handovers", clusterHandovers, clusterHandoversSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Takeovers", clusterTakeovers, clusterTakeoversSparkline.Style(STYLE_PEERS)),
                 RateStatsRow("NATS Published", natsPublished, natsPublishedSparkline.Style(STYLE_OUTBOUND)),
                 RateStatsRow("NATS Publish Failed", natsPublishFailed, natsPublishFailedSparkline.Style(STYLE_ERROR)),
                 RateStatsRow("NATS Dropped", natsDropped, natsDroppedSparkline.Style(STYLE_ERROR)),

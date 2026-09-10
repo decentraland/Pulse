@@ -8,9 +8,10 @@ namespace Pulse.Clusters;
 public interface IClusterFeedPublisher
 {
     /// <summary>
-    ///     A peer's published (post-debounce) cluster assignment changed.
+    ///     A peer's published (post-debounce) cluster assignment changed. <paramref name="session" />
+    ///     names the session that owns it and, on a takeover, the one it displaced.
     /// </summary>
-    void PublishClusterChange(string wallet, string clusterId, string realm);
+    void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session);
 
     /// <summary>
     ///     The full cluster topology for a completed pass. Callers must serialize their calls to this

@@ -23,6 +23,8 @@ public class ClusterTrackerTests
     private const string REALM = "realm-a";
     private const string OTHER_REALM = "realm-b";
     private const string WALLET = "0xduplicate";
+    private const string SESSION_A = "0xsession-a";
+    private const string SESSION_B = "0xsession-b";
 
     private RealmSpatialGrids grids;
     private SnapshotBoard snapshotBoard;
@@ -433,7 +435,7 @@ public class ClusterTrackerTests
 
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange("0xwallet0", "C1", REALM);
+        feedPublisher.Received(1).PublishClusterChange("0xwallet0", "C1", REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -450,13 +452,13 @@ public class ClusterTrackerTests
         MovePeer(new PeerIndex(2), new Vector3(500, 0, 500));
 
         tracker.RunPass();
-        feedPublisher.DidNotReceive().PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>());
+        feedPublisher.DidNotReceive().PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
 
         tracker.RunPass();
-        feedPublisher.DidNotReceive().PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>());
+        feedPublisher.DidNotReceive().PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
 
         tracker.RunPass();
-        feedPublisher.Received(1).PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>());
+        feedPublisher.Received(1).PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -471,7 +473,7 @@ public class ClusterTrackerTests
         MovePeer(new PeerIndex(2), new Vector3(500, 0, 500), isTeleport: true);
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>());
+        feedPublisher.Received(1).PublishClusterChange("0xwallet2", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -487,7 +489,7 @@ public class ClusterTrackerTests
         MovePeer(new PeerIndex(2), new Vector3(30, 0, 30), realm: OTHER_REALM);
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange("0xwallet2", Arg.Any<string>(), OTHER_REALM);
+        feedPublisher.Received(1).PublishClusterChange("0xwallet2", Arg.Any<string>(), OTHER_REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -506,7 +508,7 @@ public class ClusterTrackerTests
         MovePeer(new PeerIndex(3), new Vector3(25, 0, 25));
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange("0xwallet3", crowdId, REALM);
+        feedPublisher.Received(1).PublishClusterChange("0xwallet3", crowdId, REALM, Arg.Any<ClusterSession>());
     }
 
     /// <summary>
@@ -529,9 +531,9 @@ public class ClusterTrackerTests
         tracker.RunPass();
 
         Assert.That(ClusterIdOf(new PeerIndex(0)), Is.EqualTo(clusterId));
-        feedPublisher.Received(1).PublishClusterChange("0xwallet0", clusterId, OTHER_REALM);
-        feedPublisher.Received(1).PublishClusterChange("0xwallet1", clusterId, OTHER_REALM);
-        feedPublisher.Received(1).PublishClusterChange("0xwallet2", clusterId, OTHER_REALM);
+        feedPublisher.Received(1).PublishClusterChange("0xwallet0", clusterId, OTHER_REALM, Arg.Any<ClusterSession>());
+        feedPublisher.Received(1).PublishClusterChange("0xwallet1", clusterId, OTHER_REALM, Arg.Any<ClusterSession>());
+        feedPublisher.Received(1).PublishClusterChange("0xwallet2", clusterId, OTHER_REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -547,7 +549,7 @@ public class ClusterTrackerTests
         tracker.RunPass();
 
         feedPublisher.DidNotReceive().PublishClusterChange(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -598,7 +600,7 @@ public class ClusterTrackerTests
         SetupPeer(new PeerIndex(0), new Vector3(10, 0, 10), wallet: "0xreused");
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange("0xreused", Arg.Any<string>(), REALM);
+        feedPublisher.Received(1).PublishClusterChange("0xreused", Arg.Any<string>(), REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -643,7 +645,7 @@ public class ClusterTrackerTests
 
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange(WALLET, Arg.Any<string>(), REALM);
+        feedPublisher.Received(1).PublishClusterChange(WALLET, Arg.Any<string>(), REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -679,61 +681,6 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Current.Clusters, Is.Empty);
     }
 
-    /// <summary>
-    ///     A replacement session must be published into the LiveKit room the outgoing session still
-    ///     holds, not the cluster its own position would compute to, so LiveKit's duplicate-identity
-    ///     rule can supersede the outgoing participant.
-    /// </summary>
-    [Test]
-    public void IncomingSession_IsFirstPublishedIntoTheOutgoingSessionsCluster()
-    {
-        ClusterTracker tracker = CreateTracker();
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string outgoingCluster = ClusterIdOf(outgoing);
-        feedPublisher.ClearReceivedCalls();
-
-        // The replacement arrives far away, so its own cluster differs from the outgoing one.
-        RemovePeer(outgoing);
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, outgoingCluster, REALM);
-    }
-
-    /// <summary>
-    ///     The migration off a handover is exempt from the dwell debounce, so the peer's own cluster
-    ///     follows in the very next pass rather than being held in the outgoing session's LiveKit room
-    ///     for <see cref="ClusterOptions.DwellPasses" /> passes.
-    /// </summary>
-    [Test]
-    public void AfterAHandover_ThePeersOwnClusterFollowsImmediatelyDespiteDwell()
-    {
-        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        RemovePeer(outgoing);
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-        tracker.RunPass();
-
-        string ownCluster = ClusterIdOf(incoming);
-        feedPublisher.ClearReceivedCalls();
-
-        tracker.RunPass();
-
-        // One pass, not DwellPasses.
-        feedPublisher.Received(1).PublishClusterChange(WALLET, ownCluster, REALM);
-    }
-
     [Test]
     public void ReconnectIntoTheSameCluster_PublishesOnce()
     {
@@ -758,105 +705,11 @@ public class ClusterTrackerTests
         tracker.RunPass();
 
         Assert.That(ClusterIdOf(incoming), Is.EqualTo(crowdCluster));
-        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM);
+        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
-    public void AfterAHandoverIntoASurvivingCluster_TheOwnClusterFollowsWithoutWaitingOutTheDwell()
-    {
-        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        // Two bystanders keep the outgoing session's cluster alive across the session change, so the
-        // migration off the handover cannot be waved through by the cluster-deletion bypass.
-        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
-        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string crowdCluster = ClusterIdOf(outgoing);
-        feedPublisher.ClearReceivedCalls();
-
-        RemovePeer(outgoing);
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM);
-
-        string ownCluster = ClusterIdOf(incoming);
-        feedPublisher.ClearReceivedCalls();
-
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, ownCluster, REALM);
-    }
-
-    /// <summary>
-    ///     The outgoing session's LiveKit room outlives the cluster it was published into, so the
-    ///     handover must fire even when that cluster no longer exists by the time the replacement
-    ///     arrives.
-    /// </summary>
-    [Test]
-    public void Handover_FiresEvenWhenTheRememberedClusterNoLongerExists()
-    {
-        ClusterTracker tracker = CreateTracker();
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string outgoingCluster = ClusterIdOf(outgoing);
-        RemovePeer(outgoing);
-
-        // A pass with the wallet absent, so its cluster is pruned and is demonstrably not live when the
-        // replacement arrives.
-        tracker.RunPass();
-        Assert.That(clusterBoard.Current.Clusters, Is.Empty);
-        feedPublisher.ClearReceivedCalls();
-
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, outgoingCluster, REALM);
-    }
-
-    /// <summary>
-    ///     The room the replacement must collide in is still the outgoing session's, so a handover
-    ///     across a realm change carries the retained realm along with the retained cluster rather than
-    ///     the replacement's own.
-    /// </summary>
-    [Test]
-    public void Handover_CarriesTheRememberedRealmWhenTheSessionsRealmsDiffer()
-    {
-        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string outgoingCluster = ClusterIdOf(outgoing);
-        RemovePeer(outgoing);
-        feedPublisher.ClearReceivedCalls();
-
-        // The replacement authenticates into a different world.
-        SetupPeer(incoming, new Vector3(10, 0, 10), OTHER_REALM, WALLET);
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, outgoingCluster, REALM);
-
-        string ownCluster = ClusterIdOf(incoming);
-        feedPublisher.ClearReceivedCalls();
-
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, ownCluster, OTHER_REALM);
-    }
-
-    [Test]
-    public void RecycledSlotWithADifferentWallet_DoesNotInheritAHandover()
+    public void RecycledSlotWithADifferentWallet_NamesNoDisplacedSession()
     {
         ClusterTracker tracker = CreateTracker();
         var peer = new PeerIndex(0);
@@ -876,167 +729,22 @@ public class ClusterTrackerTests
 
         // The ledger is keyed by wallet, not by the recycled ENet slot, so the next tenant inherits
         // nothing.
-        SetupPeer(peer, new Vector3(500, 0, 500), wallet: "0xother");
+        string otherWallet = "0xother";
+        SetupPeer(peer, new Vector3(500, 0, 500), wallet: otherWallet);
         tracker.RunPass();
 
-        feedPublisher.DidNotReceive().PublishClusterChange("0xother", firstCluster, Arg.Any<string>());
-        feedPublisher.Received(1).PublishClusterChange("0xother", ClusterIdOf(peer), REALM);
-    }
-
-    [Test]
-    public void HandoverEntry_ExpiresAfterHandoverPasses()
-    {
-        ClusterTracker tracker = CreateTracker(handoverPasses: 2);
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string outgoingCluster = ClusterIdOf(outgoing);
-        RemovePeer(outgoing);
-
-        tracker.RunPass();
-        tracker.RunPass();
-        tracker.RunPass();
-        feedPublisher.ClearReceivedCalls();
-
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-        tracker.RunPass();
-
-        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, outgoingCluster, Arg.Any<string>());
-        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM);
-    }
-
-    [Test]
-    public void HandoverEntry_SurvivesAWalletThatPublishesNothingForLongerThanTheWindow()
-    {
-        ClusterTracker tracker = CreateTracker(handoverPasses: 2);
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string outgoingCluster = ClusterIdOf(outgoing);
-
-        // Standing still: the assignment is unchanged so nothing is published, but the entry must be
-        // refreshed on every pass the wallet is seen or it would expire under a stationary player.
-        tracker.RunPass();
-        tracker.RunPass();
-        tracker.RunPass();
-        tracker.RunPass();
-
-        RemovePeer(outgoing);
-        feedPublisher.ClearReceivedCalls();
-
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-        tracker.RunPass();
-
-        feedPublisher.Received(1).PublishClusterChange(WALLET, outgoingCluster, REALM);
-    }
-
-    [Test]
-    public void HandoverPassesZero_DisablesTheHandover()
-    {
-        ClusterTracker tracker = CreateTracker(handoverPasses: 0);
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        string outgoingCluster = ClusterIdOf(outgoing);
-        RemovePeer(outgoing);
-        feedPublisher.ClearReceivedCalls();
-
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-        tracker.RunPass();
-
-        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, outgoingCluster, Arg.Any<string>());
-        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM);
+        feedPublisher.DidNotReceive().PublishClusterChange(otherWallet, firstCluster, Arg.Any<string>(), Arg.Any<ClusterSession>());
+        feedPublisher.Received(1).PublishClusterChange(otherWallet, Arg.Any<string>(), REALM,
+            new ClusterSession(otherWallet, null, null));
     }
 
     /// <summary>
-    ///     A reconnect that lands back in the cluster the wallet already held is a no-op
-    ///     substitution, not a supersede, and the handover counter must not move for it.
+    ///     A peer whose first publish already matched the crowd's cluster must still wait out
+    ///     <c>DwellPasses</c> on its next move — the first publish being immediate must not arm a
+    ///     bypass for later reassignments.
     /// </summary>
     [Test]
-    public void ReconnectIntoTheSameCluster_DoesNotCountAsAHandover()
-    {
-        ClusterTracker tracker = CreateTracker();
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        // Two bystanders keep the crowd's sticky ID alive across the session change, so the
-        // replacement lands in the very cluster the ledger remembers.
-        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
-        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        RemovePeer(outgoing);
-        SetupPeer(incoming, new Vector3(10, 0, 10), wallet: WALLET);
-
-        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
-        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
-        collector.StartAsync(CancellationToken.None);
-
-        // Deltas, not absolutes: PulseMetrics instruments are static and shared across the fixture run.
-        MetricsSnapshot before = collector.TakeSnapshot();
-
-        tracker.RunPass();
-        tracker.RunPass();
-
-        MetricsSnapshot after = collector.TakeSnapshot();
-
-        Assert.That(after.Clusters.TotalHandovers - before.Clusters.TotalHandovers, Is.EqualTo(0));
-    }
-
-    /// <summary>
-    ///     A reconnect that lands in a different cluster than the one the wallet already held is a
-    ///     real substitution, and the handover counter must move for it.
-    /// </summary>
-    [Test]
-    public void ReconnectIntoADifferentCluster_CountsAsAHandover()
-    {
-        ClusterTracker tracker = CreateTracker();
-        var outgoing = new PeerIndex(0);
-        var incoming = new PeerIndex(1);
-
-        // Two bystanders keep the crowd's sticky ID alive across the session change, so the
-        // replacement's own computed cluster is provably different from the retained one.
-        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
-        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
-        tracker.RunPass();
-
-        // Far from the crowd, so this pass computes a different cluster than the retained one.
-        RemovePeer(outgoing);
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
-
-        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
-        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
-        collector.StartAsync(CancellationToken.None);
-
-        // Deltas, not absolutes: PulseMetrics instruments are static and shared across the fixture run.
-        MetricsSnapshot before = collector.TakeSnapshot();
-
-        tracker.RunPass();
-        tracker.RunPass();
-
-        MetricsSnapshot after = collector.TakeSnapshot();
-
-        Assert.That(after.Clusters.TotalHandovers - before.Clusters.TotalHandovers, Is.EqualTo(1));
-    }
-
-    /// <summary>
-    ///     A no-op substitution must not arm the dwell bypass. Otherwise a reconnect that lands back
-    ///     in its own cluster would let the peer's very next genuine reassignment skip the dwell
-    ///     debounce it should have waited out.
-    /// </summary>
-    [Test]
-    public void NoOpSubstitution_DoesNotArmTheDwellBypass()
+    public void ReconnectIntoTheSameCluster_DoesNotArmTheDwellBypass()
     {
         ClusterTracker tracker = CreateTracker(dwellPasses: 3);
         var outgoing = new PeerIndex(0);
@@ -1049,59 +757,248 @@ public class ClusterTrackerTests
         SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
         tracker.RunPass();
 
-        // Replacement lands at the crowd's own position, so retained == computed: a no-op substitution.
+        // Replacement lands at the crowd's own position, so its first publish is immediate — this
+        // must not arm the dwell bypass for the move that follows.
         RemovePeer(outgoing);
         SetupPeer(incoming, new Vector3(10, 0, 10), wallet: WALLET);
         tracker.RunPass();
 
         feedPublisher.ClearReceivedCalls();
 
-        // Same realm, no teleport — HandoverPending is the only bypass left that could fire here.
+        // Same realm, no teleport, and the crowd's cluster is still live — nothing here bypasses the
+        // dwell debounce.
         MovePeer(incoming, new Vector3(500, 0, 500));
         tracker.RunPass();
 
-        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), REALM);
+        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), REALM, Arg.Any<ClusterSession>());
     }
 
     /// <summary>
-    ///     Once the peer's own cluster catches up with the handed-over one, the pending flag must
-    ///     drop, so a later genuine reassignment waits out the dwell debounce like any other.
+    ///     Two bystanders keep the outgoing session's cluster alive, so the replacement — arriving far
+    ///     away — provably lands in a different one. Its first publish must be its own cluster, and must
+    ///     name the session and cluster it displaced.
     /// </summary>
     [Test]
-    public void HandoverPending_IsClearedWhenTheOwnClusterCatchesUp()
+    public void NewSessionForAWallet_PublishesItsOwnClusterAndNamesTheDisplacedOne()
     {
-        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        ClusterTracker tracker = CreateTracker();
         var outgoing = new PeerIndex(0);
         var incoming = new PeerIndex(1);
 
-        // Two bystanders keep the crowd's cluster alive throughout, so no pass below can be waved
-        // through by the cluster-deletion bypass.
         SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
         SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
-        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET);
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
         tracker.RunPass();
+
+        string outgoingCluster = ClusterIdOf(outgoing);
+        feedPublisher.ClearReceivedCalls();
+
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        string ownCluster = ClusterIdOf(incoming);
+        Assert.That(ownCluster, Is.Not.EqualTo(outgoingCluster));
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ownCluster, REALM,
+            new ClusterSession(SESSION_B, SESSION_A, outgoingCluster));
+    }
+
+    [Test]
+    public void NewSessionInTheSameCrowd_StillNamesTheDisplacedSession()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        SetupPeer(new PeerIndex(2), new Vector3(20, 0, 20));
+        SetupPeer(new PeerIndex(3), new Vector3(30, 0, 30));
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+
         string crowdCluster = ClusterIdOf(outgoing);
         feedPublisher.ClearReceivedCalls();
 
-        // Replacement arrives far away: the handover publishes the crowd's cluster.
         RemovePeer(outgoing);
-        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET);
+        SetupPeer(incoming, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_B);
         tracker.RunPass();
-        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM);
 
-        // It then walks into the crowd: computed equals published, the unchanged branch.
-        MovePeer(incoming, new Vector3(10, 0, 10));
-        tracker.RunPass();
         Assert.That(ClusterIdOf(incoming), Is.EqualTo(crowdCluster));
-        feedPublisher.ClearReceivedCalls();
-
-        // Leaving again is an ordinary reassignment: one pass must not publish under a 3-pass dwell.
-        MovePeer(incoming, new Vector3(500, 0, 500));
-        tracker.RunPass();
-        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), Arg.Any<string>());
+        feedPublisher.Received(1).PublishClusterChange(WALLET, crowdCluster, REALM,
+            new ClusterSession(SESSION_B, SESSION_A, crowdCluster));
     }
 
-    private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int handoverPasses = 15)
+    [Test]
+    public void SameSessionReconnect_NamesNoDisplacedSession()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM,
+            new ClusterSession(SESSION_A, null, null));
+    }
+
+    [Test]
+    public void AfterATakeover_TheNextPassPublishesNothingForAnUnchangedCluster()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        tracker.RunPass();
+
+        feedPublisher.DidNotReceive().PublishClusterChange(WALLET, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
+    }
+
+    [Test]
+    public void AfterATakeover_ALaterMoveNamesNoDisplacedSession()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+        var bystander = new PeerIndex(2);
+
+        // Established from the first pass, so the later teleport joins a different, already-live
+        // cluster — a lone peer's teleport alone keeps its own sticky ID wherever it lands, so
+        // nothing would actually change (and nothing would publish) without another cluster to join.
+        SetupPeer(bystander, new Vector3(2000, 0, 2000));
+
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        // A teleport bypasses the dwell debounce, so the move publishes on this very pass.
+        MovePeer(incoming, new Vector3(2000, 0, 2000), isTeleport: true);
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM,
+            new ClusterSession(SESSION_B, null, null));
+    }
+
+    [Test]
+    public void RetainedAssignment_ExpiresAfterSessionRetentionPasses()
+    {
+        ClusterTracker tracker = CreateTracker(sessionRetentionPasses: 2);
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        RemovePeer(outgoing);
+
+        // Absent for more than SessionRetentionPasses passes.
+        tracker.RunPass();
+        tracker.RunPass();
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM,
+            new ClusterSession(SESSION_B, null, null));
+    }
+
+    /// <summary>
+    ///     A stationary peer publishes once and then never again; its retained assignment must still be
+    ///     there for a takeover long after the window would have expired a publish-stamped entry.
+    /// </summary>
+    [Test]
+    public void RetainedAssignment_SurvivesAStationaryWalletBeyondTheWindow()
+    {
+        ClusterTracker tracker = CreateTracker(sessionRetentionPasses: 2);
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        tracker.RunPass();
+        tracker.RunPass();
+        tracker.RunPass();
+        tracker.RunPass();
+
+        string outgoingCluster = ClusterIdOf(outgoing);
+        feedPublisher.ClearReceivedCalls();
+
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM,
+            new ClusterSession(SESSION_B, SESSION_A, outgoingCluster));
+    }
+
+    [Test]
+    public void SessionRetentionPassesZero_NeverNamesADisplacedSession()
+    {
+        ClusterTracker tracker = CreateTracker(sessionRetentionPasses: 0);
+        var outgoing = new PeerIndex(0);
+        var incoming = new PeerIndex(1);
+
+        SetupPeer(outgoing, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        RemovePeer(outgoing);
+        SetupPeer(incoming, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        feedPublisher.Received(1).PublishClusterChange(WALLET, ClusterIdOf(incoming), REALM,
+            new ClusterSession(SESSION_B, null, null));
+    }
+
+    [Test]
+    public void Takeover_CountsOnce_AndASameSessionReconnectDoesNot()
+    {
+        ClusterTracker tracker = CreateTracker();
+        var first = new PeerIndex(0);
+        var sameDevice = new PeerIndex(1);
+        var otherDevice = new PeerIndex(2);
+
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
+        collector.StartAsync(CancellationToken.None);
+
+        SetupPeer(first, new Vector3(10, 0, 10), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+
+        // Deltas, not absolutes: PulseMetrics instruments are static and shared across the fixture run.
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        RemovePeer(first);
+        SetupPeer(sameDevice, new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+
+        MetricsSnapshot afterReconnect = collector.TakeSnapshot();
+        Assert.That(afterReconnect.Clusters.TotalTakeovers - before.Clusters.TotalTakeovers, Is.EqualTo(0));
+
+        RemovePeer(sameDevice);
+        SetupPeer(otherDevice, new Vector3(900, 0, 900), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        MetricsSnapshot afterTakeover = collector.TakeSnapshot();
+        Assert.That(afterTakeover.Clusters.TotalTakeovers - before.Clusters.TotalTakeovers, Is.EqualTo(1));
+    }
+
+    private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300)
     {
         // Options.Create rather than a substitute: IOptions<T> has a real, trivial implementation, and
         // a substituted property getter depends on NSubstitute's ambient call context — which
@@ -1113,7 +1010,7 @@ public class ClusterTrackerTests
             PassIntervalMs = 1000,
             DwellPasses = dwellPasses,
             IdPrefix = "C",
-            HandoverPasses = handoverPasses,
+            SessionRetentionPasses = sessionRetentionPasses,
         });
 
         return new ClusterTracker(
@@ -1149,14 +1046,17 @@ public class ClusterTrackerTests
         PeerIndex peer,
         Vector3 position,
         string? realm = REALM,
-        string? wallet = null)
+        string? wallet = null,
+        string? session = null)
     {
         // A realmless peer is placed in no grid at all, matching what the publisher does.
         if (realm is not null)
             grids.Set(peer, realm, position);
 
+        string walletId = wallet ?? $"0xwallet{peer.Value}";
+
         snapshotBoard.SetActive(peer);
-        identityBoard.Set(peer, wallet ?? $"0xwallet{peer.Value}");
+        identityBoard.Set(peer, walletId, session ?? walletId);
         PublishSnapshot(peer, position, realm);
     }
 

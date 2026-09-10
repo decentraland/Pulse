@@ -34,12 +34,12 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.clusters.reassignments");
 
         /// <summary>
-        ///     Incoming sessions published into an outgoing session's cluster rather than their own, so
-        ///     both hold one LiveKit room and the outgoing participant is superseded. One per duplicate
-        ///     session whose replacement computed a different cluster than the retained one.
+        ///     Publishes whose session differs from the one the wallet's retained assignment was
+        ///     published by — a second device took the wallet over. One per takeover; a same-session
+        ///     reconnect is not one.
         /// </summary>
-        public static readonly Counter<long> HANDOVERS =
-            METER.CreateCounter<long>("pulse.clusters.handovers");
+        public static readonly Counter<long> TAKEOVERS =
+            METER.CreateCounter<long>("pulse.clusters.takeovers");
 
         /// <summary>
         ///     Peers placed in a cluster this pass, recorded as a delta against the previous pass.

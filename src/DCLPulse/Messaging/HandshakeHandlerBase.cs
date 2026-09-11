@@ -53,7 +53,7 @@ public abstract class HandshakeHandlerBase(
 
         try
         {
-            (string Wallet, string Timestamp)? auth = Authenticate(GetAuthChain(message));
+            (string Wallet, string Timestamp, string Session)? auth = Authenticate(GetAuthChain(message));
 
             if (auth == null)
             {
@@ -62,7 +62,7 @@ public abstract class HandshakeHandlerBase(
                 return;
             }
 
-            (string wallet, string timestamp) = auth.Value;
+            (string wallet, string timestamp, string session) = auth.Value;
 
             // Platform ban list — checked before the replay cache so a banned wallet doesn't
             // consume an anti-replay slot. The ban list is populated by BansPollingHttpService on
@@ -99,7 +99,7 @@ public abstract class HandshakeHandlerBase(
 
             EvictDuplicateSession(from, wallet);
 
-            identityBoard.Set(from, wallet);
+            identityBoard.Set(from, wallet, session);
 
             OnAuthenticated(from, peer, message);
 
@@ -154,7 +154,7 @@ public abstract class HandshakeHandlerBase(
     ///     (same exceptions as <see cref="AuthChainValidator.Validate" />) when the chain is
     ///     invalid — the caller's try/catch turns both into a handshake reject.
     /// </summary>
-    private (string Wallet, string Timestamp)? Authenticate(ByteString authChain)
+    private (string Wallet, string Timestamp, string Session)? Authenticate(ByteString authChain)
     {
         string authChainJson = authChain.ToStringUtf8();
         Dictionary<string, string>? headers = JsonSerializer.Deserialize(authChainJson, HandshakeJsonContext.Default.DictionaryStringString);
@@ -179,7 +179,9 @@ public abstract class HandshakeHandlerBase(
         string expectedPayload = SignedFetch.BuildSignedFetchPayload("connect", "/", timestamp, metadata);
         AuthChainValidationResult result = authChainValidator.Validate(chain, expectedPayload);
 
-        return (result.UserAddress, timestamp);
+        // The final signer is the ephemeral key when the chain delegates, the wallet otherwise:
+        // exactly the per-device value the feed addresses a session by.
+        return (result.UserAddress, timestamp, result.CurrentAuthorityAddress.ToLowerInvariant());
     }
 
     private void EvictDuplicateSession(PeerIndex from, string wallet)

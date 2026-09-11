@@ -17,10 +17,11 @@ namespace DCLPulseTests;
 public class PlayerStateInputHandlerTests
 {
     private const uint MONOTONIC_TIME = 5000;
+    private const string REALM = "realm-a";
 
     private ITimeProvider timeProvider;
     private SnapshotBoard snapshotBoard;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ParcelEncoder parcelEncoder;
     private PlayerStateInputHandler handler;
     private Dictionary<PeerIndex, PeerState> peers;
@@ -32,12 +33,12 @@ public class PlayerStateInputHandlerTests
         timeProvider.MonotonicTime.Returns(MONOTONIC_TIME);
 
         snapshotBoard = new SnapshotBoard(100, 10);
-        spatialGrid = new SpatialGrid(100, 100);
+        realmGrids = new RealmSpatialGrids(100, 100);
 
         var options = Options.Create(new ParcelEncoderOptions());
         parcelEncoder = new ParcelEncoder(options);
 
-        var publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, realmGrids, parcelEncoder, timeProvider);
 
         handler = new PlayerStateInputHandler(
             snapshotBoard,
@@ -157,13 +158,14 @@ public class PlayerStateInputHandlerTests
         var peerIndex = new PeerIndex(1);
         peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peerIndex);
+        SeedRealm(peerIndex);
 
         ClientMessage message = CreateInputMessage(movementBlend: 2);
 
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot snapshot), Is.True);
-        HashSet<PeerIndex>? gridPeers = spatialGrid.GetPeers(snapshot.GlobalPosition);
+        HashSet<PeerIndex>? gridPeers = realmGrids.PeersAt(REALM, snapshot.GlobalPosition);
         Assert.That(gridPeers, Is.Not.Null);
         Assert.That(gridPeers, Does.Contain(peerIndex));
     }
@@ -268,6 +270,7 @@ public class PlayerStateInputHandlerTests
         var peerIndex = new PeerIndex(1);
         peers[peerIndex] = new PeerState(PeerConnectionState.AUTHENTICATED);
         snapshotBoard.SetActive(peerIndex);
+        SeedRealm(peerIndex);
 
         ClientMessage message = CreateInputMessage(position: new Vector3(5f, 0f, 5f));
 
@@ -280,8 +283,8 @@ public class PlayerStateInputHandlerTests
         handler.Handle(peers, peerIndex, message);
 
         Assert.That(snapshotBoard.TryRead(peerIndex, out PeerSnapshot secondSnapshot), Is.True);
-        Assert.That(secondSnapshot.Seq, Is.EqualTo(0));
-        Assert.That(spatialGrid.GetPeers(firstGlobal), Does.Contain(peerIndex));
+        Assert.That(secondSnapshot.Seq, Is.EqualTo(snapshot.Seq));
+        Assert.That(realmGrids.PeersAt(REALM, firstGlobal), Does.Contain(peerIndex));
     }
 
     [Test]
@@ -410,5 +413,14 @@ public class PlayerStateInputHandlerTests
         {
             Input = new PlayerStateInput { State = state }
         };
+    }
+
+    /// <summary>
+    ///     Gives the peer the realm a handshake seed or teleport would have set. Movement input never
+    ///     carries a realm of its own, and a peer without one belongs to no spatial grid.
+    /// </summary>
+    private void SeedRealm(PeerIndex peer)
+    {
+        snapshotBoard.Publish(peer, TestSnapshots.Make(seq: 0, realm: REALM));
     }
 }

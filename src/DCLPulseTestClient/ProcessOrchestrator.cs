@@ -20,7 +20,14 @@ public static class ProcessOrchestrator
         {
             var accountName = $"{options.AccountPrefix}-{i}";
             Console.WriteLine($"[{accountName}] Ensuring account exists..");
-            await MetaForge.RunCommandAsync($"account create {accountName} --skip-update-check --skip-auto-login", ct);
+
+            // Same reasoning as the single-process path: "already exists" is exit 2, and it is the
+            // normal outcome of every re-run with the same prefix. Throwing here made the
+            // multi-process path usable exactly once per prefix.
+            await MetaForge.RunCommandAsync(
+                $"account create {accountName} --skip-update-check --skip-auto-login",
+                ct,
+                throwOnNonZeroExit: false);
         }
 
         var processes = new List<Process>();

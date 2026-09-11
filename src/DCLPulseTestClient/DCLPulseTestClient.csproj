@@ -23,6 +23,9 @@
 
     <ItemGroup>
       <PackageReference Include="Decentraland.RustWebTransport" Version="$(RustWebTransportVersion)" />
+      <!-- LiveKit client (not the server SDK): lets a run join the room it was given a token for,
+           which is the claim the explorer makes. Same package MetaForge's MoB uses. -->
+      <PackageReference Include="Livekit.Rtc.Dotnet" Version="0.1.0" />
     </ItemGroup>
 
     <ItemGroup>

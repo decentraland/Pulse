@@ -37,7 +37,7 @@ public class DrainPeerLifeCycleEventsTests
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
-            new SpatialGrid(100, 100),
+            new RealmSpatialGrids(100, 100),
             identityBoard,
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),

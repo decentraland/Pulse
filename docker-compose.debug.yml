@@ -11,11 +11,29 @@ services:
       - ./src:/app/src
     environment:
       DOTNET_ENVIRONMENT: Development
+      # Applies to Pulse's own categories only — the NATS client stays at the Warning floor
+      # appsettings sets for NATS.Client.Core. Below that it re-dumps the server info on every
+      # reconnect, which a flapping broker turns into a stream through the console dashboard.
       Logging__LogLevel__Default: Debug
       Peers__ResyncWithDelta: false
       Transport__GeoDbDirectory: /app/geodb
       WebTransport__Enabled: true
+      # Off by default in appsettings; the debug stack turns clustering on and points it at the
+      # sidecar broker. Drop Nats__Url for stats-only mode (tracker runs, nothing published).
+      Clusters__Enabled: true
+      Nats__Url: nats://nats:4222
+    depends_on:
+      - nats
     cap_add:
       - SYS_PTRACE
     security_opt:
       - seccomp:unconfined
+
+  nats:
+    image: nats:2-alpine
+    container_name: dcl-pulse-nats
+    ports:
+      # 4222 client, 8222 HTTP monitoring (/varz, /connz) for confirming the publisher connected.
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--http_port", "8222"]

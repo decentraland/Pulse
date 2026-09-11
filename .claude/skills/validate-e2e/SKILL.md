@@ -3,7 +3,7 @@ name: validate-e2e
 description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
 user-invocable: true
 allowed-tools: Bash, PowerShell, Grep, Read
-argument-hint: [--transport=enet|webtransport] [--account=prefix]
+argument-hint: [--transport=enet|webtransport] [--account=prefix] [--comms-enabled]
 ---
 
 # Validate the e2e networking flow
@@ -26,6 +26,14 @@ Run **two** bots that connect, authenticate, move, and observe each other, then 
 
 A `Seq gap → resync` line is **expected, not a failure**: unreliable datagrams drop/reorder, the client detects the gap and asks for a `STATE_FULL`. Seeing it means the datagram path *and* the reliable resync path both work (the "client drives resync" model — see CLAUDE.md).
 
+## Scope: this skill does not cover the conn-string path
+
+What is validated here is the Pulse protocol over ENet/WebTransport. The LiveKit **conn-string** path — Pulse clustering → NATS `peer.{addr}.cluster_change` → gatekeeper → NATS `engine.peer.{addr}.island_changed` → ws-connector → client — is a **separate channel with its own harness**, and none of the success criteria below exercise it.
+
+To bring it into a run, add `--comms-enabled` to the bot command **and** run comms-gatekeeper against the same broker — the test client holds no broker connection and cannot mint conn strings itself, so without gatekeeper the bots connect to ws-connector and receive nothing. Each bot then logs `[ws-connector] Island …` lines; failures on that channel report on the `[comms]` prefix and are deliberately **non-fatal** to the Pulse session, so a passing run here says nothing about the conn-string path either way.
+
+That harness has its own prerequisites (NATS, ws-connector, comms-gatekeeper with Postgres and LiveKit credentials, and a `metaforge` new enough to have `account sign`), its own compose file (`docker-compose.e2e.yml`), and its own failure taxonomy — silent no-delivery rather than the visible errors this skill deals in. **See [docs/e2e-livekit.md](../../../docs/e2e-livekit.md).** Do not fold its assertions into the criteria below; the two validations have different prerequisites and should fail independently.
+
 ## Prerequisites
 
 - Build first: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
@@ -40,7 +48,7 @@ These each cost real debugging time. Bake them in:
 1. **Disable the Console TUI.** In Development, `appsettings.Development.json` sets `Metrics:Type=Console`, which takes over the terminal (alternate screen) and **swallows all logs** — you'll see an empty log and think the server never started. Always pass `Metrics__Type=Prometheus` so startup + Debug logs go to stdout and `/metrics` is scrapeable.
 2. **Development enables the self-signed dev cert (WebTransport).** Outside Development the server refuses to self-sign and exits by design. On self-sign it writes the cert SHA-256 (base64) to `Path.GetTempPath()/dcl-pulse-wt-cert-hash` (`%TEMP%\dcl-pulse-wt-cert-hash` on Windows); the WebTransport client reads that file to pin the cert — no manual copy.
 3. **Bind is uniform on `0.0.0.0` by default** (`Transport:BindHost` and `WebTransport:BindHost`), so a `127.0.0.1` client reaches either transport on Windows and Linux. If `BindHost=::`: ENet is dual-stack everywhere, but **WebTransport's `::` is IPv6-only on Windows** — a `127.0.0.1` client then hangs at `Connect` with the server logging no peer. Keep `0.0.0.0`, or dial `--ip=::1`.
-4. **Use `--bot-count=2`, never 1, for headless runs.** `bot-count=1` uses the manual-exit input reader, which calls `Console.KeyAvailable` and **throws when stdin is redirected** (any piped/headless run) right after `Ready.`. `bot-count≥2` uses the autonomous bot input and is headless-safe. With `BotsPerProcess=20` (client appsettings) two bots stay in a single process — no child-process orchestration.
+4. **Use `--bot-count=2` for anything that checks fan-out.** Two bots are required for the interest-managed server→client legs — one bot has nobody to observe. One bot *is* headless-safe now (`ConsoleInputReader` no-ops when `Console.IsInputRedirected`, so the manual-exit reader no longer throws on a piped run), and is enough for checks that only need a single identity, such as "is anything minting a conn string". With `BotsPerProcess=20` (client appsettings) two bots stay in a single process — no child-process orchestration.
 5. **Small `--spawn-radius`** (e.g. `2`) keeps the two bots inside each other's AoI so the mutual `PlayerJoined` / `STATE_FULL` fan-out fires. The default `10` places 2 bots ~20 units apart — at/over the Tier-0 radius, so they may not observe each other.
 6. **Debug logging** (`Logging__LogLevel__Default=Debug`) surfaces `peer connected` and `Sending PlayerJoined …` (both Debug level). At the default Warning/Info you won't see them — but `handshake accepted` is Info, so a lighter run still proves connect+auth.
 

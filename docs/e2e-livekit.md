@@ -241,6 +241,14 @@ guarantee above.
   otherwise the run dies mid-handshake against a real server and looks like a protocol fault.
   `metaforge account chain` is the older, different thing — it builds the signed-fetch shape
   (`method:path:timestamp:metadata`) and cannot sign a `dcl-<hex>` challenge verbatim.
+
+  The harness also needs a MetaForge whose `account sign` and `account chain` reuse one persisted
+  identity per account, because the backend session key is the auth chain's ephemeral address and
+  the Pulse handshake and the ws-connector challenge must carry the same one. A MetaForge that
+  mints a fresh identity per call makes the session-addressed `island_changed` miss the bot's
+  socket — symptom: bots log `Welcome received` but never an `[ws-connector] Island` line, and the
+  ws-connector metric `dcl_ws_connector_island_changed_no_session_socket_total` and the gatekeeper
+  metric `dcl_gatekeeper_cluster_reannounce_skipped_other_session_total` count up.
 - **`Clusters:Enabled` must be on.** It ships `true` in `appsettings.json`, and the compose file
   pins `Clusters__Enabled=true` anyway so the harness does not depend on that default holding.
   With it off, the tracker never runs and nothing is ever published — silently.

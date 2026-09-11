@@ -248,7 +248,10 @@ guarantee above.
   mints a fresh identity per call makes the session-addressed `island_changed` miss the bot's
   socket — symptom: bots log `Welcome received` but never an `[ws-connector] Island` line, and the
   ws-connector metric `dcl_ws_connector_island_changed_no_session_socket_total` and the gatekeeper
-  metric `dcl_gatekeeper_cluster_reannounce_skipped_other_session_total` count up.
+  metric `dcl_gatekeeper_cluster_reannounce_skipped_other_session_total` count up. Note that the
+  persisted identity still has the class-default validity window, so a soak run longer than that
+  window will rotate a bot's ephemeral mid-run the same way a never-persisted one always did —
+  this only fixes the two-handshakes-per-bot mismatch, not long-run rotation.
 - **`Clusters:Enabled` must be on.** It ships `true` in `appsettings.json`, and the compose file
   pins `Clusters__Enabled=true` anyway so the harness does not depend on that default holding.
   With it off, the tracker never runs and nothing is ever published — silently.

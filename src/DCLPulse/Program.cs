@@ -13,6 +13,8 @@ using Pulse.Metrics;
 using Pulse.Metrics.Console;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
+using Pulse.Presence;
+using Pulse.Stats;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
@@ -106,6 +108,11 @@ builder.Services.AddSingleton<FieldValidator>();
 builder.Services.AddSingleton<HandshakeReplayPolicy>();
 builder.Services.AddSingleton<BanList>();
 builder.Services.AddSingleton<BanEnforcer>();
+
+builder.Services.Configure<ParcelEncoderOptions>(
+    builder.Configuration.GetSection(ParcelEncoderOptions.SECTION_NAME));
+
+builder.Services.AddSingleton<ParcelEncoder>();
 
 builder.Services.Configure<PeerOptions>(
     builder.Configuration.GetSection(PeerOptions.SECTION_NAME));
@@ -242,9 +249,26 @@ builder.Services.AddOptions<NatsOptions>()
 
 builder.Services.AddSingleton<ClusterBoard>();
 
+// Presence — engine.parcel_changes, derived from the clustering pass. Bound before the publisher,
+// which reads the batch cadence off it.
+builder.Services.AddOptions<PresenceOptions>()
+    .Bind(builder.Configuration.GetSection(PresenceOptions.SECTION_NAME));
+
 builder.Services.AddSingleton<NatsPublisher>();
 builder.Services.AddSingleton<IClusterFeedPublisher>(sp => sp.GetRequiredService<NatsPublisher>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NatsPublisher>());
+
+builder.Services.AddSingleton(sp =>
+{
+    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
+
+    return new ParcelChangeTracker(
+        sp.GetRequiredService<IClusterFeedPublisher>(),
+        sp.GetRequiredService<ParcelEncoder>(),
+        sp.GetRequiredService<IOptions<PresenceOptions>>(),
+        sp.GetRequiredService<IOptions<NatsOptions>>(),
+        transportOptions.MaxPeers);
+});
 
 builder.Services.AddSingleton(sp =>
 {
@@ -258,6 +282,8 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<IdentityBoard>(),
         sp.GetRequiredService<ClusterBoard>(),
         sp.GetRequiredService<IClusterFeedPublisher>(),
+        sp.GetRequiredService<ParcelChangeTracker>(),
+        sp.GetRequiredService<ITimeProvider>(),
         transportOptions.MaxPeers);
 });
 
@@ -300,16 +326,16 @@ else
 builder.Services.Configure<HttpServiceOptions>(
     builder.Configuration.GetSection(HttpServiceOptions.SECTION_NAME));
 
+// The read-only stats surface (iteration-2 C2). Reads the same boards the clustering pass publishes,
+// so it adds no state of its own and nothing here can change what the server does.
+builder.Services.AddSingleton(ServiceIdentity.FromEnvironment());
+builder.Services.AddSingleton<StatsRouter>();
+
 builder.Services.AddSingleton<MetricsBearerToken>();
 builder.Services.AddSingleton<CommsBearerToken>();
 builder.Services.AddSingleton(envName);
 builder.Services.AddHostedService<HttpService>();
 builder.Services.AddHostedService<BansPollingHttpService>();
-
-builder.Services.Configure<ParcelEncoderOptions>(
-    builder.Configuration.GetSection(ParcelEncoderOptions.SECTION_NAME));
-
-builder.Services.AddSingleton<ParcelEncoder>();
 
 IHost host = builder.Build();
 

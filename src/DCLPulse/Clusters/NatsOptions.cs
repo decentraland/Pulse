@@ -25,9 +25,44 @@ public sealed class NatsOptions
     public string Url { get; set; } = string.Empty;
 
     /// <summary>
-    ///     Reported as <c>server_name</c> on <c>engine.discovery</c>. Free-form — nothing keys off it.
+    ///     Configuration key for <see cref="ServerName" />, in the <c>Nats__ServerName</c>
+    ///     environment form.
     /// </summary>
-    public string ServerName { get; set; } = "pulse";
+    public const string SERVER_NAME_KEY = SECTION_NAME + ":" + nameof(ServerName);
+
+    /// <summary>
+    ///     The unconfigured <see cref="ServerName" />: <c>pulse-</c> plus the machine name, which is
+    ///     the pod name under default Kubernetes networking and the container id under plain Docker.
+    ///     Resolved once — <see cref="Environment.MachineName" /> cannot change while the process
+    ///     runs, and <c>server_name</c> has to be stable for its lifetime (C1.5).
+    ///     <para />
+    ///     Unique per <b>host</b>, not per process: under <c>hostNetwork: true</c> or a
+    ///     deployment-wide <c>spec.hostname</c> every pod on a node resolves the node's name, and two
+    ///     Pulse processes on one machine share it by definition. Those deployments have to configure
+    ///     <see cref="ServerName" /> explicitly — nothing here can detect the collision, since each
+    ///     process only ever sees its own value.
+    /// </summary>
+    public static readonly string HOST_DEFAULT_SERVER_NAME = "pulse-" + Environment.MachineName;
+
+    private string serverName = string.Empty;
+
+    /// <summary>
+    ///     Identifies this instance on <c>engine.discovery</c> and, since iteration 2, on
+    ///     <c>engine.parcel_changes</c> — where consumers key <c>seq</c> by it and a
+    ///     <c>snapshot=true</c> batch replaces <em>everything they hold for that name</em>.
+    ///     <para />
+    ///     <b>Two replicas must never share a value.</b> If they do, each one's snapshot deletes the
+    ///     other's whole population from every consumer's presence map, and the interleaved delta
+    ///     streams read as a permanent <c>seq</c> gap that freezes consumers in between — all of it
+    ///     silent on the Pulse side, since both instances look healthy. Unset or blank therefore
+    ///     defaults to <see cref="HOST_DEFAULT_SERVER_NAME" /> rather than to a shared literal; set it
+    ///     explicitly only to something already unique per process.
+    /// </summary>
+    public string ServerName
+    {
+        get => string.IsNullOrWhiteSpace(serverName) ? HOST_DEFAULT_SERVER_NAME : serverName;
+        set => serverName = value ?? string.Empty;
+    }
 
     /// <summary>
     ///     Cadence of the <c>engine.discovery</c> heartbeat. Must stay well under the 90 s window

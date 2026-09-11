@@ -149,7 +149,7 @@ Pulse-A  Pulse-B  Pulse-C ...
 
 - **Instruments:** `PulseMetrics` (counters / gauges via `System.Diagnostics.Metrics`), zero-alloc `Interlocked` updates on the hot path.
 - **Collector:** `MeterListenerMetricsCollector` subscribes and snapshots on demand.
-- **Prometheus:** `PrometheusFormatter` emits text-exposition format; `HttpService` serves `/metrics` with bearer-token auth.
+- **Prometheus:** `PrometheusFormatter` emits text-exposition format; `HttpService` serves `/metrics` with bearer-token auth. Every other HTTP route — the realm-scoped stats surface, `/about`, `/health` — is answered by `StatsRouter` (`src/DCLPulse/Stats/`) and is unauthenticated; see `docs/openapi.yaml`.
 - **Console dashboard:** `ConsoleDashboard` (TUI on a dedicated thread) polls snapshots every 500 ms — rates, percentiles, sparklines, per-hardening counters.
 
 ---

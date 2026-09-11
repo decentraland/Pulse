@@ -1,0 +1,524 @@
+openapi: 3.1.0
+info:
+  title: Pulse Stats API
+  description: |
+    ## Overview
+
+    Pulse is the source of online-player information on the Decentraland platform. This is its
+    read-only HTTP surface: who is online, where they stand, and how the clustering pass grouped
+    them. It replaces `archipelago-ea-stats`, whose response shapes it keeps, with one difference
+    that runs through the whole surface — **every query is scoped to a realm**.
+
+    ### Why realms are in the path
+
+    Genesis City and every world are separate coordinate spaces. A world numbers its parcels from
+    `(0,0)`, exactly like the middle of Genesis City, so an unscoped parcel count adds together
+    players standing in different universes. The unscoped paths archipelago-stats served
+    (`/peers`, `/parcels`, `/islands`) therefore answer `308` into `/realms/main/…`, and callers
+    that want another realm — or all of them — name it.
+
+    Realm names are canonical lowercase: `main` is Genesis City, worlds are `<name>.dcl.eth`, and
+    local-scene realms are `lsd:sha256:…`. A realm path segment matches case-insensitively and the
+    response always carries the canonical form, so a caller that read its realm off a scene
+    deployment or from a user does not have to normalise it first.
+
+    **An unknown realm is an empty realm** — `200` with an empty list, never `404`. A realm exists
+    exactly as long as someone is in it, so "nobody is there" and "there is no such place" are the
+    same fact, and a caller polling a world that has just emptied is not handed an error.
+
+    ### Key concepts
+
+    **Peers** are the players this Pulse instance is holding. Each entry carries the wallet, the
+    parcel, the world position and `lastPing` — the unix millisecond of the peer's most recent
+    state snapshot, which for a connected player is within a simulation tick of now. Positions
+    come from the game protocol itself, not from a client heartbeat.
+
+    **Parcels** are `(floor(x / 16), floor(z / 16))` of the player's world position, per realm.
+
+    **Islands** are the clustering pass's groups, in archipelago's island shape. Ids read `C{n}`
+    from one global counter, so they are unique across realms — which is why asking for an island
+    by id under the wrong realm is a `404` rather than a match. `maxPeers` reads `0`: Pulse caps
+    cluster size nowhere, and reporting a bound it does not enforce would be a bound a client could
+    act on. Note the id mismatch clients see: comms-gatekeeper maps each cluster to a LiveKit room
+    named `island-C{n}` and that room name is what reaches a client as its `islandId`, while this
+    API reports the bare cluster id.
+
+    ### Data freshness
+
+    Every response is built from one `ClusterTracker` pass, so no two fields of a response come
+    from different instants and `/realms`' `lastUpdated` says which pass it was. The pass runs every
+    `Clusters:PassIntervalMs` (default 1000 ms), which is the age bound on everything here except
+    `lastPing` (read per peer, and newer) and `/status`' `currentTime` (now).
+
+    ### Ordering
+
+    Normative, so a caller may rely on it: realms by `peers` descending then `name` ascending;
+    peers by `address` ascending; parcels by `peersCount` descending then `x` then `y`; islands by
+    id in natural order (`C1 < C2 < C10`), members by `address` ascending.
+
+    ### Authentication
+
+    None. This surface says who is standing where, which every client in a realm learns from the
+    comms feed anyway. `/metrics` is the exception and keeps its bearer token.
+
+    ### The `/comms/` prefix
+
+    `/comms/peers`, `/comms/peers/{id}`, `/comms/parcels`, `/comms/islands` and
+    `/comms/islands/{id}` are accepted as a second spelling of those legacy paths, and answer
+    exactly what the unprefixed path does — the same status, the same body, the same headers. For
+    four of them that is a 308 into `/realms/main/…`; the two all-realms lookups are served where
+    they stand, namely `/comms/peers` carrying `id` or `all`, and **`/comms/peers/{id}`**, which
+    archipelago-stats answered with a live 200 and which therefore stays live here.
+
+    The prefix is **not** accepted on anything else — `/comms/realms`, `/comms/status`,
+    `/comms/about`, `/comms/health` and `/comms/realms/{realm}/…` are 404 — so it stays a
+    compatibility shim for the endpoints archipelago-stats published under it rather than a second
+    name for this whole surface.
+  version: 1.0.0
+  contact:
+    name: Decentraland
+    url: https://decentraland.org
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  x-api-id: pulse-stats-api
+servers:
+  - url: https://archipelago-ea-stats.decentraland.org
+    description: Production (the public hostname, rerouted at the edge to Pulse)
+  - url: https://archipelago-ea-stats.decentraland.zone
+    description: Development
+security: []
+tags:
+  - name: Realms
+    description: Realm-scoped views of peers, parcels and clusters
+  - name: Peers
+    description: All-realms peer lookups
+  - name: Service
+    description: Health, version and configuration
+  - name: Legacy
+    description: The unscoped archipelago-stats paths, kept as redirects
+paths:
+  /realms:
+    get:
+      tags: [Realms]
+      summary: List realms holding at least one peer
+      description: |
+        Every realm this instance is holding players in, with its peer and cluster counts. A realm
+        with no peers is absent rather than reported as empty, which is the same statement as
+        `/realms/{realm}/peers` answering an empty list for a name nobody is in.
+      operationId: getRealms
+      responses:
+        '200':
+          description: Realms, busiest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [realms, lastUpdated]
+                properties:
+                  realms:
+                    type: array
+                    items: { $ref: '#/components/schemas/RealmSummary' }
+                  lastUpdated:
+                    type: string
+                    format: date-time
+                    description: |
+                      ISO-8601 UTC with milliseconds — the clustering pass these counts were read
+                      from, not the time the response was written. Culture-independent: always
+                      `yyyy-MM-ddTHH:mm:ss.fffZ`.
+
+                      `1970-01-01T00:00:00.000Z` means no pass has completed yet, so every list on
+                      this surface is empty for a reason that is not "nobody is online": normally
+                      the first `Clusters:PassIntervalMs` after a restart, and permanently if
+                      `Clusters:Enabled` is false. Treat an epoch value as "no data", not as a clock
+                      fault.
+                    examples: ['2026-09-04T14:08:57.801Z']
+  /realms/{realm}/peers:
+    get:
+      tags: [Realms]
+      summary: Peers in one realm
+      operationId: getRealmPeers
+      parameters:
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '200':
+          description: |
+            The peers of that realm, by address. Entries carry no `realm` — the envelope already
+            says which realm this is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, realm, peers]
+                properties:
+                  ok: { type: boolean }
+                  realm: { $ref: '#/components/schemas/RealmName' }
+                  peers:
+                    type: array
+                    items: { $ref: '#/components/schemas/Peer' }
+  /realms/{realm}/parcels:
+    get:
+      tags: [Realms]
+      summary: Occupied parcels in one realm, with peer counts
+      description: |
+        Parcel density for one realm, busiest first — what a hotspot map is built from. Scoping is
+        mandatory rather than convenient: worlds number their parcels from `(0,0)`.
+      operationId: getRealmParcels
+      parameters:
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '200':
+          description: Occupied parcels
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [realm, parcels]
+                properties:
+                  realm: { $ref: '#/components/schemas/RealmName' }
+                  parcels:
+                    type: array
+                    items: { $ref: '#/components/schemas/ParcelCount' }
+  /realms/{realm}/islands:
+    get:
+      tags: [Realms]
+      summary: Clusters in one realm
+      operationId: getRealmIslands
+      parameters:
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '200':
+          description: Clusters in natural id order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, realm, islands]
+                properties:
+                  ok: { type: boolean }
+                  realm: { $ref: '#/components/schemas/RealmName' }
+                  islands:
+                    type: array
+                    items: { $ref: '#/components/schemas/Island' }
+  /realms/{realm}/islands/{id}:
+    get:
+      tags: [Realms]
+      summary: One cluster
+      description: |
+        The island object as the body itself, with no envelope — the shape archipelago-stats
+        answered, kept unchanged.
+      operationId: getRealmIsland
+      parameters:
+        - $ref: '#/components/parameters/Realm'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Cluster id, `C{n}`
+          examples: ['C1']
+      responses:
+        '200':
+          description: The cluster
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Island' }
+        '404':
+          description: |
+            No cluster with that id in that realm. Ids are unique across realms, so an id that
+            exists in another realm is not found here — which is what a caller holding a stale
+            island id needs to be able to tell. Empty body.
+  /peers:
+    get:
+      tags: [Peers]
+      summary: Look up peers across every realm
+      description: |
+        Two all-realms lookups. With `id` or `all` this route answers; with neither — the
+        archipelago-stats call — it answers `308 Location: /realms/main/peers`, preserving the query
+        string. It is one of the two legacy paths that are not simply a redirect; the other is
+        `/peers/{id}`, which is always served.
+
+        Entries carry their `realm`, since there is no envelope to carry it. A realm ending
+        `.dcl.eth` means the peer is in a world.
+      operationId: getPeers
+      parameters:
+        - name: id
+          in: query
+          required: false
+          description: |
+            Wallet to resolve; repeat for more, up to 200 per request. Matched
+            case-insensitively, so EIP-55 checksummed wallets need no normalising. Ids that match
+            nothing are omitted — this is a lookup, and "not online" is an answer.
+          schema:
+            type: array
+            maxItems: 200
+            items: { type: string }
+          style: form
+          explode: true
+        - name: all
+          in: query
+          required: false
+          description: |
+            Every peer on this instance, unfiltered — for trusted internal callers priming a
+            presence map or a peer synchroniser. Prefer the `engine.parcel_changes` feed for
+            anything that has to stay current; this is the cold-start read.
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Matching peers, by address
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, peers]
+                properties:
+                  ok: { type: boolean }
+                  peers:
+                    type: array
+                    items: { $ref: '#/components/schemas/PeerWithRealm' }
+        '308':
+          description: |
+            No `id` and no `all`: the legacy unscoped call, redirected to Genesis City.
+          headers:
+            Location:
+              schema: { type: string }
+              examples: ['/realms/main/peers']
+        '400':
+          description: More than 200 ids
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /peers/{id}:
+    get:
+      tags: [Peers]
+      summary: Resolve one wallet across every realm
+      description: |
+        Whether a wallet is online and, if so, where. Replaces worlds-content-server's
+        `/wallet/:wallet/connected-world`: a `realm` ending `.dcl.eth` is the world name.
+
+        Also served at **`/comms/peers/{id}`**, the spelling archipelago-stats published: same
+        handler, same 200 and 404 bodies, all realms. Not a redirect — a 308 would have to name a
+        realm, and this lookup has none.
+      operationId: getPeer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Wallet, matched case-insensitively
+      responses:
+        '200':
+          description: The peer
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, peer]
+                properties:
+                  ok: { type: boolean }
+                  peer: { $ref: '#/components/schemas/PeerWithRealm' }
+        '404':
+          description: Not online on this instance
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, peer]
+                properties:
+                  ok: { type: boolean, const: false }
+                  peer: { type: 'null' }
+  /status:
+    get:
+      tags: [Service]
+      summary: Version, clock and per-realm peer counts
+      operationId: getStatus
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, currentTime, commitHash, realms]
+                properties:
+                  version:
+                    type: string
+                    description: Build version. The Godot client reads this field.
+                  currentTime:
+                    type: integer
+                    format: int64
+                    description: This server's clock, unix ms — now, not the pass time.
+                  commitHash: { type: string }
+                  realms:
+                    type: array
+                    items: { $ref: '#/components/schemas/RealmPeerCount' }
+  /about:
+    get:
+      tags: [Service]
+      summary: Commit, user count and applied remote configuration
+      operationId: getAbout
+      responses:
+        '200':
+          description: |
+            `userCount` counts every realm. `featureFlagOverrides` is Pulse's own addition: the
+            remote feature-flag document may set any configuration key, so whatever it set is
+            reported here verbatim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commitHash, userCount]
+                properties:
+                  commitHash: { type: string }
+                  userCount: { type: integer }
+                  featureFlagOverrides:
+                    type: object
+                    additionalProperties: { type: ['string', 'null'] }
+  /health:
+    get:
+      tags: [Service]
+      summary: Liveness
+      operationId: getHealth
+      responses:
+        '200':
+          description: The process is up and the listener is accepting. Empty body.
+  /parcels:
+    get:
+      tags: [Legacy]
+      summary: Legacy — redirects to /realms/main/parcels
+      operationId: getLegacyParcels
+      responses:
+        '308':
+          description: Redirect, query string preserved
+          headers:
+            Location:
+              schema: { type: string }
+              examples: ['/realms/main/parcels']
+  /islands:
+    get:
+      tags: [Legacy]
+      summary: Legacy — redirects to /realms/main/islands
+      operationId: getLegacyIslands
+      responses:
+        '308':
+          description: Redirect, query string preserved
+          headers:
+            Location:
+              schema: { type: string }
+              examples: ['/realms/main/islands']
+  /islands/{id}:
+    get:
+      tags: [Legacy]
+      summary: Legacy — redirects to /realms/main/islands/{id}
+      operationId: getLegacyIsland
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '308':
+          description: Redirect, query string preserved
+          headers:
+            Location:
+              schema: { type: string }
+              examples: ['/realms/main/islands/C1']
+components:
+  parameters:
+    Realm:
+      name: realm
+      in: path
+      required: true
+      description: |
+        Realm name, matched case-insensitively; the response carries the canonical lowercase form.
+        A name nobody is in is an empty realm, not a `404`.
+      schema: { type: string }
+      examples: ['main', 'cozyfarm.dcl.eth']
+  schemas:
+    RealmName:
+      type: string
+      description: Canonical lowercase realm name.
+      examples: ['main', 'cozyfarm.dcl.eth']
+    RealmSummary:
+      type: object
+      required: [name, peers, clusters]
+      properties:
+        name: { $ref: '#/components/schemas/RealmName' }
+        peers: { type: integer }
+        clusters: { type: integer }
+    RealmPeerCount:
+      type: object
+      required: [name, peers]
+      properties:
+        name: { $ref: '#/components/schemas/RealmName' }
+        peers: { type: integer }
+    Peer:
+      type: object
+      description: |
+        The archipelago-stats peer shape, unchanged. `id` duplicates `address` because both were in
+        the response every client reads today.
+      required: [id, address, lastPing, parcel, position]
+      properties:
+        id: { type: string, description: Lowercase wallet, same value as `address`. }
+        address: { type: string, description: Lowercase wallet. }
+        lastPing:
+          type: integer
+          format: int64
+          description: Unix ms of this peer's most recent state snapshot.
+        parcel:
+          type: array
+          description: '`[x, y]` — `(floor(x / 16), floor(z / 16))` of the world position.'
+          minItems: 2
+          maxItems: 2
+          items: { type: integer }
+        position:
+          type: array
+          description: '`[x, y, z]` world position, float32.'
+          minItems: 3
+          maxItems: 3
+          items: { type: number, format: float }
+    PeerWithRealm:
+      allOf:
+        - $ref: '#/components/schemas/Peer'
+        - type: object
+          required: [realm]
+          properties:
+            realm: { $ref: '#/components/schemas/RealmName' }
+    ParcelCount:
+      type: object
+      required: [peersCount, parcel]
+      properties:
+        peersCount: { type: integer }
+        parcel:
+          type: object
+          required: [x, y]
+          properties:
+            x: { type: integer }
+            y: { type: integer }
+    Island:
+      type: object
+      required: [id, maxPeers, center, radius, peers]
+      properties:
+        id: { type: string, examples: ['C1'] }
+        maxPeers:
+          type: integer
+          const: 0
+          description: Always 0 — clusters are uncapped.
+        center:
+          type: array
+          description: Mean of member positions on all three axes.
+          minItems: 3
+          maxItems: 3
+          items: { type: number, format: float }
+        radius:
+          type: number
+          format: float
+          description: Distance from the centre to the farthest member, on the XZ plane.
+        peers:
+          type: array
+          items: { $ref: '#/components/schemas/Peer' }
+    Error:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, const: false }
+        error: { type: string, examples: ['too many ids (max 200)'] }

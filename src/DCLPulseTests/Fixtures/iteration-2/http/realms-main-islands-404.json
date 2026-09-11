@@ -1,0 +1,6 @@
+{
+  "request": "GET /realms/main/islands/C3",
+  "note": "C3 lives in cozyfarm.dcl.eth, so under main it is not found; today stats answers 404 with an empty body",
+  "status": 404,
+  "body": null
+}

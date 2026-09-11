@@ -1,0 +1,5 @@
+{
+  "request": "GET /health",
+  "status": 200,
+  "body": null
+}

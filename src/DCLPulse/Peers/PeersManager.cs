@@ -3,6 +3,7 @@ using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Peers.Simulation;
+using Pulse.Presence;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
 using System.Diagnostics;
@@ -54,6 +55,7 @@ public sealed class PeersManager : BackgroundService
     private readonly IPeerIndexAllocator peerIndexAllocator;
     private readonly PreAuthAdmission preAuthAdmission;
     private readonly IpLimiter ipLimiter;
+    private readonly ParcelChangeTracker parcelChanges;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -73,7 +75,8 @@ public sealed class PeersManager : BackgroundService
         EmoteCompleter emoteCompleter,
         IPeerIndexAllocator peerIndexAllocator,
         PreAuthAdmission preAuthAdmission,
-        IpLimiter ipLimiter)
+        IpLimiter ipLimiter,
+        ParcelChangeTracker parcelChanges)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -93,6 +96,7 @@ public sealed class PeersManager : BackgroundService
         this.peerIndexAllocator = peerIndexAllocator;
         this.preAuthAdmission = preAuthAdmission;
         this.ipLimiter = ipLimiter;
+        this.parcelChanges = parcelChanges;
 
         workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
@@ -121,7 +125,7 @@ public sealed class PeersManager : BackgroundService
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, realmGrids, identityBoard,
                 messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard,
-                peerIndexAllocator, peerSimulationLogger,
+                peerIndexAllocator, peerSimulationLogger, parcelChanges,
                 peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta,
                 peerOptions.DisconnectionCleanTimeoutMs, peerOptions.PendingAuthCleanTimeoutMs);
 

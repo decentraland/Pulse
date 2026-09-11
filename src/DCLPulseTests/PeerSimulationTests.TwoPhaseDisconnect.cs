@@ -172,7 +172,7 @@ public partial class PeerSimulationTests
             snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, peerIndexAllocator,
-            Substitute.For<ILogger<PeerSimulation>>());
+            Substitute.For<ILogger<PeerSimulation>>(), PresenceTestFactory.Disabled());
 
     /// <summary>
     ///     Places the observer and the subject a few units apart in one realm and one grid cell,
@@ -210,7 +210,8 @@ public partial class PeerSimulationTests
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
             })),
-            DisabledIpLimiter());
+            DisabledIpLimiter(),
+            PresenceTestFactory.Disabled());
 
     /// <summary>
     ///     Cap switched off — the limiter counts connections but refuses none, so it never

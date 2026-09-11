@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
+using Pulse.Presence;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
@@ -13,6 +14,9 @@ namespace Pulse.Metrics;
 internal static class PrometheusFormatter
 {
     private static readonly TransportId[] TRANSPORTS = Enum.GetValues<TransportId>();
+
+    private static readonly string[] SNAPSHOT_REASON_LABELS =
+        Enum.GetValues<PresenceSnapshotReason>().Select(static reason => reason.ToString().ToLowerInvariant()).ToArray();
 
     private static readonly ClientMessage.MessageOneofCase[] INCOMING_MESSAGE_TYPES =
     [
@@ -113,6 +117,11 @@ internal static class PrometheusFormatter
         WriteCounter(writer, "dcl_pulse_nats_superseded_total", "Feed messages replaced before delivery by a newer one for the same subject. Expected under load and harmless.", snap.Clusters.TotalNatsSuperseded);
         WriteCounter(writer, "dcl_pulse_nats_reconnects_total", "Times the broker connection was re-established after a loss", snap.Clusters.TotalNatsReconnects);
         WriteGauge(writer, "dcl_pulse_nats_connected", "1 while the broker connection is up, 0 otherwise (always 0 in stats-only mode)", snap.Clusters.NatsConnected);
+
+        WriteHistogramHeader(writer, "dcl_pulse_presence_batch_size", "Entries per engine.parcel_changes batch, snapshots included. The observation count is the number of batches published, so rate(dcl_pulse_presence_batch_size_count[5m]) is the feed's cadence.");
+        WriteHistogramSeries(writer, "dcl_pulse_presence_batch_size", snap.Presence.BatchSize, labels: null);
+        WriteLabeledCounter(writer, "dcl_pulse_presence_snapshots_total", "Full presence snapshots published, by what forced one. A steady trickle of reason=\"interval\" is the healthy shape; any rate of reason=\"eviction\" means the outbox is losing changes — raise Nats:ChannelCapacity.",
+            PulseMetrics.Presence.SNAPSHOT_REASON_TAG_KEY, SNAPSHOT_REASON_LABELS, snap.Presence.SnapshotsByReason);
 
         WriteEnumCounters(writer, "dcl_pulse_incoming_messages_total", "Total incoming messages by type",
             snap.IncomingMessages, INCOMING_MESSAGE_TYPES);

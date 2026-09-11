@@ -3,6 +3,7 @@ using Decentraland.Pulse;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
+using Pulse.Presence;
 using Pulse.Transport;
 using static Pulse.Messaging.MessagePipe;
 
@@ -47,6 +48,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly SnapshotBoard snapshotBoard;
     private readonly RealmSpatialGrids realmGrids;
     private readonly IdentityBoard identityBoard;
+    private readonly ParcelChangeTracker parcelChanges;
     private readonly MessagePipe messagePipe;
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
@@ -91,6 +93,7 @@ public sealed class PeerSimulation : IPeerSimulation
         ProfileBoard profileBoard,
         IPeerIndexAllocator peerIndexAllocator,
         ILogger<PeerSimulation> logger,
+        ParcelChangeTracker parcelChanges,
         bool selfMirrorEnabled = false,
         int selfMirrorTier = 0,
         bool resyncWithDelta = false,
@@ -107,6 +110,7 @@ public sealed class PeerSimulation : IPeerSimulation
         this.profileBoard = profileBoard;
         this.peerIndexAllocator = peerIndexAllocator;
         this.logger = logger;
+        this.parcelChanges = parcelChanges;
         this.selfMirrorEnabled = selfMirrorEnabled;
         this.selfMirrorTier = new PeerViewSimulationTier((byte)selfMirrorTier);
         this.resyncWithDelta = resyncWithDelta;
@@ -869,6 +873,15 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     <see cref="SnapshotBoard.ClearActive" /> and <see cref="SpatialGrid.Remove" /> calls
     ///     repeated here; both are idempotent, and keeping them leaves the whole teardown legible
     ///     in one place.
+    ///     <para />
+    ///     It is also the presence feed's single exit seam (iteration-2 C1.2). Every way a peer can
+    ///     leave — clean disconnect, auth/idle timeout, duplicate-session kick, ban eviction,
+    ///     <c>PeerDefense</c> kick — is a transport disconnect, and every transport disconnect ends
+    ///     here exactly once, so one call covers all of them. Here rather than at the
+    ///     <c>Disconnected</c> lifecycle event because of the ordering that gate buys: phase 1
+    ///     removed the peer from the grid a whole
+    ///     <see cref="PeerOptions.DisconnectionCleanTimeoutMs" /> ago, so no clustering pass can
+    ///     still be holding a read that would republish it as present after its exit went out.
     /// </summary>
     private void CleanupDisconnectedPeer(PeerIndex peerId, PeerState peerState)
     {
@@ -877,6 +890,9 @@ public sealed class PeerSimulation : IPeerSimulation
         // before the boards are wiped below.
         if (peerState.SceneListener != null)
             PulseMetrics.SceneListener.CONNECTED.Add(-1);
+
+        // Before the boards are wiped, so the exit entry can still be built from what this peer was.
+        parcelChanges.OnPeerRemoved(peerId);
 
         snapshotBoard.ClearActive(peerId);
         realmGrids.Remove(peerId);

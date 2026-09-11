@@ -151,6 +151,28 @@ public class TeleportHandlerTests
         Assert.That(gridPeers, Does.Contain(peer));
     }
 
+    /// <summary>
+    ///     C1.5 / iteration-2 realm canonicalization: realms are the partition key everything
+    ///     compares Ordinal on — <see cref="RealmSpatialGrids" />' grid keys, the presence feed's
+    ///     coalescing, the <c>/realms/{realm}</c> routes — so a mixed-case realm off the wire must
+    ///     land in the lowercase partition, and the snapshot must carry the lowercase name.
+    /// </summary>
+    [Test]
+    public void Handle_MixedCaseRealm_LandsInTheLowercasePartition()
+    {
+        var peer = new PeerIndex(1);
+        peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peer);
+
+        handler.Handle(peers, peer, CreateTeleportMessage(realm: "CozyFarm.dcl.eth",
+            parcelIndex: parcelEncoder.Encode(5, 6), position: new Vector3(2, 3, 4)));
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Realm, Is.EqualTo("cozyfarm.dcl.eth"));
+        Assert.That(realmGrids.PeersAt("cozyfarm.dcl.eth", snapshot.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.PeersAt("CozyFarm.dcl.eth", snapshot.GlobalPosition), Is.Null);
+    }
+
     private static ClientMessage CreateTeleportMessage(
         string realm,
         int parcelIndex = 0,

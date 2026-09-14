@@ -11,6 +11,14 @@ using PulseTestClient.Timing;
 using System.Numerics;
 
 var options = ClientOptions.FromArgs(args);
+
+// Debug-only "ghost" mode (--join-conn-str): join ONLY a LiveKit room with a conn string the
+// caller already minted — no account, no Pulse session, no ws-connector handshake. Models a
+// displaced device that outlived its own eviction, for the takeover scenario's `ghost` variant.
+// Bypasses everything else in this file; every other flag is ignored.
+if (!string.IsNullOrEmpty(options.JoinConnStr))
+    return await RunGhostJoinAsync(options.JoinConnStr);
+
 var behaviorSettings = BotBehaviorSettings.Load();
 int botsPerProcess = BotBehaviorSettings.LoadBotsPerProcess();
 
@@ -127,7 +135,7 @@ return 0;
 async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, int total, string accountName)
 {
     Console.WriteLine($"[{accountName}] Signing auth chain..");
-    LoginResult login = await authenticator.LoginAsync(accountName, lifeCycleCts.Token);
+    LoginResult login = await authenticator.LoginAsync(accountName, options.Device, lifeCycleCts.Token);
 
     Console.WriteLine($"[{accountName}] Fetching profile for {login.WalletAddress}..");
 
@@ -228,6 +236,35 @@ async Task<BotSession> CreateBotSessionAsync(int localIndex, int globalIndex, in
     return session;
 }
 
+// --- Ghost mode (--join-conn-str) ---
+
+// No account, no Pulse, no ws-connector: only the LiveKit half of a real bot, joined with a conn
+// string the caller supplies rather than one this process was ever assigned. `expectedRoom` is
+// passed empty — there is no assignment here to compare the server's answer against.
+async Task<int> RunGhostJoinAsync(string connStr)
+{
+    using var ghostCts = new CancellationTokenSource();
+
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        ghostCts.Cancel();
+    };
+
+    Console.WriteLine("[ghost] joining LiveKit only, with the supplied conn string; no Pulse/ws-connector session will be opened.");
+
+    var ghostJoiner = new LiveKitJoiner("ghost");
+    await ghostJoiner.JoinAsync(connStr, expectedRoom: "", ghostCts.Token);
+
+    Console.WriteLine("[ghost] holding the room open. Press Ctrl+C to leave and exit.");
+
+    try { await Task.Delay(Timeout.Infinite, ghostCts.Token); }
+    catch (OperationCanceledException) { /* Ctrl+C / kill — proceed to teardown. */ }
+
+    await ghostJoiner.DisposeAsync();
+    return 0;
+}
+
 // --- Scene-listener mode ---
 
 async Task<int> RunSceneListenerAsync()
@@ -252,7 +289,7 @@ async Task<int> RunSceneListenerAsync()
         throwOnNonZeroExit: false);
 
     Console.WriteLine($"[{listenerAccount}] Signing auth chain..");
-    LoginResult login = await authenticator.LoginAsync(listenerAccount, lifeCycleCts.Token);
+    LoginResult login = await authenticator.LoginAsync(listenerAccount, options.Device, lifeCycleCts.Token);
 
     var pipe = new MessagePipe();
     var listenerTransport = new BotTransport(sharedTransport, pipe);

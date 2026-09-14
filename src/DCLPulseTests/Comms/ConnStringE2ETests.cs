@@ -140,7 +140,7 @@ public class ConnStringE2ETests
         IAuthenticator authenticator = new MetaForgeAuthenticator();
 
         // Same call the bot lifecycle makes; it is also what tells us which wallet the account maps to.
-        LoginResult login = await authenticator.LoginAsync(account, ct);
+        LoginResult login = await authenticator.LoginAsync(account, device: null, ct);
         string wallet = login.WalletAddress.ToLowerInvariant();
 
         await using var connection = new WebSocketCommsConnection();

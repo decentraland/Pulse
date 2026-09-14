@@ -19,14 +19,17 @@ public sealed class ArchipelagoSignFlow
     private readonly ICommsConnection connection;
     private readonly IAuthenticator authenticator;
     private readonly string account;
+    private readonly string? device;
     private readonly TimeSpan stageTimeout;
 
     /// <param name="account">MetaForge account name to sign with — not the wallet address.</param>
-    public ArchipelagoSignFlow(ICommsConnection connection, IAuthenticator authenticator, string account, TimeSpan? stageTimeout = null)
+    /// <param name="device">See <see cref="IAuthenticator.LoginAsync" />.</param>
+    public ArchipelagoSignFlow(ICommsConnection connection, IAuthenticator authenticator, string account, string? device = null, TimeSpan? stageTimeout = null)
     {
         this.connection = connection;
         this.authenticator = authenticator;
         this.account = account;
+        this.device = device;
         this.stageTimeout = stageTimeout ?? DEFAULT_STAGE_TIMEOUT;
     }
 
@@ -70,7 +73,7 @@ public sealed class ArchipelagoSignFlow
             Console.WriteLine($"[ws-connector] {normalized} already has a session — completing this handshake kicks it with KR_NEW_SESSION.");
 
         // Verbatim: the server validates the signature against the exact string it generated.
-        string authChainJson = await authenticator.SignPayloadAsync(account, challenge.ChallengeToSign, ct);
+        string authChainJson = await authenticator.SignPayloadAsync(account, device, challenge.ChallengeToSign, ct);
 
         ServerPacket welcomeReply = await ExchangeAsync(
             new ClientPacket {SignedChallenge = new SignedChallengeMessage {AuthChainJson = authChainJson}},

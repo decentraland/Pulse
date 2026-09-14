@@ -5,10 +5,11 @@ namespace PulseTestClient.Auth;
 
 public class MetaForgeAuthenticator : IAuthenticator
 {
-    public async Task<LoginResult> LoginAsync(string account, CancellationToken ct)
+    public async Task<LoginResult> LoginAsync(string account, string? device, CancellationToken ct)
     {
+        string deviceArg = DeviceArg(device);
         var output = await MetaForge.RunCommandAsync(
-            $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check --json", ct);
+            $"account chain {account} --method connect --path / --metadata {{}} --skip-update-check --json{deviceArg}", ct);
 
         AuthLink[] chain = JsonSerializer.Deserialize(output, AuthenticatorJsonContext.Default.AuthLinkArray)!;
 
@@ -29,13 +30,14 @@ public class MetaForgeAuthenticator : IAuthenticator
         return new LoginResult(result.ToJsonString(), walletAddress);
     }
 
-    public async Task<string> SignPayloadAsync(string account, string payload, CancellationToken ct)
+    public async Task<string> SignPayloadAsync(string account, string? device, string payload, CancellationToken ct)
     {
         // `account sign` signs the payload as-is; `account chain` would fold it into the signed-fetch
         // "method:path:timestamp:metadata" form, which a ws-connector challenge must not be. The payload
         // goes last because RunCommandAsync passes one argument string through to the process.
+        string deviceArg = DeviceArg(device);
         string output = await MetaForge.RunCommandAsync(
-            $"account sign {account} --skip-update-check --json --payload {payload}", ct);
+            $"account sign {account} --skip-update-check --json{deviceArg} --payload {payload}", ct);
 
         // RunCommandAsync raises a non-zero exit, so this only catches the residual case of a clean exit
         // that printed nothing — still worth naming, since the alternative is a JSON parse error.
@@ -55,4 +57,9 @@ public class MetaForgeAuthenticator : IAuthenticator
         // strips the newlines, leaving the indentation in the string the server has to JSON.parse.
         return JsonSerializer.Serialize(chain, AuthenticatorJsonContext.Default.AuthLinkArray);
     }
+
+    // Leading space included so it can be spliced straight into a command string; empty when no device
+    // was requested, so an existing call with device: null builds the exact same command as before.
+    private static string DeviceArg(string? device) =>
+        string.IsNullOrEmpty(device) ? "" : $" --device {device}";
 }

@@ -729,3 +729,221 @@ it is what lets these scenarios run on every PR.
 Signing is the one place where an unredacted value is *supposed* to appear: the auth chain is
 public by construction — a signature over `dcl-<hex>` is what you send over the wire. Do not
 confuse it with a secret and redact it; it is the thing being tested.
+
+## 8. Takeover scenario
+
+One wallet, two identities, both live: client A holds a session (Pulse + ws-connector +
+LiveKit) and client B connects on the *same wallet* with a *different* signed-in identity.
+Everything above proves the conn-string path for one identity at a time; this scenario proves
+what happens when a second identity shows up for a wallet that already has one — the case where
+dev has been observed to half-work: Pulse evicts A but A's LiveKit session stays alive, and B
+never gets a room.
+
+`scripts/e2e/livekit-takeover.sh` (+ `scripts/e2e/nats-watch.js`) runs it against the real Pulse,
+the real ws-connector (both from `docker-compose.e2e.yml`, same as above) and the real
+comms-gatekeeper (built and run from source on the host, unlike sections 1-7 where it is assumed
+already running) plus a disposable local `livekit-server:latest --dev` container — no cloud
+LiveKit project needed, since minting is offline JWT signing (§4) and `--dev` answers the
+RoomService calls the scenario itself makes to inspect participants.
+
+### What "identity" means here
+
+Two identities on one wallet is two different **ephemeral keys** delegated by the same wallet
+signature, each with its own auth chain — not two wallets, and not two processes racing the same
+key. `DCLPulseTestClient` gets a second identity through `--device=<label>`, threaded to every
+MetaForge call (`Auth/MetaForgeAuthenticator.cs`): `--device=a` and `--device=b` each resolve,
+mint and persist their own ephemeral key under the one account (`metaforge`'s
+`AccountRecord.DeviceIdentities`, keyed by device label — see the MetaForge repo's own history
+for `AccountIdentity`/`AccountStore`). Two processes running `--account=wtval --device=a` reuse
+the same ephemeral; `--device=b` is a different one. Neither call needs a wallet signature after
+the first mint — MetaForge's persisted-identity locking (§3) applies per device, not just per
+account.
+
+### The six legs
+
+In order, because each depends on the previous one having actually happened — the first leg that
+has no evidence is where the chain actually breaks, regardless of which legs after it also fail:
+
+| # | What must be true | Where it shows up |
+| --- | --- | --- |
+| L1 | Pulse disconnects A with reason `DUPLICATE_SESSION`, and A does not reconnect | `[peer N] disconnected by server: DUPLICATE_SESSION (4).` in A's log (`ENetTransport.HandleEvent`); no second `Connecting to` line follows — the test client never retries a dropped Pulse session, matching `PulseMultiplayerBus.Disconnects.cs` in unity-explorer (reconnection is refused for every reason except the handful it lists, and `DUPLICATE_SESSION` is not one of them) |
+| L2 | Pulse publishes `peer.{W}.cluster_change` naming `session=S_B`, `displaced_session=S_A`, `displaced_cluster_id=`A's cluster | decoded by `nats-watch.js` off the wire (`PeerClusterChange` fields 3/4/5 — see `clustering-on-aoi.md`) |
+| L3 | gatekeeper evicts A's participant from `island-{displaced_cluster_id}`, mints for W, publishes `engine.peer.{W}.island_changed.{S_B}` | `dcl_gatekeeper_cluster_takeover_evicted_total` or `_absent_total` +1 with `_failed_total` flat, on `/metrics`; the session-addressed subject on the wire (`src/logic/cluster-subscriber/component.ts`, `evictDisplacedSession`) |
+| L4 | ws-connector delivers to B's socket only | B's log: `[ws-connector] Island …` then `[livekit] … joined` |
+| L5 | A's OLD room holds no participant for W afterwards; A IS in the parking room `island-parked-<16 hex of S_A>` afterwards (exactly one participant, identity W); B's room holds exactly one participant for W, with a `sid` different from A's original one | A's log: `[livekit] [account] LEFT room '…': disconnected, reason=…`; RoomService `ListParticipants` snapshots of A's old room, the parking room and B's room, taken before B connects and again after the wait |
+| L6 | A's ws-connector socket receives exactly ONE further `Island` line after L1, and it names the parking room | A's log: `[ws-connector] Island island-parked-… …`, then `[livekit] [account] SWITCHED room '…' -> 'island-parked-…'` (`Comms/LiveKitJoiner.cs`); the gatekeeper's `dcl_gatekeeper_cluster_takeover_parked_total` +1 |
+
+L5/L6 assume the gatekeeper's takeover-**parking** behaviour (see "Variants" below and the plan's
+F4): the displaced session is hard-evicted *and* handed a private `island-parked-<S_A>` room to
+follow, rather than being left with nothing to re-join. Against a pre-parking gatekeeper — plain
+eviction only — both legs FAIL by design: there is no further `Island` line for A at all (L6) and
+no parked-room snapshot to find A in (L5). That is the intended signal that the assertions bite,
+not a harness bug — see "Reading a failure" below.
+
+**L5 does not assume B lands in A's own room.** Pulse's cluster tracker only groups peers it is
+currently tracking, and A's eviction can be observed by the tracker before its next pass runs for
+B — in every local run so far B formed a new, separate cluster instead of joining A's. The
+script handles both shapes for A's *old* room vs. B's room: if B's room differs from A's, A's old
+room must end up with zero participants for the wallet (not just "someone else moved in") and B's
+own room must hold exactly one; if B lands in A's old room, that one room must show exactly one
+participant (B's) with a `sid` different from A's original one. Either way, the *parking* room is a
+separate, third room, always checked on its own — A is never expected back in its old room. Read
+`island_id == "island-" + cluster_id` per wallet-visit, not "same room" per wallet.
+
+### Running it
+
+```bash
+scripts/e2e/livekit-takeover.sh [--log-dir DIR] [--wait-seconds N] [--account NAME]
+```
+
+Defaults: a fresh `scripts/e2e/logs/<UTC timestamp>/` directory, a 30 s post-connect window for
+B (generous — every local run so far completed L1-L6 within about two seconds of B connecting;
+`Clusters:DwellPasses`/`PassIntervalMs` in appsettings.json bound how long a cluster reassignment
+can take to debounce), and account `wtval` (bot-count is always 1 per client process, so
+`Program.cs`'s account-naming rule uses this name verbatim — see §"Flags" above — and A and B
+share it on purpose: same account, same wallet, different device).
+
+It brings up `docker-compose.e2e.yml` on NATS port 4322 (not the default 4222 — a comms-gatekeeper
+checkout's own compose, Postgres + NATS on 4222, is left running untouched if it already is),
+starts a disposable `livekit-server:latest --dev` container, builds and runs comms-gatekeeper
+from `$E2E_COMMS_GATEKEEPER_PATH` (default `../comms-gatekeeper`, rebuilt only if `dist/` is
+missing or older than `src/`), runs client A to a confirmed LiveKit join, snapshots A's room,
+runs client B, waits, scrapes all three services' `/metrics`, snapshots the room(s) again, prints
+a PASS/FAIL table with one line of evidence per leg, and tears down everything it started —
+compose stack, LiveKit container, gatekeeper process, both bots, the NATS watcher, and (Windows
+only) orphaned `DCLPulseTestClient` `dotnet` processes carrying this run's unique marker. Exits 1 if any leg fails; every leg is still evaluated first.
+
+`MetaForge` (built with `--device` support) and `src/DCLPulseTestClient`
+(`dotnet build src/DCLPulseTestClient -p:GenerateProto=false`) must already be built — this
+script does not build either, matching §3's treatment of them as prerequisites.
+
+### Variants: forcing the ordering that fails on dev
+
+The default run (`--variant order1`) is the common ordering: B's ws-connector socket registers
+before Pulse publishes B's assignment, so the direct `island_changed` reaches B. Dev has been seen
+to fail in the other ordering, so the script can force it and can stand in the one condition that
+turns it into a permanent loss.
+
+**The attribute key is `dclsession`, no separators.** LiveKit camel-cases a token attribute key
+that contains `.`/`_`/`-` (`dcl.session`, `dcl_session` and `dcl-session` all come back as
+`dclSession` on `listParticipants`), so a key with no separators is the only one that round-trips
+intact. Both the ghost token minter (`mint-ghost-token.js`) and the gatekeeper's own
+`ISLAND_SESSION_ATTRIBUTE` use `dclsession` for exactly this reason — a lookup for the wrong key
+is indistinguishable from "no attribute at all", which is the fail-closed "cannot tell" case below.
+
+**Measured fact behind `rejoin` and the parking legs (L5/L6):** on livekit-server v1.13.6
+(`--dev`), `RemoveParticipant` with a `revokeTokenTs` stamp removes the participant, but a fresh
+join with the SAME token is accepted afterwards regardless of the stamp's value. Eviction alone
+therefore cannot stop a displaced device from coming back on its own backoff reconnect — which is
+why the gatekeeper additionally **parks** the displaced session in a private
+`island-parked-<16 hex of S_A>` room it publishes to that session specifically: every client honours
+its latest island assignment (the Unity island room included), so a client that has been told to
+go somewhere else has nothing left to rejoin its old room with, independent of whether the server
+actually enforces the revocation.
+
+| Variant | What it does | What it proves |
+| --- | --- | --- |
+| `order1` | as above | the takeover works when the direct publish finds B's socket |
+| `order2` | B runs with `--comms-delay-ms=4000`, so Pulse publishes the takeover before B's socket exists; the direct `island_changed` is dropped by ws-connector (no socket for that session yet) | B gets its island **only** through gatekeeper's connect re-announce (`dcl_gatekeeper_cluster_reannounce_attempted_total` +1; a re-announced `island_changed` addressed to B's session is timestamped after B's `Welcome received`; the earlier direct publish can still appear on NATS) |
+| `ghost` | `order2`, plus: the moment the watcher sees B's takeover `cluster_change`, the harness mints a dev-key token for wallet W and joins B's target room with a third test-client instance (`--join-conn-str`) — a displaced device that outlived its eviction. `--ghost-attribute foreign` (default: a valid-looking `dclsession` that is not B's, what a device evicted by the fixed gatekeeper carries) or `none` (no attribute at all: a pre-fix token, or a LiveKit without attribute support) | whether the connect re-announce can tell the displaced participant from B. `foreign`: the fixed gatekeeper evicts the stale participant (`dcl_gatekeeper_cluster_reannounce_evicted_stale_total` +1) and B is re-announced — **L4 passes**. `none`: the fixed gatekeeper still cannot tell — by design, so it does not wrongly evict a live device — and suppresses (`dcl_gatekeeper_cluster_reannounce_suppressed_total` +1); **L4 fails on purpose** (the script prints `ghost(none): suppressed as designed (cannot tell)` so this is not misread as a regression) |
+| `rejoin` | `order1`, plus A's `LiveKitJoiner` re-joins with its ORIGINAL connection string 2 s after being removed (`--rejoin-after-ms`), as the Unity island room does after its backoff | with parking, the parking assignment normally arrives well inside that 2 s window and cancels the probe outright (A's log: `re-join probe cancelled: newer assignment 'island-parked-…' received`); if the probe fires anyway, L5's "A's old room is empty" check still catches a token that was wrongly honoured (the measured fact above) |
+
+Confirmed 2026-09-11 against the gatekeeper commit deployed to dev (`105b845`, run from a
+separate worktree via `E2E_COMMS_GATEKEEPER_PATH`, predating the parking fix): `order2` passes
+twice with B delivered only by the re-announce; `ghost --ghost-attribute none` fails at L4 with
+`reannounce_suppressed_total` 0→1 while L1-L3 pass — Pulse and the takeover eviction did their
+part, the wallet-keyed "already in the room" check then silenced the only path left to B. Against
+that same pre-parking commit, L5 and L6 fail unconditionally under every variant — there is no
+`island-parked-…` room to find A in and no further `Island` line to switch to — which is the
+intended signal that the new assertions bite, not a harness bug (see "Reading a failure"). With the
+session-aware re-announce and parking (gatekeeper: participants carrying another valid
+`dclsession` are evicted with the takeover's revocation stamp before B is re-announced;
+participants with no attribute are "cannot tell" and still suppress; the displaced session is
+additionally parked before eviction) `ghost` with `foreign` must pass with
+`dcl_gatekeeper_cluster_reannounce_evicted_stale_total` +1 and L5/L6 passing on A's side, and
+`ghost` with `none` must show `reannounce_suppressed_total` +1 and no eviction (L4 fails by design,
+independent of L5/L6).
+
+Evidence for a `ghost` run lives next to the other logs: `bot-ghost.log`, `mint-ghost-token.*`,
+`participants-ghost-room-before-b.json`, `participants-after-parked-room.json`, and the usual
+`gk-metric-deltas.txt`. Note that L5's "B's room holds exactly one participant" reading is not
+meaningful when L4 already failed (B never joined), so read a `ghost` failure from L4 and the
+`suppressed` delta, not from L5.
+
+### Reading a failure
+
+Read the table top to bottom; the first `FAIL` names the hop, and every leg after it is
+suspect-but-uninformative rather than independently broken. A few shapes worth knowing in
+advance:
+
+- **L1 fails, L2-L6 never had a chance.** Pulse itself did not treat the second identity as a
+  takeover of the first — check `Clusters:Enabled`, and that both `--device` identities really
+  did resolve to different ephemeral keys (a MetaForge that mints fresh per call, or one where
+  `--device` silently fell through to the default slot, gives A and B the same session and Pulse
+  has nothing to disambiguate).
+- **L1 passes, L2 fails.** Pulse disconnected A, but never told gatekeeper why — look for a gap
+  between "evict on duplicate `player_id`" (generic, already existed) and "publish
+  `displaced_session`/`displaced_cluster_id`" (specific to this feature); the two do not have to
+  ship together.
+- **L2 passes, L3 fails.** gatekeeper received the displacement but could not act on it — check
+  `gatekeeper.log` for `Cannot evict displaced session …` (LiveKit RoomService error) and the
+  `_failed_total` metric; a stale gatekeeper checkout without the cluster-subscriber's takeover
+  code reads the same as a wire-format mismatch, so confirm the subject actually decodes (nats.log
+  shows `displaced_session=(none)` if the code that would have populated it is not there at all).
+- **L3 passes, L4 fails.** The mint and publish happened but never reached B — this is the
+  session-addressed-subject class of bug in §6's "Half a session"/"`engine.` prefix" causes,
+  applied to `.island_changed.{session}` rather than the legacy four-token subject. In the `ghost`
+  variant with `--ghost-attribute none` this is EXPECTED (see the variants table above) — check the
+  script's own `ghost(none): suppressed as designed` note before treating it as a bug.
+- **L4 passes, L5/L6 both fail with no parked-room evidence at all** (no further `Island` line for
+  A, no `island-parked-…` snapshot to find A in). This is the pre-parking shape: the gatekeeper
+  evicted A (L3 already showed that) but never sent it anywhere to go — check for
+  `dcl_gatekeeper_cluster_takeover_parked_total` staying flat across the run, which means this
+  gatekeeper checkout predates Task 18c's parking behaviour (see the "Measured fact" note above:
+  eviction alone does not stop a re-join on this LiveKit build, which is exactly why parking
+  exists). Confirmed against `105b845` (the commit on dev as of 2026-09-11): both legs fail this
+  way under every variant.
+- **L6 passes but L5's parked-room count is wrong (0 or >1).** The parking message itself arrived
+  and A switched rooms (L6 is about the *message*), but something in the room membership disagrees
+  with expectations — a race between the parking mint and a delayed eviction, or (in the `rejoin`
+  variant) a wrongly-honoured self-rejoin landing in the OLD room rather than the parked one; check
+  `A_SELF_REJOIN_LINE` and `A_REJOIN_PROBE_CANCELLED_LINE` in the evidence for that variant.
+- **A's own LiveKit client (or the LiveKit dev server) is the remaining suspect for L5 when
+  everything else lines up.** Check A's `reason=` on its `LEFT room` line against LiveKit's
+  `DisconnectReason` enum (`ParticipantRemoved` is the one an admin-initiated `removeParticipant`
+  should produce; `UnknownReason` has also been observed against the local dev server and is not
+  itself a failure signal — the room-membership snapshot is the authority, not the reason string).
+
+Masking follows §7: wallets and sessions are truncated to 8 characters and conn strings/tokens
+are redacted in the table and in this doc; the script's own log files under `--log-dir` keep full
+values, since they never leave the machine.
+
+### Takeover harness validation
+
+The additional `V1` result verifies that `order2` and `ghost` actually exercised the delayed
+connection: the takeover precedes B's connect, with a connect re-announce metric and a B-session
+delivery afterward. A direct publish before B connects is allowed; it can be dropped by the socket
+router. L4 also checks that B's assigned and joined room matches the takeover's `cluster_id`.
+
+A ghost run requires a successful join and a RoomService snapshot containing the wallet, timestamped
+before B connects (`ghost-joined.marker`). Missing or late injection fails V1. A foreign-session ghost
+requires a stale-eviction metric; an unidentified ghost requires suppression without stale eviction.
+The latter remains an expected nonzero run because B does not receive a room (L4 fails).
+
+The rejoin variant requires a cancellation line or an actual probe outcome. Final room membership
+remains authoritative if an original token was briefly accepted before the parking assignment.
+The harness sets compose's NATS URL to its local broker and tags every bot with an ignored per-run
+argument, so inherited broker settings and unrelated Windows bots cannot affect cleanup.
+
+Run the evidence-check regression cases without services:
+
+```bash
+bash scripts/e2e/takeover-assertions.test.sh
+```
+
+Validated locally on 2026-09-14 with LiveKit v1.13.7 and the sibling gatekeeper checkout's
+session-aware re-announce and parking changes: `order1`, `order2`, `ghost --ghost-attribute foreign`,
+and `rejoin` passed; `ghost --ghost-attribute none` showed the expected suppression, L4/L5 failures,
+and nonzero exit. One initial `order2` attempt stopped during A's initial room setup; the retry
+passed. The non-E2E .NET suite passed 822 tests and the offline harness suite passed 12 cases.
+The reconnect regression test was also verified to fail with the post-lock assignment guard removed.

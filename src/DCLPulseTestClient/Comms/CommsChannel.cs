@@ -52,12 +52,19 @@ public sealed class CommsChannel
 
         try
         {
-            var signFlow = new ArchipelagoSignFlow(connection, authenticator, account);
+            // Deliberately after the Pulse handshake (this channel is only ever started once that
+            // completed) and before anything ws-connector-related: the Pulse session, its snapshots and
+            // its movement are unaffected, only this channel's own start is deferred. See
+            // ClientOptions.CommsDelayMs — this is what forces the takeover race's "Order 2".
+            if (options.CommsDelayMs > 0)
+                await Task.Delay(options.CommsDelayMs, ct);
+
+            var signFlow = new ArchipelagoSignFlow(connection, authenticator, account, options.Device);
             await signFlow.ConnectAsync(options.CommsUrl, walletAddress, ct);
 
             var listener = new ConnStringListener(connection);
 
-            joiner = options.JoinLiveKit ? new LiveKitJoiner(account) : null;
+            joiner = options.JoinLiveKit ? new LiveKitJoiner(account, options.RejoinAfterMs) : null;
 
             listener.IslandChanged += change =>
             {

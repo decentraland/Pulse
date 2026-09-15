@@ -335,6 +335,36 @@ public sealed class IpLimiter : IDisposable
     }
 
     /// <summary>
+    ///     Whether the source address bound to <paramref name="peerIndex" /> is on the exemption
+    ///     list — the server's one statement that a host is trusted infrastructure, which is why it
+    ///     is public rather than folded into the admission checks. The address comes from the peer's
+    ///     reservation, so both sides of the comparison are already canonical: a dotted entry
+    ///     matches a peer the transport reported as v4-mapped IPv6.
+    ///     <para />
+    ///     <c>false</c> for a peer holding no reservation, which covers both a peer that has not
+    ///     been bound yet and one whose address the transport could not render — <c>Normalize</c>
+    ///     leaves that empty and <see cref="ParseWhitelist" /> drops empty entries, so an
+    ///     unattributable peer can never match. The live snapshot is read per call rather than
+    ///     captured at connect, so a whitelist change pushed through the remote feature-flag
+    ///     document reaches an already-connected peer.
+    ///     <para />
+    ///     Called from the owning worker thread. Only the reservation lookup needs
+    ///     <see cref="syncRoot" />; the exemption set is immutable once published.
+    /// </summary>
+    public bool IsWhitelisted(PeerIndex peerIndex)
+    {
+        Reservation held;
+
+        lock (syncRoot)
+        {
+            if (!reservationByPeer.TryGetValue(peerIndex, out held))
+                return false;
+        }
+
+        return Volatile.Read(ref whitelist).Contains(held.Ip);
+    }
+
+    /// <summary>
     ///     Canonical dictionary key for a source address. ENet's <c>Peer.IP</c> is dotted IPv4,
     ///     v4-mapped IPv6 (<c>::ffff:a.b.c.d</c>) or native IPv6; WebTransport reports whichever
     ///     family the native host parsed. Without one canonical form a host holds every class's cap

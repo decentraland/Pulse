@@ -310,8 +310,9 @@ that fall outside the encoder's grid produce garbage global positions downstream
   carry the same `repeated SceneListenerAoi`): each realm non-empty and within `MaxRealmLength`,
   each realm named at most once, at least one rect per realm, every rect non-inverted and fully
   inside the encodable parcel bounds, and the whole announcement within the
-  `SceneListener:MaxParcels` budget below. Bounds and budget are checked **before** any rect is
-  expanded, so a rejected announcement spends no expansion work.
+  `SceneListener:MaxParcels` budget below, unless the peer's source IP is whitelisted. Bounds and
+  budget are checked **before** any rect is expanded, so a rejected announcement spends no
+  expansion work.
 
 On any violation the peer is disconnected with a message-type-specific `DisconnectReason`.
 
@@ -361,6 +362,50 @@ Consequences worth knowing when sizing it:
   expanded set dedups, but the budget does not.
 - Raise `MaxParcels` if a legitimate cohosting fleet needs more realms than it admits.
 
+#### Whitelisted source IPs are exempt from the budget entirely
+
+A peer whose source IP is in `Transport:Hardening:IpLimiter:Whitelist` is **not priced against
+`MaxParcels` at all** — not against a raised ceiling, and not clamped: the budget is simply not
+applied, on the handshake and on `SceneListenerUpdate` alike. The exemption covers both dimensions,
+so the `REALM_BUDGET_COST` charge is waived with the area.
+
+`FieldValidator` resolves it through `IpLimiter.IsWhitelisted(PeerIndex)`, reading the address from
+the reservation the connect path bound, so both sides are already canonical — a dotted entry covers
+a peer reported as v4-mapped IPv6. It reads the live list on every announcement rather than a
+connect-time capture, so a whitelist change pushed through the remote document reaches an
+already-connected listener's next update. A peer the transport could not attribute to an address is
+never exempt.
+
+Everything else still applies to a whitelisted peer: realm non-empty and within `MaxRealmLength`,
+each realm named once, at least one rect per realm, no inverted rect, every corner in bounds.
+
+**What this gives up.** The budget is also the guard on the expansion work itself — rects are
+priced before any of them is expanded. Waived, the only remaining ceiling is what fits in one
+accepted packet: `CheckOversized` drops anything above `Transport:BufferSize` (4096 bytes; twice
+that is merely where it escalates from the corruption budget to a hard disconnect). That is not
+much of a ceiling, because a rect is cheap and the area it names is not. `ParcelRect` uses `sint32`
+with single-byte tags and proto3 omits zero-valued fields, so a rect covering the whole encodable
+area from the origin costs **8 bytes** and names 26,726 parcels.
+
+Two distinct shapes follow, both reachable from one 4 KB announcement:
+
+- **Retained** — ~290 realms each holding one full-area rect: ~7.8 M set entries, on the order of
+  100 MB held for the lifetime of the connection.
+- **Transient** — one realm holding ~500 overlapping full-area rects: Σ *nominal* area ≈ 13.6 M,
+  and expansion is O(Σ nominal area), so seconds of CPU **on the owning worker thread**, which
+  stalls that shard.
+
+The transient case would be far worse still without the presize clamp in `ValidateSceneListenerAoi`
+— `new HashSet<int>` is sized from the nominal sum, so that announcement would ask for ~218 MB to
+hold a union of 26,726. Clamping the presize to the world's parcel count (which the union provably
+cannot exceed) caps it at ~1.6 MB. The clamp is what keeps "unbounded" merely slow rather than
+fatal; it is not a stylistic tidy-up.
+
+The residual exposure is accepted: the whitelist is an explicit statement of trust, so the risk is
+a misconfigured trusted fleet, not a hostile one. The signal is the existing accept-path logs,
+which carry parcel and realm counts: `Scene listener accepted … (N parcels across M realms)` and
+the reassignment line on update. There is no separate counter for exempted announcements.
+
 ### DisconnectReason values
 
 | Value | Meaning |
@@ -369,7 +414,7 @@ Consequences worth knowing when sizing it:
 | `INVALID_EMOTE_FIELD = 12` | EmoteStart had excessive DurationMs or invalid parcel index. |
 | `INVALID_TELEPORT_FIELD = 13` | TeleportRequest had an empty or oversized Realm, or invalid parcel index. |
 | `INVALID_HANDSHAKE_FIELD = 15` | `HandshakeRequest.PlayerInitialState` was malformed, or a `SceneListenerHandshake` carried an invalid AoI (see the budget above). Refused before the peer reaches `AUTHENTICATED`. |
-| `INVALID_SCENE_LISTENER_FIELD = 19` | `SceneListenerUpdate` carried an invalid AoI — empty realm list, a realm with no rects, a repeated realm, an inverted or out-of-range rect, or an announcement over `SceneListener:MaxParcels`. The AoI in force when the bad update arrived is left untouched; it is the connection that goes, not the previous announcement. |
+| `INVALID_SCENE_LISTENER_FIELD = 19` | `SceneListenerUpdate` carried an invalid AoI — empty realm list, a realm with no rects, a repeated realm, an inverted or out-of-range rect, or an announcement over `SceneListener:MaxParcels` (which a whitelisted source IP is exempt from). The AoI in force when the bad update arrived is left untouched; it is the connection that goes, not the previous announcement. |
 
 `INVALID_SCENE_LISTENER_FIELD` is deliberately distinct from `INVALID_HANDSHAKE_FIELD = 15` even
 though the two run the same validation: the reason code tells an operator which message carried the
@@ -849,7 +894,12 @@ dev loop.
 | `Enabled` | `false` | Master switch. When `false`, connections are still counted but never refused. |
 | `MaxConcurrency` | 10 | Max concurrent player-class connections from one source IP, across both transports. `0` disables the cap. |
 | `SceneListenerMaxConcurrency` | 2 | Max concurrent scene-listener connections from one source IP — one global value applied to every IP, not a per-fleet allowance ([sizing](#sizing-scenelistenermaxconcurrency)). `0` disables the cap — it does **not** mean "no listeners". |
-| `Whitelist` | `""` | Comma-separated **exact** IPs exempt from **both** caps. Whitelisted IPs are still counted. |
+| `Whitelist` | `""` | Comma-separated **exact** IPs exempt from **both** caps — and, beyond this group, from the `SceneListener:MaxParcels` announcement budget ([below](#scenelistenermaxparcels--one-budget-over-realms-and-parcels)). Whitelisted IPs are still counted. |
+
+An entry here is the server's one statement that a host is trusted infrastructure, so it is read
+outside this group too: `FieldValidator` honours it when pricing a scene-listener announcement.
+Adding an IP to absorb a connection-cap incident therefore also grants it an unbounded listener
+AoI — deliberate, but worth knowing before whitelisting a shared or transient address.
 
 The cap keys stay flat, one per class, rather than nesting under a `MaxConcurrency` object: the
 flat keys are the ones the live remote payload already sets, and since the key allowlist was
@@ -893,7 +943,9 @@ produce.
 
 So a listener fleet that needs many connections should have its **egress IPs whitelisted**;
 `Whitelist` exempts an IP from both caps, on the listener promotion path as much as at connect, and
-it names the hosts that are actually entitled to the capacity. `SceneListenerMaxConcurrency` should
+it names the hosts that are actually entitled to the capacity. Whitelisting also lifts the
+`MaxParcels` budget for that IP, so a listed fleet is freed from the 4.1%-per-connection arithmetic
+above in both dimensions at once — fewer connections *and* more area per connection. `SceneListenerMaxConcurrency` should
 stay small — the shipped default of 2 is a starting point for one or two scoped scenes from an
 unlisted host. A **per-wallet listener allowlist**, so listener capacity could be granted to an
 identity instead of to every source IP alike, is the prerequisite for ever raising this global cap
@@ -1023,8 +1075,8 @@ disconnects**, which on a steady fleet may be minutes or never. So:
    reason as above; a fleet started by one orchestrator retries in lockstep otherwise.
 2. **Do not re-announce a smaller parcel set** hoping to fit. The cap counts connections, not
    parcels — a narrower announcement is refused identically. Fixing it means whitelisting the egress
-   IP, spreading the fleet across more egress addresses, or — knowing it widens the cap for every IP
-   — raising `SceneListenerMaxConcurrency`.
+   IP (which also lifts the `MaxParcels` budget for it), spreading the fleet across more egress
+   addresses, or — knowing it widens the cap for every IP — raising `SceneListenerMaxConcurrency`.
 3. **Surface it as a capacity/config problem, not an auth failure**, and log the reason code: this
    is the one refusal whose only other symptom is silently missing coverage.
 

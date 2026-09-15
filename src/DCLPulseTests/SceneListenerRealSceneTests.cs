@@ -33,6 +33,7 @@ public class SceneListenerRealSceneTests
             Options.Create(new SceneListenerOptions()),
             encoder,
             SceneListenerTestFactory.CellMapper(),
+            SceneListenerTestFactory.Limiter(),
             Substitute.For<ITransport>());
 
         state = new PeerState(PeerConnectionState.PENDING_AUTH);

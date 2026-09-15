@@ -6,6 +6,7 @@ using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 
 namespace DCLPulseTests.Hardening;
 
@@ -29,13 +30,14 @@ public class FieldValidatorTests
     ///     costs <c>FieldValidator.REALM_BUDGET_COST</c> (4) on top of its rect areas, so 16 admits
     ///     one realm of up to 12 parcels, or three realms of one parcel each.
     /// </summary>
-    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 16) =>
+    private FieldValidator Create(int maxRealmLength = 128, uint maxDurationMs = 60_000, int maxParcels = 16,
+        IpLimiter? ipLimiter = null) =>
         new (Options.Create(new FieldValidatorOptions
         {
             MaxRealmLength = maxRealmLength,
             MaxEmoteDurationMs = maxDurationMs,
         }), Options.Create(new SceneListenerOptions { MaxParcels = maxParcels }), parcelEncoder,
-            SceneListenerTestFactory.CellMapper(), transport);
+            SceneListenerTestFactory.CellMapper(), ipLimiter ?? SceneListenerTestFactory.Limiter(), transport);
 
     private static PeerState NewState() => new (PeerConnectionState.AUTHENTICATED);
 
@@ -487,6 +489,211 @@ public class FieldValidatorTests
         FieldValidator v = Create();
         // Default fixture MaxRealmLength = 128; a 300-char realm exceeds it.
         Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest(new string('a', 300), (10, 10, 10, 10)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    // ── SceneListener budget exemption for whitelisted IPs ───────────
+
+    private const string TRUSTED_IP = "203.0.113.7";
+
+    /// <summary>
+    ///     A validator whose limiter exempts <paramref name="whitelist" />, with <c>PEER</c> bound
+    ///     to <paramref name="boundIp" /> the way the connect path binds it. The fixture budget is
+    ///     16, so every announcement below is far over it.
+    /// </summary>
+    private FieldValidator CreateWithPeerAt(string boundIp, string whitelist)
+    {
+        IpLimiter limiter = SceneListenerTestFactory.Limiter(whitelist);
+        limiter.TryAcquire(boundIp, ConnectionClass.PLAYER);
+        limiter.Bind(PEER, boundIp, ConnectionClass.PLAYER);
+
+        return Create(ipLimiter: limiter);
+    }
+
+    /// <summary>An 8×8 rect — 64 parcels plus a realm charge, four times the fixture budget.</summary>
+    private static SceneListenerHandshakeRequest OverBudgetRequest() =>
+        ListenerRequest("main", (10, 10, 17, 17));
+
+    private static SceneListenerUpdate OverBudgetUpdate()
+    {
+        var update = new SceneListenerUpdate();
+        update.Aoi.Add(Aoi("main", (10, 10, 17, 17)));
+
+        return update;
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_OverBudgetHandshakeAccepted()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), OverBudgetRequest(), out SceneListenerState? listener);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            // Expanded in full — the exemption lifts the cap, it does not clamp the announcement.
+            Assert.That(listener!.ParcelCount, Is.EqualTo(64));
+        });
+    }
+
+    [Test]
+    public void SceneListener_NonWhitelistedIp_OverBudgetHandshakeRejected()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, whitelist: "");
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), OverBudgetRequest(), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_OverBudgetUpdateAccepted()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        bool ok = v.ValidateSceneListenerUpdate(PEER, NewState(), OverBudgetUpdate(), out SceneListenerState? listener);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            // Expanded in full on the update path too — waived, not clamped to the budget.
+            Assert.That(listener!.ParcelCount, Is.EqualTo(64));
+        });
+    }
+
+    [Test]
+    public void SceneListener_BoundIpNotOnNonEmptyWhitelist_NotExempt()
+    {
+        // The address has to be compared, not merely present: a peer bound to an address the list
+        // does not name is enforced against normally even though the list is non-empty.
+        FieldValidator v = CreateWithPeerAt("198.51.100.5", TRUSTED_IP);
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), OverBudgetRequest(), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_NonWhitelistedIp_OverBudgetUpdateRejected()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, whitelist: "");
+
+        Assert.That(v.ValidateSceneListenerUpdate(PEER, NewState(), OverBudgetUpdate(), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_SCENE_LISTENER_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIpBoundAsV4Mapped_MatchesDottedEntry()
+    {
+        // The limiter canonicalises both sides, so an operator's dotted entry covers a peer the
+        // transport reported as v4-mapped IPv6.
+        FieldValidator v = CreateWithPeerAt($"::ffff:{TRUSTED_IP}", TRUSTED_IP);
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), OverBudgetRequest(), out _), Is.True);
+    }
+
+    [Test]
+    public void SceneListener_PeerWithNoReservation_NotExempt()
+    {
+        // Never bound — the limiter cannot attribute the peer to an address, so it is not exempt
+        // even though the whitelist is non-empty.
+        FieldValidator v = Create(ipLimiter: SceneListenerTestFactory.Limiter(TRUSTED_IP));
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), OverBudgetRequest(), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_RealmOverheadAlsoWaived()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        // Ten single-parcel realms cost 10 × (4 + 1) = 50 against a budget of 16. The exemption
+        // spans both dimensions of the budget, not just the parcel one.
+        var aoi = new SceneListenerAoi[10];
+
+        for (var i = 0; i < aoi.Length; i++)
+            aoi[i] = Aoi($"realm-{i}", (i, 0, i, 0));
+
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest(aoi), out SceneListenerState? listener);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(listener!.ParcelsByRealm, Has.Count.EqualTo(10));
+        });
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_OverlappingRectsPresizeToUnionNotNominalArea()
+    {
+        // With the budget waived, the per-realm set is presized from the *nominal* sum of rect
+        // areas, which overlap inflates without bound — so the presize is clamped to the world's
+        // parcel count, which the deduped union cannot exceed. Over a 10×10 world, 500 copies of
+        // the whole world are a nominal 50,000 against a union of 100: unclamped that set alone is
+        // ~800 KB, clamped it is a couple of KB. Allocation volume is the property at risk here,
+        // so it is what the test measures.
+        var smallWorld = new ParcelEncoder(Options.Create(new ParcelEncoderOptions
+        {
+            MinParcelX = 0, MinParcelZ = 0, MaxParcelX = 9, MaxParcelZ = 9, Padding = 0,
+        }));
+
+        IpLimiter limiter = SceneListenerTestFactory.Limiter(TRUSTED_IP);
+        limiter.TryAcquire(TRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.Bind(PEER, TRUSTED_IP, ConnectionClass.PLAYER);
+
+        var v = new FieldValidator(
+            Options.Create(new FieldValidatorOptions { MaxRealmLength = 128, MaxEmoteDurationMs = 60_000 }),
+            Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
+            smallWorld,
+            SceneListenerTestFactory.CellMapper(),
+            limiter,
+            transport);
+
+        var rects = new (int, int, int, int)[500];
+        Array.Fill(rects, (0, 0, 9, 9));
+
+        // Built outside the measured window so only the validation itself is counted.
+        SceneListenerHandshakeRequest request = ListenerRequest("main", rects);
+        PeerState state = NewState();
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool ok = v.ValidateSceneListenerHandshake(PEER, state, request, out SceneListenerState? listener);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(listener!.ParcelCount, Is.EqualTo(100));
+            Assert.That(allocated, Is.LessThan(100_000),
+                "the per-realm set was presized from the nominal area instead of the clamped union");
+        });
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_InvertedRectStillRejects()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        // The exemption covers the budget only; well-formedness is not negotiable for anyone.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (11, 10, 10, 10)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_OutOfBoundsRectStillRejects()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (9999, 10, 9999, 10)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
+    public void SceneListener_WhitelistedIp_EmptyRealmStillRejects()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("", (10, 10, 10, 10)), out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
     }
 }

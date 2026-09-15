@@ -5,6 +5,7 @@ using Pulse.InterestManagement;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Transport;
+using Pulse.Transport.Hardening;
 
 namespace Pulse.Messaging.Hardening;
 
@@ -21,6 +22,7 @@ public sealed class FieldValidator(
     IOptions<SceneListenerOptions> sceneListenerOptions,
     ParcelEncoder parcelEncoder,
     SceneListenerCellMapper cellMapper,
+    IpLimiter ipLimiter,
     ITransport transport)
     : PeerDefense(transport, PulseMetrics.Hardening.FIELD_VALIDATION_FAILED)
 {
@@ -160,6 +162,12 @@ public sealed class FieldValidator(
         if (aoi.Count == 0)
             return Reject(from, state, reason);
 
+        // A whitelisted source IP is the operator's statement that the host is trusted
+        // infrastructure, and a cohosting fleet announces whatever its scenes cover — so the budget
+        // is not applied to it at all. Resolved once, before the loop: the exemption must not be
+        // able to change between two rects of the same announcement.
+        bool enforceBudget = !ipLimiter.IsWhitelisted(from);
+
         long budget = 0;
         var expanded = new Dictionary<string, HashSet<int>>(aoi.Count);
         var cellKeys = new HashSet<long>();
@@ -182,7 +190,7 @@ public sealed class FieldValidator(
 
             budget += REALM_BUDGET_COST;
 
-            if (budget > maxSceneListenerBudget)
+            if (enforceBudget && budget > maxSceneListenerBudget)
                 return Reject(from, state, reason);
 
             // First pass: bounds-check and price the realm's rects before expanding any of them, so
@@ -205,14 +213,19 @@ public sealed class FieldValidator(
                 realmArea += area;
                 budget += area;
 
-                if (budget > maxSceneListenerBudget)
+                if (enforceBudget && budget > maxSceneListenerBudget)
                     return Reject(from, state, reason);
             }
 
             // Second pass, now that the realm is priced: size the set from the area the first pass
             // measured instead of growing it through a dozen reallocations, and take the covering
             // cells off each rect — this is the only point that holds both a rect and its set.
-            var deduped = new HashSet<int>((int)realmArea);
+            // Clamped to the world's parcel count, which the deduped union cannot exceed — every
+            // corner was bounds-checked above, so every index is in range. Load-bearing once the
+            // budget is waived: realmArea is then the *nominal* sum, which overlapping rects inflate
+            // without bound, and presizing to it asks for a set orders of magnitude larger than the
+            // union it will hold.
+            var deduped = new HashSet<int>((int)Math.Min(realmArea, parcelEncoder.MaxIndexExclusive));
 
             foreach (ParcelRect rect in realmAoi.ParcelRects)
             {

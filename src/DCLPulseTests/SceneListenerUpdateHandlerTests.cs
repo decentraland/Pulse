@@ -50,6 +50,7 @@ public class SceneListenerUpdateHandlerTests
                 Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
                 parcelEncoder,
                 cellMapper,
+                SceneListenerTestFactory.Limiter(),
                 transport));
 
         peer = new PeerIndex(1);
@@ -160,6 +161,7 @@ public class SceneListenerUpdateHandlerTests
                 Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
                 parcelEncoder,
                 cellMapper,
+                SceneListenerTestFactory.Limiter(),
                 transport));
 
         throttled.Handle(peers, peer, Update(Rect(5, 5, 5, 5)));

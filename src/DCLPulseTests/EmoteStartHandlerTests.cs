@@ -50,6 +50,7 @@ public class EmoteStartHandlerTests
                 Options.Create(new SceneListenerOptions()),
                 parcelEncoder,
                 SceneListenerTestFactory.CellMapper(),
+                SceneListenerTestFactory.Limiter(),
                 Substitute.For<ITransport>()));
         peers = new Dictionary<PeerIndex, PeerState>();
     }

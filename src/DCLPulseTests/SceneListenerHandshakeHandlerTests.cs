@@ -52,14 +52,17 @@ public class SceneListenerHandshakeHandlerTests
 
         // The budget is cumulative over realms and parcels: one realm costs 4 on top of its rect
         // areas, so 16 admits a single realm of up to 12 parcels.
+        // One limiter behind both gates, as in production: the validator reads it for the parcel
+        // budget exemption and the handler for the listener connection budget.
+        ipLimiter = BuildIpLimiter();
+
         var fieldValidator = new FieldValidator(
             Options.Create(new FieldValidatorOptions { MaxRealmLength = 16, MaxEmoteDurationMs = 60_000 }),
             Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
             parcelEncoder,
             new SceneListenerCellMapper(realmGrids, parcelOptions),
+            ipLimiter,
             transport);
-
-        ipLimiter = BuildIpLimiter();
 
         handler = new SceneListenerHandshakeHandler(
             messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),

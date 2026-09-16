@@ -63,6 +63,7 @@ public class HandshakeHandlerTests
             Options.Create(new SceneListenerOptions()),
             parcelEncoder,
             SceneListenerTestFactory.CellMapper(),
+            SceneListenerTestFactory.Limiter(),
             transport);
 
         handler = new HandshakeHandler(

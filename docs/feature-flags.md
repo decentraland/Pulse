@@ -183,6 +183,15 @@ To verify what a running task actually has, read the `/about` endpoint: it repor
 currently-applied overrides, which is the question you want answered — not what Unleash claims to
 be serving.
 
+## What `Whitelist` grants
+
+Its reach is wider than the limiter it is configured under. An entry exempts the IP from both
+per-IP connection caps *and* from the `SceneListener:MaxParcels` announcement budget, because it is
+the server's one statement that a host is trusted infrastructure. Since it is reconfigurable from
+the remote document, adding an address here to ride out a connection-cap incident also hands that
+address an unbounded scene-listener AoI, live, with no redeploy. See
+[docs/hardening.md](hardening.md#whitelisted-source-ips-are-exempt-from-the-budget-entirely).
+
 ## Why `Whitelist` is a string, not an array
 
 List-shaped knobs are **comma-separated strings**, not JSON arrays. This is a verified .NET

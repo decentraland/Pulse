@@ -22,6 +22,11 @@ internal static class SceneListenerTestFactory
     ///     limiter rather than a substitute: it is sealed, and the reservation bookkeeping an
     ///     exemption lookup reads is precisely what stubbing would erase. Bind a peer to an address
     ///     with <c>Bind</c> to make it exempt; an unbound peer never is.
+    ///     <para />
+    ///     The list is fixed for the limiter's lifetime: the monitor's change callback is stubbed
+    ///     to a no-op subscription and never invoked, so reconfiguration cannot be simulated
+    ///     through it. Fixtures covering a live whitelist change use <c>IpLimiterTests.Harness</c>,
+    ///     which captures the callback and fires it.
     /// </summary>
     internal static IpLimiter Limiter(string whitelist = "")
     {

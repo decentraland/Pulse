@@ -670,6 +670,77 @@ public class FieldValidatorTests
     }
 
     [Test]
+    public void SceneListener_WhitelistedIp_SaturatedRealmIgnoresFurtherRectsButKeepsCellCover()
+    {
+        // Once a realm holds every encodable parcel the expansion of later rects is skipped, so
+        // this pins what that skip must not change: the parcel set is still the whole world, and
+        // the cell cover is still the one every announced rect contributes to — redundant rects
+        // must not shrink it, and rect order must not matter.
+        var smallWorld = new ParcelEncoder(Options.Create(new ParcelEncoderOptions
+        {
+            MinParcelX = 0, MinParcelZ = 0, MaxParcelX = 9, MaxParcelZ = 9, Padding = 0,
+        }));
+
+        FieldValidator v = SmallWorldValidator(smallWorld);
+
+        // One rect that saturates the 10×10 world, then two more that cannot add a parcel.
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (0, 0, 9, 9), (0, 0, 9, 9), (2, 2, 3, 3)), out SceneListenerState? saturated);
+
+        FieldValidator single = SmallWorldValidator(smallWorld);
+
+        bool singleOk = single.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (0, 0, 9, 9)), out SceneListenerState? minimal);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(singleOk, Is.True);
+            Assert.That(saturated!.ParcelCount, Is.EqualTo(smallWorld.MaxIndexExclusive));
+            Assert.That(Parcels(saturated), Is.EquivalentTo(Parcels(minimal)!));
+            Assert.That(saturated.CellKeys, Is.EquivalentTo(minimal!.CellKeys));
+        });
+    }
+
+    /// <summary>A whitelisted-peer validator over <paramref name="world" /> instead of the fixture's.</summary>
+    private FieldValidator SmallWorldValidator(ParcelEncoder world)
+    {
+        IpLimiter limiter = SceneListenerTestFactory.Limiter(TRUSTED_IP);
+        limiter.TryAcquire(TRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.Bind(PEER, TRUSTED_IP, ConnectionClass.PLAYER);
+
+        return new FieldValidator(
+            Options.Create(new FieldValidatorOptions { MaxRealmLength = 128, MaxEmoteDurationMs = 60_000 }),
+            Options.Create(new SceneListenerOptions { MaxParcels = 16 }),
+            world,
+            SceneListenerTestFactory.CellMapper(),
+            limiter,
+            transport);
+    }
+
+    [Test]
+    public void SceneListener_NonWhitelistedIp_BudgetExactlyMet_Accepted()
+    {
+        FieldValidator v = Create();
+
+        // Fixture budget 16: one realm (4) plus a 4×3 rect (12) lands exactly on it, and the
+        // check rejects only what exceeds the budget.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (10, 10, 13, 12)), out _), Is.True);
+    }
+
+    [Test]
+    public void SceneListener_NonWhitelistedIp_BudgetExceededByOne_Rejects()
+    {
+        FieldValidator v = Create();
+
+        // One parcel more than the case above: 4 + 13 = 17 > 16.
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(),
+            ListenerRequest("main", (10, 10, 22, 10)), out _), Is.False);
+        transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    [Test]
     public void SceneListener_WhitelistedIp_InvertedRectStillRejects()
     {
         FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);

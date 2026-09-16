@@ -225,11 +225,20 @@ public sealed class FieldValidator(
             // budget is waived: realmArea is then the *nominal* sum, which overlapping rects inflate
             // without bound, and presizing to it asks for a set orders of magnitude larger than the
             // union it will hold.
-            var deduped = new HashSet<int>((int)Math.Min(realmArea, parcelEncoder.MaxIndexExclusive));
+            int worldParcels = parcelEncoder.MaxIndexExclusive;
+            var deduped = new HashSet<int>((int)Math.Min(realmArea, worldParcels));
 
             foreach (ParcelRect rect in realmAoi.ParcelRects)
             {
                 cellMapper.AddCoveringCells(cellKeys, rect.MinX, rect.MinZ, rect.MaxX, rect.MaxZ);
+
+                // Every index this can add is already present once the realm holds the whole
+                // world, so the expansion is skipped from there on — bounding it at one world
+                // rather than at the nominal sum, which overlapping rects inflate without limit.
+                // The cover above stays unconditional: it is O(covered cells) rather than O(area),
+                // and running it for every rect keeps the cell set independent of rect order.
+                if (deduped.Count >= worldParcels)
+                    continue;
 
                 for (int z = rect.MinZ; z <= rect.MaxZ; z++)
                     for (int x = rect.MinX; x <= rect.MaxX; x++)

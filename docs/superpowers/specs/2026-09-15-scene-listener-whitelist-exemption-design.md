@@ -116,9 +116,16 @@ packet can express, and the property actually at risk — allocation volume — 
 Removing the budget removes the guard on the expansion work as well as the policy cap. Within one
 accepted 4 KB packet a whitelisted host can announce either ~290 realms each holding one full-area
 rect — ~7.8 M retained set entries, on the order of 100 MB held for the life of the connection — or
-one realm holding ~500 overlapping full-area rects, whose Σ nominal area of ~13.6 M is expanded
-one index at a time: seconds of CPU **on the owning worker thread**, stalling that shard. The
-presize clamp above is what keeps the second case from also costing ~218 MB.
+one realm holding ~500 overlapping full-area rects, whose Σ nominal area of ~13.6 M would be
+expanded one index at a time — order of 100 ms **on the owning worker thread**, stalling that
+shard.
+
+Two bounds keep the second case from being worse than that. The presize clamp above stops it
+costing ~218 MB, and the expansion stops once the realm's set holds every encodable parcel, since
+no later rect can then contribute one — so the work is bounded at one world rather than at the
+nominal sum. Measured on the degenerate payload at 500 world-sized rects: 373 ms without that
+skip, 84 ms with it. The cell cover is deliberately *not* skipped — it is O(covered cells) rather
+than O(area), and running it for every rect keeps `CellKeys` independent of rect order.
 
 This is accepted deliberately: the whitelist is an explicit operator statement of trust, and the
 requirement is an unrestricted budget for trusted fleets. The residual exposure is a misconfigured

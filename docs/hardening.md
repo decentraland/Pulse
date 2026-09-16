@@ -391,9 +391,10 @@ Two distinct shapes follow, both reachable from one 4 KB announcement:
 
 - **Retained** — ~290 realms each holding one full-area rect: ~7.8 M set entries, on the order of
   100 MB held for the lifetime of the connection.
-- **Transient** — one realm holding ~500 overlapping full-area rects: Σ *nominal* area ≈ 13.6 M,
-  and expansion is O(Σ nominal area), so seconds of CPU **on the owning worker thread**, which
-  stalls that shard.
+- **Transient** — one realm holding ~500 overlapping full-area rects: Σ *nominal* area ≈ 13.6 M.
+  Expansion would be O(Σ nominal area) — order of 100 ms **on the owning worker thread**, which
+  stalls that shard — but it is bounded at one world's worth of parcels instead, because the
+  expansion stops once the realm's set holds every encodable parcel and no later rect can add one.
 
 The transient case would be far worse still without the presize clamp in `ValidateSceneListenerAoi`
 — `new HashSet<int>` is sized from the nominal sum, so that announcement would ask for ~218 MB to

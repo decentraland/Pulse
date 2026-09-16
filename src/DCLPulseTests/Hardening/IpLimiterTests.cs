@@ -157,6 +157,90 @@ public class IpLimiterTests
             "The OnChange callback must rebuild the whitelist snapshot");
     }
 
+    // ── IsWhitelisted ────────────────────────────────────────────────
+
+    [Test]
+    public void IsWhitelisted_BoundToListedIp_True()
+    {
+        using Harness harness = Create(enabled: true, maxConcurrency: 2, whitelist: IP);
+        var peer = new PeerIndex(7);
+
+        harness.Limiter.TryAcquire(IP, ConnectionClass.PLAYER);
+        harness.Limiter.Bind(peer, IP, ConnectionClass.PLAYER);
+
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.True);
+    }
+
+    [Test]
+    public void IsWhitelisted_BoundToUnlistedIp_False()
+    {
+        using Harness harness = Create(enabled: true, maxConcurrency: 2, whitelist: IP);
+        var peer = new PeerIndex(7);
+
+        harness.Limiter.TryAcquire(OTHER_IP, ConnectionClass.PLAYER);
+        harness.Limiter.Bind(peer, OTHER_IP, ConnectionClass.PLAYER);
+
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.False);
+    }
+
+    [Test]
+    public void IsWhitelisted_NeverBound_False()
+    {
+        using Harness harness = Create(enabled: true, maxConcurrency: 2, whitelist: IP);
+
+        // No reservation to read an address from, so there is nothing to match — a peer the
+        // limiter cannot attribute is never exempt.
+        Assert.That(harness.Limiter.IsWhitelisted(new PeerIndex(7)), Is.False);
+    }
+
+    [Test]
+    public void IsWhitelisted_BoundAsV4Mapped_MatchesDottedEntry()
+    {
+        using Harness harness = Create(enabled: true, maxConcurrency: 2, whitelist: IP);
+        var peer = new PeerIndex(7);
+
+        harness.Limiter.TryAcquire($"::ffff:{IP}", ConnectionClass.PLAYER);
+        harness.Limiter.Bind(peer, $"::ffff:{IP}", ConnectionClass.PLAYER);
+
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.True,
+            "Both sides are canonicalised, so a dotted entry covers a v4-mapped peer");
+    }
+
+    [Test]
+    public void IsWhitelisted_WhitelistChangedAtRuntime_TracksTheLiveList()
+    {
+        // The gates that honour the exemption re-read it per use rather than capturing it at
+        // connect, so a remote reconfiguration reaches an already-connected peer.
+        using Harness harness = Create(enabled: true, maxConcurrency: 2);
+        var peer = new PeerIndex(7);
+
+        harness.Limiter.TryAcquire(IP, ConnectionClass.PLAYER);
+        harness.Limiter.Bind(peer, IP, ConnectionClass.PLAYER);
+
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.False);
+
+        harness.Reconfigure(o => o.Whitelist = IP);
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.True);
+
+        harness.Reconfigure(o => o.Whitelist = "");
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.False);
+    }
+
+    [Test]
+    public void IsWhitelisted_AfterRelease_False()
+    {
+        using Harness harness = Create(enabled: true, maxConcurrency: 2, whitelist: IP);
+        var peer = new PeerIndex(7);
+
+        harness.Limiter.TryAcquire(IP, ConnectionClass.PLAYER);
+        harness.Limiter.Bind(peer, IP, ConnectionClass.PLAYER);
+        harness.Limiter.Release(peer);
+
+        // The reservation is what carries the address, so a released slot cannot hand its
+        // exemption to whatever peer the index is recycled onto.
+        Assert.That(harness.Limiter.IsWhitelisted(peer), Is.False);
+    }
+
     [Test]
     public void WhitelistChanged_IsLogged()
     {

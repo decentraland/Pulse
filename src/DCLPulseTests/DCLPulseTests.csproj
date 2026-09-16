@@ -19,6 +19,10 @@
 
     <ItemGroup>
         <ProjectReference Include="..\DCLPulse\DCLPulse.csproj"/>
+        <!-- For the e2e fixture, which drives the test client's own comms types rather than
+             re-implementing the handshake. Referencing an Exe is deliberate: the alternative is
+             asserting on parsed stdout. -->
+        <ProjectReference Include="..\DCLPulseTestClient\DCLPulseTestClient.csproj"/>
     </ItemGroup>
 
     <ItemGroup>

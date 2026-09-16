@@ -93,7 +93,7 @@ Pulse uses ENet over UDP. A couple of non-obvious behaviors worth knowing before
 
 Two knobs control concurrent-peer capacity:
 
-- `Transport.MaxPeers` — size of the `PeerIndex` pool and every per-peer array board (`SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `SpatialGrid`). Hard ceiling on active + in-grace slots.
+- `Transport.MaxPeers` — size of the `PeerIndex` pool and every per-peer array board (`SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `RealmSpatialGrids`). Hard ceiling on active + in-grace slots.
 - `Transport.MaxConcurrentConnections` — ENet host capacity. `0` = `MaxPeers`. Set below `MaxPeers` to reserve slots for the allocator's pending-recycle grace window — without headroom, a burst of reconnects can exhaust the `PeerIndex` pool while ENet still has free slots, causing `SERVER_FULL` refusals on otherwise admittable connections.
 
 Rule of thumb: `MaxConcurrentConnections ≈ MaxPeers - ceil(peakDisconnectsPerSecond × Peers.DisconnectionCleanTimeoutMs / 1000)`.
@@ -147,6 +147,16 @@ dotnet run --project src/DCLPulseTestClient -- --account=loadtest --bot-count=10
 ```
 
 When `--bot-count=1`, the account name is used as-is. When `--bot-count` > 1, accounts are named `<account>-0`, `<account>-1`, ..., `<account>-N-1` and bots spawn in a circle around the initial position.
+
+### End-to-end conn-string harness
+
+With `--comms-enabled` each bot also opens a ws-connector session on its own wallet, so one process holds both channels and can assert that a LiveKit connection string arrives for the same identity that Pulse clustered. `docker-compose.e2e.yml` brings up the NATS + ws-connector + Pulse stack it runs against; comms-gatekeeper mints the conn strings and is run separately, since it needs Postgres and LiveKit credentials.
+
+The test client stays a client — it holds no broker connection and never publishes on a service's subject.
+
+`--comms-url` accepts either a plain `ws://host/ws` or a realm's raw comms adapter string (`archipelago:archipelago:wss://host/ws`), so a value copied out of `/about` works unchanged.
+
+See [docs/e2e-livekit.md](docs/e2e-livekit.md) for prerequisites, the bridge modes, and how to read a failure.
 
 ### What the bot does
 

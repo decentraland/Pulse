@@ -32,3 +32,9 @@ Gracefully stop running test bots so they disconnect cleanly from the server.
    tasklist | grep -i DCLPulseTestClient && taskkill //F //IM DCLPulseTestClient.exe 2>/dev/null || echo "Bots stopped gracefully."
    ```
    On macOS/Linux fallback: `pkill -9 -f DCLPulseTestClient`
+
+## Scope
+
+The stop file reaches every test-client process, because the binary now only ever runs bots — there is no second entry point. A bot started with `--comms-enabled` also holds a ws-connector session; it closes with the rest of the shutdown and needs no separate step.
+
+Nothing here touches comms-gatekeeper, ws-connector, NATS or Pulse. Those are separate services with their own lifecycles (`docker compose -f docker-compose.e2e.yml down` for the compose stack). Stopping the bots leaves them running, which is usually what you want between runs.

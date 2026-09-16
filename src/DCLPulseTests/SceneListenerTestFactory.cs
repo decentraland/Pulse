@@ -14,7 +14,7 @@ internal static class SceneListenerTestFactory
 {
     /// <summary>Cell mapper over a default-configured parcel grid.</summary>
     internal static SceneListenerCellMapper CellMapper() =>
-        new (new SpatialGrid(100, 100), Options.Create(new ParcelEncoderOptions()));
+        new (new RealmSpatialGrids(100, 100), Options.Create(new ParcelEncoderOptions()));
 
     /// <summary>
     ///     Live IP limiter exempting <paramref name="whitelist" /> — a comma-separated list in the

@@ -157,7 +157,7 @@ public partial class PeerSimulationTests
         ILogger<PeerSimulation>? simulationLogger = Substitute.For<ILogger<PeerSimulation>>();
 
         var sim = new PeerSimulation(
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(), simulationLogger);
 

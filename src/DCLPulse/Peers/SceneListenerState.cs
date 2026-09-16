@@ -31,10 +31,6 @@ public sealed class SceneListenerState(Dictionary<string, HashSet<int>> parcelsB
     /// </summary>
     public int ParcelCount { get; } = SumParcels(parcelsByRealm);
 
-    /// <summary>Whether a subject standing in <paramref name="parcel" /> of <paramref name="realm" /> is observed.</summary>
-    public bool Observes(string? realm, int parcel) =>
-        realm != null && ParcelsByRealm.TryGetValue(realm, out HashSet<int>? parcels) && parcels.Contains(parcel);
-
     private static int SumParcels(Dictionary<string, HashSet<int>> parcelsByRealm)
     {
         int total = 0;

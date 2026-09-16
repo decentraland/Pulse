@@ -120,7 +120,7 @@ This is **not** "small MessagePipe changes" — it re-architects the single-tran
 - Bound the per-peer reliable-stream send queue; disconnect-on-overflow (metric).
 
 ### Capacity & admission accounting (one shared pool, two front doors)
-The `PeerIndex` pool and most boards are sized from a **single** `MaxPeers` ([`Program.cs`](src/DCLPulse/Program.cs): `PeerIndexAllocator`, `SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `SpatialGrid`). Both transports draw from it:
+The `PeerIndex` pool and most boards are sized from a **single** `MaxPeers` ([`Program.cs`](src/DCLPulse/Program.cs): `PeerIndexAllocator`, `SnapshotBoard`, `IdentityBoard`, `ProfileBoard`, `RealmSpatialGrids`). Both transports draw from it:
 - The WT `max_peers` passed to `wt_host_create` is **not** an independent cap — total concurrent peers across **both** transports is bounded by the shared `MaxPeers`. Reconcile them, or a WT flood exhausts the pool and ENet peers start hitting the `SERVER_FULL` refuse path. Decide the policy (shared budget vs per-transport reservations) explicitly.
 - `PreAuthAdmission` (per-IP cap + global `PreAuthBudget`) and `CorruptedPacketLimiter` are now **shared across both transports** — mechanism unchanged (QUIC provides the remote IP), but *capacity semantics* change (a browser flood and an ENet flood draw the same budget). Consider whether budgets should be per-transport.
 - `ACTIVE_PEERS`, `PEERS_CONNECTED`, `PEERS_DISCONNECTED` are incremented **inside** `ENetHostedService` — the WT loop must replicate every one, including the easy-to-miss `ACTIVE_PEERS.Add(-1)` on teardown, or the gauge under-counts.

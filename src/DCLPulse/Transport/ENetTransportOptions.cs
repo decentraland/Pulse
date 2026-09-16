@@ -15,7 +15,7 @@ public sealed class ENetTransportOptions
 
     /// <summary>
     ///     Size of the <see cref="Peers.PeerIndexAllocator" /> pool and all array-backed per-peer
-    ///     boards (<c>SnapshotBoard</c>, <c>IdentityBoard</c>, <c>ProfileBoard</c>, <c>SpatialGrid</c>).
+    ///     boards (<c>SnapshotBoard</c>, <c>IdentityBoard</c>, <c>ProfileBoard</c>, <c>RealmSpatialGrids</c>).
     ///     Must be ≥ <see cref="MaxConcurrentConnections" />. The headroom between the two absorbs
     ///     slots held in the allocator's pending-recycle grace window during disconnect churn —
     ///     without it, a burst of reconnects can exhaust the pool even though ENet has free slots.

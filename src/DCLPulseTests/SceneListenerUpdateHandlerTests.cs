@@ -33,7 +33,7 @@ public class SceneListenerUpdateHandlerTests
         IOptions<ParcelEncoderOptions> parcelOptions = Options.Create(new ParcelEncoderOptions());
         parcelEncoder = new ParcelEncoder(parcelOptions);
         transport = Substitute.For<ITransport>();
-        cellMapper = new SceneListenerCellMapper(new SpatialGrid(100, 100), parcelOptions);
+        cellMapper = new SceneListenerCellMapper(new RealmSpatialGrids(100, 100), parcelOptions);
 
         var timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(10_000u);

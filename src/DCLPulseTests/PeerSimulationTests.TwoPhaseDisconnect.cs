@@ -167,9 +167,9 @@ public partial class PeerSimulationTests
     /// </summary>
     private PeerSimulation CreateGridBackedSimulation() =>
         new (
-            new SpatialHashAreaOfInterest(spatialGrid, snapshotBoard,
+            new SpatialHashAreaOfInterest(realmGrids, snapshotBoard,
                 Options.Create(new SpatialHashAreaOfInterestOptions())),
-            snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, peerIndexAllocator,
             Substitute.For<ILogger<PeerSimulation>>());
@@ -200,7 +200,7 @@ public partial class PeerSimulationTests
 
     private PeersManager CreatePeersManager() =>
         new (
-            messagePipe, new PeerStateFactory(), areaOfInterest, snapshotBoard, spatialGrid,
+            messagePipe, new PeerStateFactory(), areaOfInterest, snapshotBoard, realmGrids,
             identityBoard, new PeerOptions(), Substitute.For<ILogger<PeersManager>>(),
             Substitute.For<ILogger<PeerSimulation>>(), timeProvider,
             new Dictionary<ClientMessage.MessageOneofCase, IMessageHandler>(),

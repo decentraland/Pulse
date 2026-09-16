@@ -3,7 +3,7 @@ name: run-test-client
 description: Launch DCLPulseTestClient bot(s) against a Pulse server. Use when the user wants to run, start, or launch the test client / bot / load test.
 user-invocable: true
 allowed-tools: Bash
-argument-hint: [--account=name] [--bot-count=N] [--ip=address] [--port=port] [--pos-x=X] [--pos-y=Y] [--pos-z=Z] [--rotate-speed=deg]
+argument-hint: [--account=name] [--bot-count=N] [--ip=address] [--port=port] [--pos-x=X] [--pos-y=Y] [--pos-z=Z] [--rotate-speed=deg] [--comms-enabled]
 ---
 
 # Launch DCLPulseTestClient
@@ -38,6 +38,24 @@ If no arguments are provided, use the defaults (account `enetclient-test`, 1 bot
 | `--spawn-radius=<float>` | `10` | Radius of the circle bots spawn on |
 | `--dispersion-radius=<float>` | `20` | Max wander distance from spawn origin |
 | `--rotate-speed=<deg/s>` | `90` | Idle rotation speed |
+
+### Conn-string harness arguments
+
+Off by default — omit these and the run behaves exactly as before.
+
+| Argument | Default | Description |
+|---|---|---|
+| `--comms-enabled` | off | Each bot also opens a ws-connector session on its own wallet and records the LiveKit conn strings it receives |
+| `--comms-url=<url>` | `ws://127.0.0.1:5000/ws` | ws-connector endpoint. Also accepts a realm's raw adapter string (`archipelago:archipelago:wss://host/ws`); anything that isn't `ws://`/`wss://` after refinement is rejected loudly |
+| `--expect-conn-string-within=<seconds>` | `15` | **Parsed but not yet acted on.** Reserved for the regression scenarios; passing it today changes nothing |
+
+**Argument parsing is `--name=value` only.** `ClientOptions.FromArgs` matches on the `--name=` prefix, so a space-separated `--comms-url ws://…` sets nothing and silently leaves the default in place. `--comms-enabled` is the sole exception — bare or `=true` both work.
+
+## The client does not mint conn strings
+
+The test client is a client: Pulse over ENet/WebTransport, ws-connector over WebSocket, and no broker connection at all. It has **no `--nats-url` and no bridge mode** — an earlier revision had a stub gatekeeper behind `--mode=bridge` and it was removed on purpose.
+
+So `--comms-enabled` on its own produces a bot that connects to ws-connector and then receives nothing, which looks exactly like a healthy idle run. Something has to translate `peer.{addr}.cluster_change` into `engine.peer.{addr}.island_changed`, and that something is **comms-gatekeeper**, run separately against the same broker with `CLUSTER_SUBSCRIBER_ENABLED=true`. It needs Postgres and a LiveKit host/key/secret. See `docs/e2e-livekit.md` section 4.
 
 ## Multi-bot mode
 
@@ -74,3 +92,6 @@ When the user mentions a location by name, translate to position flags:
   workaround.
 - **Handshake failed** — the server rejected the auth chain. Check that the server is running and the account's ephemeral key hasn't expired (25h lifetime). Try `metaforge account remove <name>` then re-run to create a fresh account.
 - **Connection timeout** — verify the server IP/port and that UDP traffic is not blocked by a firewall.
+- **`--comms-enabled` set but no `[ws-connector]` lines** — ws-connector isn't up at `--comms-url`, or the flag was passed space-separated. A comms failure is deliberately non-fatal to the Pulse session and reports on the `[comms]` prefix, so the run otherwise looks healthy.
+- **Bot connects to ws-connector but no island ever arrives** — nothing is minting conn strings. Start comms-gatekeeper against the same broker. `docs/e2e-livekit.md` covers the rest of the silent-no-delivery causes.
+- **Second bot on the same account kicks the first** — ws-connector allows one session per wallet and kicks the previous with `KR_NEW_SESSION`. Two bots need two accounts, which `--bot-count` > 1 already gives.

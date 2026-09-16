@@ -46,7 +46,10 @@
         <!-- Glob patterns for proto sources — stored as properties so they can be
              referenced both in the static UpToDateCheckInput (for the IDE) and inside
              targets (for protoc), without creating two visible item groups in Rider. -->
-        <_ProtoGlobs>$(_ProtoRoot)/decentraland/common/**/*.proto;$(_ProtoRoot)/decentraland/pulse/**/*.proto</_ProtoGlobs>
+        <!-- archipelago.proto is listed as a single file, not a v3 glob: only its NATS payload types
+             (IslandStatusMessage, ServiceDiscoveryMessage) are needed. The rest of v3 is the legacy
+             comms generation Pulse replaces. -->
+        <_ProtoGlobs>$(_ProtoRoot)/decentraland/common/**/*.proto;$(_ProtoRoot)/decentraland/pulse/**/*.proto;$(_ProtoRoot)/decentraland/kernel/comms/v3/archipelago.proto</_ProtoGlobs>
     </PropertyGroup>
 
     <!-- Tell Rider / VS project system about external proto inputs so the IDE's

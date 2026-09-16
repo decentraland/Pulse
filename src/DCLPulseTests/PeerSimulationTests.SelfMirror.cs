@@ -30,7 +30,7 @@ public class SelfMirrorTests
     private PeerSimulation simulation;
     private Dictionary<PeerIndex, PeerState> peers;
     private List<(PeerIndex Subject, PeerViewSimulationTier Tier)> visibleSubjects;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ProfileBoard profileBoard;
 
     [SetUp]
@@ -41,7 +41,7 @@ public class SelfMirrorTests
 
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
-        spatialGrid = new SpatialGrid(50, MAX_PEERS);
+        realmGrids = new RealmSpatialGrids(50, MAX_PEERS);
         messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
         areaOfInterest = Substitute.For<IAreaOfInterest>();
         visibleSubjects = new List<(PeerIndex, PeerViewSimulationTier)>();
@@ -62,7 +62,7 @@ public class SelfMirrorTests
         profileBoard = new ProfileBoard(MAX_PEERS);
 
         simulation = new PeerSimulation(
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
             Substitute.For<ILogger<PeerSimulation>>(),
@@ -241,7 +241,7 @@ public class SelfMirrorTests
     public void SelfMirror_DisabledByDefault_SkipsSelf()
     {
         var disabledSimulation = new PeerSimulation(
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider,
             Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
@@ -258,7 +258,7 @@ public class SelfMirrorTests
     public void SelfMirror_RespectsTierFrequency()
     {
         var tier1Simulation = new PeerSimulation(
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
             Substitute.For<ILogger<PeerSimulation>>(),

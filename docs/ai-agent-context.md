@@ -62,9 +62,9 @@ Defense-in-depth, all local, all fail-closed. Each has a dedicated class under `
 | 1 | ≤ 50m | Every 2nd tick (~10/s) |
 | 2 | ≤ 100m | Every 4th tick (~5/s) |
 
-Players outside 100m (`SpatialAreaOfInterestOptions.MaxRadius`) receive no updates.
+Players outside 100m (`SpatialHashAreaOfInterestOptions.MaxRadius`) receive no updates.
 
-**Realm partitioning.** `PeerSnapshot.Realm` gates visibility inside the area-of-interest collectors: observers only see subjects whose `Realm` string matches exactly. A single Pulse instance transparently hosts multiple realms that never see each other. The subject's realm rides along on `PlayerJoined` (on entry) and `Teleported` (a teleport may cross realms), so the client always knows which realm a peer belongs to.
+**Realm partitioning.** Each realm has its own `SpatialGrid`, held by `RealmSpatialGrids`; `PeerSnapshot.Realm` decides which one a peer is written into. Visibility is therefore partitioned by construction — an observer resolves its own realm's grid and every candidate it finds is already same-realm, so no realm comparison happens per subject. A peer with no realm yet occupies no grid at all: invisible to everyone, and it sees nobody. A cross-realm teleport vacates the old grid *before* publishing the snapshot, so the peer is briefly in no grid rather than sitting in the old realm's grid under a snapshot that already names the new one — the latter would surface to observers of the old realm as a cross-realm subject and stick until the stale-view sweep. A single Pulse instance transparently hosts multiple realms that never see each other. The subject's realm rides along on `PlayerJoined` (on entry) and `Teleported` (a teleport may cross realms), so the client always knows which realm a peer belongs to.
 
 **Snapshot history:** Server keeps a small rolling ring of snapshots per subject (`SnapshotBoard`). `RESYNC_REQUEST` default response is `STATE_FULL`. When `Peers.ResyncWithDelta` is enabled, the server first attempts a targeted delta from the client's `knownSeq` baseline and falls back to `STATE_FULL` when that seq has been evicted from the ring.
 
@@ -72,7 +72,7 @@ Players outside 100m (`SpatialAreaOfInterestOptions.MaxRadius`) receive no updat
 
 **Other per-peer boards.** `IdentityBoard` (`PeerIndex ↔ Wallet`, canonical identity source) and `ProfileBoard` (per-peer profile version, drives `ProfileAnnouncement` fan-out). Both are zeroed on cleanup.
 
-**AoI implementation.** Default wiring is `SpatialHashAreaOfInterest` backed by `SpatialGrid` (Morton-encoded cells, 9-cell query neighborhood). `SpatialAreaOfInterest` is the linear-scan fallback used in tests.
+**AoI implementation.** `SpatialHashAreaOfInterest` over `RealmSpatialGrids` — one grid per realm, packed-int64 cell keys, a `(2·ScanCellRadius+1)²` query neighborhood around the observer's cell.
 
 **Simulation tick** (per worker, per peer it owns): scan intermediate snapshots since `lastSentSeq` and collapse to the last teleport / emote-start / emote-stop; broadcast discrete events; suppress the unreliable delta on teleport or emote-start (avoids baseline races); otherwise compute and send `PlayerStateDelta`.
 

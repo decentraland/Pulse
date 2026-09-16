@@ -21,10 +21,28 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="DCLPulseTests" />
+        <InternalsVisibleTo Include="DCLPulseBenchmarks" />
     </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
+        <!-- Core of the official NATS .NET client, pure managed. The NATS.Net umbrella package also
+             pulls JetStream / KeyValueStore / ObjectStore / Services, which a publish-only feed
+             never uses.
+
+             Before bumping this: NatsPublisher pools the message instances it publishes and returns
+             each one once its PublishAsync task completes, which is only safe while the client has
+             finished serializing by then. In 3.0.1 CommandWriter.PublishAsync serializes
+             synchronously ahead of its state machine, and the not-yet-connected path
+             (NatsConnection.ConnectAndPublishAsync) awaits the connect and then serializes, still
+             inside the awaited task. A release that captured the value and serialized it later would
+             turn that return into a use-after-return, with no test to catch it.
+
+             Also load-bearing: PublishTimeoutOnDisconnected defaults to false, so a publish issued
+             while the broker is down waits for the reconnect instead of throwing at CommandTimeout. A
+             release that flipped that default would drain NatsPublisher's outbox into failed publishes
+             for the length of every outage. -->
+        <PackageReference Include="NATS.Client.Core" Version="3.0.1" />
         <PackageReference Include="XenoAtom.Terminal.UI" Version="2.0.2" />
         <PackageReference Include="ZLogger" Version="2.5.10" />
         <PackageReference Include="Decentraland.RustWebTransport" Version="$(RustWebTransportVersion)" />

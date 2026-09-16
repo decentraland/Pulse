@@ -18,6 +18,8 @@ public partial class PeerSimulationTests
     private const int MAX_PEERS = 100;
     private const int RING_CAPACITY = 10;
 
+    private const string REALM = "realm-a";
+
     /// <summary>
     ///     Mirrors PeerSimulation's private SWEEP_CHECK_INTERVAL — how often the stale-view sweep
     ///     runs. Tests that depend on sweep timing derive their ticks from this and
@@ -51,7 +53,7 @@ public partial class PeerSimulationTests
     ///     Mutated by <see cref="SetVisibleSubjects" /> to control what the mock returns.
     /// </summary>
     private List<(PeerIndex Subject, PeerViewSimulationTier Tier)> visibleSubjects;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ProfileBoard profileBoard;
 
     [SetUp]
@@ -62,7 +64,7 @@ public partial class PeerSimulationTests
 
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
         identityBoard = new IdentityBoard(MAX_PEERS);
-        spatialGrid = new SpatialGrid(50, MAX_PEERS);
+        realmGrids = new RealmSpatialGrids(50, MAX_PEERS);
         messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
         areaOfInterest = Substitute.For<IAreaOfInterest>();
         visibleSubjects = new List<(PeerIndex, PeerViewSimulationTier)>();
@@ -85,7 +87,7 @@ public partial class PeerSimulationTests
         peerIndexAllocator = Substitute.For<IPeerIndexAllocator>();
 
         simulation = new PeerSimulation(
-            areaOfInterest, snapshotBoard, spatialGrid, identityBoard, messagePipe,
+            areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, peerIndexAllocator,
             Substitute.For<ILogger<PeerSimulation>>());

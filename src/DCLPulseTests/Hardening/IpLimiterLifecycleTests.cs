@@ -49,7 +49,7 @@ public class IpLimiterLifecycleTests
             new PeerStateFactory(),
             Substitute.For<IAreaOfInterest>(),
             snapshotBoard,
-            new SpatialGrid(100, 100),
+            new RealmSpatialGrids(100, 100),
             new IdentityBoard(100),
             new PeerOptions(),
             Substitute.For<ILogger<PeersManager>>(),

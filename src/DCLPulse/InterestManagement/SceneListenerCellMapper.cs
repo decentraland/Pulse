@@ -14,11 +14,13 @@ namespace Pulse.InterestManagement;
 ///     assumption a per-parcel corner walk already relies on to cover a parcel with four probes.
 ///     <para />
 ///     The closed max corner may over-cover one neighbouring cell when a parcel edge lands
-///     exactly on a cell boundary, and realms share one grid coordinate space so their cells
-///     overlap outright — both are harmless, the simulation filters candidates realm- and
-///     parcel-exact.
+///     exactly on a cell boundary — harmless, the simulation filters candidates parcel-exact.
+///     <para />
+///     Cell keys carry no realm, deliberately: every realm numbers its cells in the same coordinate
+///     space, so one covering set serves a multi-realm announcement. Probing it against a single
+///     realm's grid is what keeps the realms apart.
 /// </summary>
-public sealed class SceneListenerCellMapper(SpatialGrid grid, IOptions<ParcelEncoderOptions> parcelOptions)
+public sealed class SceneListenerCellMapper(RealmSpatialGrids realmGrids, IOptions<ParcelEncoderOptions> parcelOptions)
 {
     private readonly int parcelSize = parcelOptions.Value.ParcelSize;
 
@@ -30,10 +32,10 @@ public sealed class SceneListenerCellMapper(SpatialGrid grid, IOptions<ParcelEnc
     {
         // The rect's world extent is closed on the max corner: parcel maxX spans up to, and
         // including, the first point of parcel maxX + 1.
-        int minCellX = grid.CellCoord(minX * parcelSize);
-        int minCellZ = grid.CellCoord(minZ * parcelSize);
-        int maxCellX = grid.CellCoord((maxX + 1) * parcelSize);
-        int maxCellZ = grid.CellCoord((maxZ + 1) * parcelSize);
+        int minCellX = realmGrids.CellCoord(minX * parcelSize);
+        int minCellZ = realmGrids.CellCoord(minZ * parcelSize);
+        int maxCellX = realmGrids.CellCoord((maxX + 1) * parcelSize);
+        int maxCellZ = realmGrids.CellCoord((maxZ + 1) * parcelSize);
 
         for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++)
             for (int cellX = minCellX; cellX <= maxCellX; cellX++)

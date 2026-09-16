@@ -16,7 +16,7 @@ public class PeerSnapshotPublisherTests
     private const uint NOW = 5_000;
 
     private SnapshotBoard snapshotBoard;
-    private SpatialGrid spatialGrid;
+    private RealmSpatialGrids realmGrids;
     private ParcelEncoder parcelEncoder;
     private ITimeProvider timeProvider;
     private PeerSnapshotPublisher publisher;
@@ -26,12 +26,12 @@ public class PeerSnapshotPublisherTests
     public void SetUp()
     {
         snapshotBoard = new SnapshotBoard(100, 16);
-        spatialGrid = new SpatialGrid(100, 100);
+        realmGrids = new RealmSpatialGrids(100, 100);
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(NOW);
 
-        publisher = new PeerSnapshotPublisher(snapshotBoard, spatialGrid, parcelEncoder, timeProvider);
+        publisher = new PeerSnapshotPublisher(snapshotBoard, realmGrids, parcelEncoder, timeProvider);
 
         peer = new PeerIndex(1);
         snapshotBoard.SetActive(peer);
@@ -122,10 +122,11 @@ public class PeerSnapshotPublisherTests
     public void PublishFromPlayerState_RefreshesSpatialGridAtNewGlobalPosition()
     {
         int parcelIndex = parcelEncoder.Encode(7, 11);
-        publisher.PublishFromPlayerState(peer, MakeState(parcelIndex: parcelIndex, position: new Vector3(2f, 0f, 4f)));
+        publisher.PublishFromPlayerState(peer, MakeState(parcelIndex: parcelIndex, position: new Vector3(2f, 0f, 4f)),
+            realm: "realm-a");
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        Assert.That(spatialGrid.GetPeers(snapshot.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.PeersAt("realm-a", snapshot.GlobalPosition), Does.Contain(peer));
     }
 
     [Test]
@@ -142,6 +143,38 @@ public class PeerSnapshotPublisherTests
 
         Assert.That(snapshot.Realm, Is.EqualTo("main"),
             "Callers that omit realm must inherit it from the prior snapshot, not overwrite with null.");
+    }
+
+    [Test]
+    public void PublishFromPlayerState_WithoutRealm_LeavesPeerOutOfEveryGrid()
+    {
+        // A peer that has neither been seeded nor teleported has nothing to inherit, so it belongs in
+        // no realm's grid. This is the sole enforcement of "realm-less means invisible to everyone" —
+        // interest management and cluster derivation both rely on the peer simply not being there.
+        publisher.PublishFromPlayerState(peer, MakeState());
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Realm, Is.Null);
+        Assert.That(realmGrids.LiveRealmCount(), Is.EqualTo(0));
+    }
+
+    [Test]
+    public void PublishTeleport_AcrossRealms_LeavesNoTraceInTheOldRealm()
+    {
+        // The snapshot and the grids cannot be updated together, so the old grid is vacated first. An
+        // observer of the old realm must never find a peer whose snapshot already names the new one.
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(1f, 0f, 1f), "realm-a"));
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot before), Is.True);
+        Assert.That(realmGrids.PeersAt("realm-a", before.GlobalPosition), Does.Contain(peer));
+
+        publisher.PublishTeleport(peer, Teleport(0, new Vector3(1f, 0f, 1f), "realm-b"));
+
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot after), Is.True);
+        Assert.That(after.Realm, Is.EqualTo("realm-b"));
+        Assert.That(realmGrids.GetGrid("realm-a"), Is.Null);
+        Assert.That(realmGrids.PeersAt("realm-b", after.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.LiveRealmCount(), Is.EqualTo(1));
     }
 
     [Test]
@@ -205,7 +238,7 @@ public class PeerSnapshotPublisherTests
         publisher.PublishTeleport(peer, Teleport(parcelIndex, new Vector3(3f, 0f, 5f), "realm-a"));
 
         Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
-        Assert.That(spatialGrid.GetPeers(snapshot.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.PeersAt("realm-a", snapshot.GlobalPosition), Does.Contain(peer));
     }
 
     [Test]

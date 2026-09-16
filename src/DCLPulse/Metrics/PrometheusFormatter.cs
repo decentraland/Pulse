@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
+using Pulse.Peers.Simulation;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;
@@ -86,6 +87,14 @@ internal static class PrometheusFormatter
         WriteHistogramSeries(writer, "dcl_pulse_tick_duration_us", snap.Simulation.TickDurationUs, labels: null);
 
         WriteCounter(writer, "dcl_pulse_tick_overruns_total", "Simulation ticks that exceeded the base tick budget", snap.Simulation.TotalTickOverruns);
+
+        WriteHistogramHeader(writer, "dcl_pulse_resync_seq_gap", "Snapshot seqs a resync request's client baseline trailed the subject's latest publish, by how the request was served");
+
+        for (var i = 0; i < ResyncOutcomes.COUNT; i++)
+        {
+            HistogramSnapshot series = snap.Simulation.ResyncSeqGap is { } gap && i < gap.Length ? gap[i] : default(HistogramSnapshot);
+            WriteHistogramSeries(writer, "dcl_pulse_resync_seq_gap", series, "outcome=\"" + ResyncOutcomes.LABELS[i] + "\"");
+        }
 
         WriteHistogramHeader(writer, "dcl_pulse_outgoing_drain_cycle_us", "Outgoing queue drain-cycle duration in microseconds (non-empty cycles only)");
         WriteHistogramSeries(writer, "dcl_pulse_outgoing_drain_cycle_us", snap.Transport.OutgoingDrainCycleUs, labels: null);

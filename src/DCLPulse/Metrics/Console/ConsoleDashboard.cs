@@ -131,6 +131,7 @@ public sealed class ConsoleDashboard(
     private readonly HistogramTracker tickDurationTracker = new ();
     private readonly HistogramTracker drainCycleTracker = new ();
     private readonly HistogramTracker peerRttTracker = new ();
+    private readonly HistogramTracker resyncSeqGapTracker = new ();
     private readonly RateTracker tickOverrunsTracker = new (SPARKLINE_MAX_SAMPLES);
 
     private readonly GaugeTracker clusterCountTracker = new (SPARKLINE_MAX_SAMPLES);
@@ -187,6 +188,7 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView tickDuration = new ();
     private readonly RateStatsView drainCycle = new ();
     private readonly RateStatsView peerRtt = new ();
+    private readonly RateStatsView resyncSeqGap = new ();
     private readonly RateStatsView tickOverruns = new ();
 
     private readonly RateStatsView clusterCount = new ();
@@ -233,6 +235,7 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline tickDurationSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline drainCycleSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline peerRttSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline resyncSeqGapSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline tickOverrunsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
     private readonly Sparkline clusterCountSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
@@ -423,6 +426,12 @@ public sealed class ConsoleDashboard(
         peerRtt.Apply(peerRttStats, v => v.ToString("N0"));
         ShiftSample(peerRttSparkline.Values, peerRttStats.Window.P99);
 
+        // Resync baseline gap — one merged row over both outcomes; the targeted-delta vs
+        // STATE_FULL split lives in Grafana, where the fallback rate is the interesting series.
+        RateStats resyncSeqGapStats = resyncSeqGapTracker.Update(HistogramSnapshots.Merge(snap.Simulation.ResyncSeqGap), elapsed);
+        resyncSeqGap.Apply(resyncSeqGapStats, v => v.ToString("N0"));
+        ShiftSample(resyncSeqGapSparkline.Values, resyncSeqGapStats.Window.P99);
+
         // Per-message-type rates
         foreach ((var type, var tracker) in incomingRateTrackers)
             incomingRates[type] = tracker.Update(snap.IncomingMessages.Read(type), elapsed);
@@ -587,6 +596,7 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("Tick Duration (µs)", tickDuration, tickDurationSparkline.Style(STYLE_PEERS)),
                 RateStatsRow("Drain Cycle (µs)", drainCycle, drainCycleSparkline.Style(STYLE_OUTBOUND)),
                 RateStatsRow("Peer RTT (ms)", peerRtt, peerRttSparkline.Style(STYLE_PEERS)),
+                RateStatsRow("Resync Seq Gap", resyncSeqGap, resyncSeqGapSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("Tick Overruns", tickOverruns, tickOverrunsSparkline.Style(STYLE_ERROR)),
             ]);
 

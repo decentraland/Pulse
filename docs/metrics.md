@@ -330,7 +330,7 @@ The size distribution of the clusters each pass derives, as a Prometheus histogr
 | `dcl_pulse_cluster_peers`, `dcl_pulse_clusters` | gauges | mean cluster size is `peers / clusters`; both sum across instances, so `sum(peers) / sum(clusters)` is a true fleet mean |
 | `dcl_pulse_cluster_size_max` | gauge | the largest cluster of the last pass |
 
-Quantiles are computed at query time rather than exported pre-computed, which is what makes them aggregatable — a pre-computed median cannot be averaged across instances or re-quantiled over a window, because the mean of medians is not the median of the union. The cost is bucket-width approximation: bounds are exponential (`1, 2, 4, … 4096`), fine where nearly every cluster lands and coarse at the top where only a collapsed partition reaches.
+The scrape pipeline stores the bucket labels as floats — the server writes `le="1"`, Prometheus holds `le="1.0"` — so a dashboard query that names a bucket must match `le=~"1|1.0"`; a literal `le="1"` is silently empty. Quantiles are computed at query time rather than exported pre-computed, which is what makes them aggregatable — a pre-computed median cannot be averaged across instances or re-quantiled over a window, because the mean of medians is not the median of the union. The cost is bucket-width approximation: bounds are exponential (`1, 2, 4, … 4096`), fine where nearly every cluster lands and coarse at the top where only a collapsed partition reaches.
 
 Two things the histogram cannot answer, hence the gauges:
 
@@ -650,3 +650,5 @@ See the `/add-metric` skill (`/.claude/skills/add-metric/SKILL.md`) for step-by-
 - **Pattern B**: Sampled (direct read) — for queue depths and gauges
 - **Pattern C**: Per-enum collection — for counting by message type or enum variant
 - **Pattern D**: Histogram — for latency/duration value distributions (percentiles over buckets)
+
+The Grafana side is owned by the `dashboard-curator` agent (`.claude/agents/dashboard-curator.md`): it turns new series into panels on `pulse-server-dashboard.json`, reviews dashboard diffs, and consolidates the dashboard. `python scripts/dashboard-lint.py` is the mechanical check both it and a reviewer run — coverage against `PrometheusFormatter.cs`, units, aggregation, persisted legend hides, hard-coded deployment names.

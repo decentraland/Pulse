@@ -66,3 +66,6 @@ nunit-*.xml
 
 # AI
 /.claude/settings.local.json
+
+## Grafana dashboard export — local only, never committed (public repo; carries deployment names)
+/pulse-server-dashboard.json

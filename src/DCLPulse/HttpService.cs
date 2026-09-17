@@ -90,6 +90,9 @@ public sealed class HttpService(
 
         ctx.Response.ContentType = "application/json";
 
+        // Set before the write, so the response is length-delimited rather than chunked.
+        ctx.Response.ContentLength64 = body.Length;
+
         await ctx.Response.OutputStream.WriteAsync(body, token);
     }
 

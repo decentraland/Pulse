@@ -96,13 +96,15 @@ public sealed class StatsBoardView
     ///     Every realm holding at least one peer, peers descending then name ascending. A realm has
     ///     no existence apart from the peers in it, so an empty one is simply absent.
     /// </summary>
-    public IReadOnlyList<RealmSummary> Realms()
+    public static IReadOnlyList<RealmSummary> RealmsOf(ClusterPass pass)
     {
         var peerCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var clusterCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        foreach (PeerResult peer in peers)
-            peerCounts[peer.Realm!] = peerCounts.GetValueOrDefault(peer.Realm!) + 1;
+        // Tallied off the pass, not the projection: ClusterPeerInfo.Realm is non-null, where
+        // PeerResult.Realm is nullable only because the realm-scoped routes omit it.
+        foreach (ClusterPeerInfo peer in pass.Peers)
+            peerCounts[peer.Realm] = peerCounts.GetValueOrDefault(peer.Realm) + 1;
 
         foreach (ClusterInfo cluster in pass.Clusters)
             if (peerCounts.ContainsKey(cluster.Realm))

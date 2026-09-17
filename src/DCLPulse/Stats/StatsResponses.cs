@@ -64,8 +64,9 @@ public sealed record RealmPeerCount(string Name, int Peers);
 public sealed record RealmsResponse(IReadOnlyList<RealmSummary> Realms, string LastUpdated);
 
 /// <summary>
-///     A peers list. <see cref="Realm" /> is declared before <see cref="Peers" /> so it serializes
-///     first, as the contract documents, and is null on the all-realms routes.
+///     A peers list. <see cref="Realm" /> is null on the all-realms routes, where the entries carry
+///     their own. Property order is not part of the contract — <c>openapi.yaml</c> pins array element
+///     order only, and the golden harness compares keys rather than sequence.
 /// </summary>
 public sealed record PeersResponse(bool Ok, string? Realm, IReadOnlyList<PeerResult> Peers);
 

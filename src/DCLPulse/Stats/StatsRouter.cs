@@ -85,9 +85,11 @@ public sealed class StatsRouter(
 
     private StatsResponse Realms()
     {
-        StatsBoardView view = Read();
+        // Off the pass alone: the peer projection and its sort answer nothing this route asks.
+        ClusterPass pass = clusterBoard.Current;
 
-        return StatsResponse.Ok(new RealmsResponse(view.Realms(), IsoUtcMs(view.TakenAtUnixMs)));
+        return StatsResponse.Ok(new RealmsResponse(
+            StatsBoardView.RealmsOf(pass), IsoUtcMs(pass.TakenAtUnixMs)));
     }
 
     private StatsResponse RealmPeers(string realm)
@@ -152,18 +154,19 @@ public sealed class StatsRouter(
     /// </summary>
     private StatsResponse Status()
     {
-        StatsBoardView view = Read();
-
         return StatsResponse.Ok(new StatusResponse(
             identity.Version,
             timeProvider.UnixTimeMs,
             identity.CommitHash,
-            view.Realms().Select(static realm => new RealmPeerCount(realm.Name, realm.Peers)).ToArray()));
+            StatsBoardView.RealmsOf(clusterBoard.Current)
+                          .Select(static realm => new RealmPeerCount(realm.Name, realm.Peers))
+                          .ToArray()));
     }
 
     /// <summary>Built per request: the feature-flag overrides change as remote documents apply.</summary>
     private StatsResponse About() =>
-        StatsResponse.Ok(new AboutResponse(identity.CommitHash, Read().UserCount, featureFlags.AppliedOverrides));
+        StatsResponse.Ok(new AboutResponse(
+            identity.CommitHash, clusterBoard.Current.Peers.Count, featureFlags.AppliedOverrides));
 
     private static StatsResponse RedirectToDefaultRealm(string[] segments, StatsQuery query)
     {

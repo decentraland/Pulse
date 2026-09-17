@@ -8,13 +8,10 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     Every route of the stats surface (iteration-2 C2) against the contract pack's
-///     <c>http/*.json</c> goldens. Each golden carries the request that produced it, so the tests
-///     issue <em>that</em> request rather than a restatement of it — a golden regenerated for a
-///     different path cannot silently keep passing.
-///     <para />
-///     The world is one real clustering pass over the pack's five peers
-///     (<see cref="StatsFixtureWorld" />), so what is compared is what a running Pulse would answer
-///     from its own boards.
+///     <c>http/*.json</c> goldens. Each golden carries the request that produced it, so the test
+///     issues that request rather than a restatement — a golden regenerated for another path cannot
+///     keep passing. The world is one real clustering pass over the pack's five peers
+///     (<see cref="StatsFixtureWorld" />).
 /// </summary>
 [TestFixture]
 public class StatsGoldenTests
@@ -56,13 +53,7 @@ public class StatsGoldenTests
         JsonGolden.AssertMatches(fixture["body"], BodyOf(response), golden);
     }
 
-    /// <summary>
-    ///     The 404 body of <c>/peers/{id}</c>, asserted as the bytes on the wire rather than only
-    ///     structurally. <c>peer</c> has to be <em>present</em> and null: a consumer replacing
-    ///     worlds-content-server's <c>/wallet/:wallet/connected-world</c> tests <c>'peer' in body</c>
-    ///     or <c>body.peer === null</c>, and the published OpenAPI declares the key required — so
-    ///     omitting it turns a legitimate "not online" answer into a malformed one.
-    /// </summary>
+    /// <summary>Byte-exact: <c>peer</c> has to be present <em>and</em> null, as the OpenAPI requires.</summary>
     [Test]
     public void PeersSingleNotFound_WritesTheNullPeerKey()
     {
@@ -73,9 +64,8 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     The golden harness itself, because a harness that cannot see a missing key makes every
-    ///     null the contract pins unasserted — which is how the <c>peer</c> key above went missing
-    ///     while its golden test was green.
+    ///     The harness itself: a comparison blind to a missing key makes every null the contract
+    ///     pins vacuous — which is how the <c>peer</c> key above went missing with its test green.
     /// </summary>
     [Test]
     public void GoldenHarness_FailsWhenAKeyTheGoldenPinsAsNullIsAbsent()
@@ -97,10 +87,7 @@ public class StatsGoldenTests
             Is.Empty);
     }
 
-    /// <summary>
-    ///     And a golden with no <c>body</c> at all still means "no body" — <c>/health</c> and the
-    ///     404s that answer with nothing — which is a different statement from a null-valued key.
-    /// </summary>
+    /// <summary>A golden with no <c>body</c> is a different statement from one pinning a null value.</summary>
     [Test]
     public void GoldenHarness_StillReadsAGoldenWithoutABodyAsNoBody()
     {
@@ -111,10 +98,8 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     <c>lastUpdated</c> is a machine-readable timestamp, so it must not depend on the
-    ///     container's locale: <c>:</c> is the culture's time separator, and under a culture that
-    ///     spells it <c>.</c> the field would come out as <c>2026-09-04T09.52.47.834Z</c>, which every
-    ///     JS consumer's <c>new Date(...)</c> reads as Invalid Date.
+    ///     <c>:</c> is the culture's time separator, so without invariant formatting <c>fi-FI</c>
+    ///     would spell this timestamp <c>2026-09-04T09.52.47.834Z</c>.
     /// </summary>
     [Test]
     [SetCulture("fi-FI")]
@@ -126,13 +111,9 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     <c>/comms/</c> is a second spelling of the paths archipelago-stats published under it and of
-    ///     nothing else. Stripping it before matching every route answered <c>/comms/realms</c>,
-    ///     <c>/comms/status</c>, <c>/comms/about</c> and the realm-scoped routes as well — unversioned
-    ///     public surface nobody asked for, which becomes hard to withdraw once a caller depends on it.
-    ///     <para />
-    ///     <c>/comms/peers/{id}</c> left this list with A5: stats served that alias with a live 200, so
-    ///     it is answered rather than declined. One segment deeper is still nothing.
+    ///     <c>/comms/</c> is a second spelling of the paths archipelago-stats published under it and
+    ///     of nothing else; stripping it before routing would republish the whole surface unversioned.
+    ///     <c>/comms/peers/{id}</c> left this list with A5 — one segment deeper is still nothing.
     /// </summary>
     [TestCase("/comms/realms")]
     [TestCase("/comms/status")]
@@ -153,9 +134,8 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     The legacy set keeps working under the prefix, both exceptions included — the paths
-    ///     <c>redirects.json</c> lists are exactly what <c>/comms/</c> is for: four that redirect,
-    ///     <c>/comms/peers</c> carrying a query parameter, and <c>/comms/peers/{id}</c> (A5).
+    ///     The other side of that: exactly what <c>redirects.json</c> lists — four redirects, the
+    ///     query-parameter forms of <c>/comms/peers</c>, and <c>/comms/peers/{id}</c> (A5).
     /// </summary>
     [TestCase("/comms/peers", 308)]
     [TestCase("/comms/parcels", 308)]
@@ -171,15 +151,9 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     A5: <c>/comms/peers/{id}</c> is <em>served</em>, not redirected — archipelago-stats answered
-    ///     that alias with a live 200 and consumers still call it, so a 308 (or the 404 it used to get
-    ///     here) breaks a caller that works in production today.
-    ///     <para />
-    ///     Asserted as "the same answer as the unprefixed path", byte for byte, rather than against a
-    ///     restatement of the golden: the contract is that the two paths are one handler, so a change to
-    ///     the peer shape, the <c>realm</c> field or the 404 body cannot land on one of them only. Every
-    ///     branch of the route is driven through it — a peer in Genesis City, a peer in a world, a
-    ///     wallet that is offline, and a wallet spelled in another casing.
+    ///     A5: the alias is <em>served</em>, not redirected. Compared byte for byte against the
+    ///     unprefixed path rather than a restated golden, so the two cannot diverge on the peer
+    ///     shape, the <c>realm</c> field or the 404 body.
     /// </summary>
     [TestCase("0x0000000000000000000000000000000000000001", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInGenesisCity")]
     [TestCase("0x0000000000000000000000000000000000000003", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInAWorld")]
@@ -190,8 +164,7 @@ public class StatsGoldenTests
         StatsResponse direct = Request($"/peers/{wallet}");
         StatsResponse aliased = Request($"/comms/peers/{wallet}");
 
-        // Both halves of the comparison have to be a real answer, or two routes that answered nothing
-        // would satisfy the equality below.
+        // Without this, two routes that both answered nothing would satisfy the equality below.
         Assert.That(direct.Status, Is.EqualTo(expected), wallet);
         Assert.That(BodyText(direct), Is.Not.Null, wallet);
 
@@ -200,11 +173,7 @@ public class StatsGoldenTests
         Assert.That(BodyText(aliased), Is.EqualTo(BodyText(direct)), wallet);
     }
 
-    /// <summary>
-    ///     Island membership, against a naive scan of the pass it was built from. The view indexes
-    ///     members per cluster in one pass instead of rescanning the whole peer array per island, and
-    ///     what must not change is the answer — including the address ordering inside each island.
-    /// </summary>
+    /// <summary>The view's per-cluster index against a naive scan of the same pass, ordering included.</summary>
     [Test]
     public void Islands_ListExactlyTheirMembers_HoweverTheViewIndexesThem()
     {
@@ -230,12 +199,7 @@ public class StatsGoldenTests
         }
     }
 
-    /// <summary>
-    ///     <c>/about</c> is the one response that is a superset of the golden: Pulse reports the
-    ///     feature-flag overrides this task is running with, which archipelago-stats had no
-    ///     equivalent of. The contract's two fields must match exactly; the extra key is named here
-    ///     so a third one could not appear unnoticed.
-    /// </summary>
+    /// <summary>The one response that is a superset of its golden — the extra key must be named here.</summary>
     [Test]
     public void About_AnswersTheContractGolden_PlusPulsesFeatureFlagOverrides()
     {
@@ -249,10 +213,8 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     The cap on <c>/peers?id=</c>. Its golden cannot carry 201 wallets in its request field, so
-    ///     this is the one request built here rather than read from the pack — and the boundary is
-    ///     checked from both sides, since an off-by-one would either reject a legal page or leave the
-    ///     bound unenforced.
+    ///     The one request built here rather than read from the pack — a golden cannot carry 201
+    ///     wallets in its <c>request</c> field. Checked from both sides of the boundary.
     /// </summary>
     [Test]
     public void PeersById_RefusesMoreIdsThanTheCap()
@@ -268,12 +230,7 @@ public class StatsGoldenTests
             "the cap is inclusive — a request of exactly MAX_IDS is legal");
     }
 
-    /// <summary>
-    ///     The legacy table: the unscoped paths and their <c>/comms/</c> copies answer 308 into
-    ///     <c>/realms/main/…</c> with the query string intact, except the two that a query parameter
-    ///     turns into all-realms lookups. Driven from <c>redirects.json</c> so the table cannot drift
-    ///     from the one every consumer was given.
-    /// </summary>
+    /// <summary>Driven from <c>redirects.json</c>, so the table cannot drift from the published one.</summary>
     [Test]
     public void LegacyPaths_FollowTheContractRedirectTable()
     {
@@ -286,9 +243,8 @@ public class StatsGoldenTests
             string path = entry!["path"]!.GetValue<string>();
             int status = entry["status"]!.GetValue<int>();
 
-            // /metrics is the one route this surface does not own: it keeps its bearer token and is
-            // answered by HttpService before the router is reached, which is why the router declines
-            // it rather than serving it unauthenticated.
+            // /metrics is the one route this surface does not own: HttpService answers it behind a
+            // bearer token, so the router has to decline rather than serve it unauthenticated.
             if (path == "/metrics")
             {
                 Assert.That(Request(path).Status, Is.EqualTo(404),
@@ -312,15 +268,11 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     A row that names a golden instead of a <c>Location</c> claims the path is answered by the
-    ///     same handler as that golden, so where the row <em>is</em> the golden's own request modulo the
-    ///     <c>/comms/</c> prefix, the body has to be the golden's body. That is what makes the A5 rows
-    ///     say something: <c>/comms/peers/0x…3</c> has to return <c>peers-single.json</c> and the
-    ///     unknown wallet <c>peers-single-404.json</c>, not merely 200 and 404.
-    ///     <para />
-    ///     A row whose request differs from its golden's — <c>/comms/peers?id=</c> carries one id where
-    ///     <c>peers-by-id.json</c> asks for three — is the same handler on a different input, and the
-    ///     golden test proper already pins that input.
+    ///     A row naming a golden instead of a <c>Location</c> claims that path is answered by the
+    ///     golden's handler, so where the row <em>is</em> that golden's own request modulo the
+    ///     <c>/comms/</c> prefix, the body has to match too — that is what makes the A5 rows say
+    ///     something. A row on a different input (<c>/comms/peers?id=</c> carries one id where its
+    ///     golden asks three) is skipped; the golden test proper already pins that input.
     /// </summary>
     private static void AssertAnsweredLikeItsGolden(string golden, string path, StatsResponse response)
     {
@@ -340,11 +292,6 @@ public class StatsGoldenTests
         JsonGolden.AssertMatches(fixture["body"], BodyOf(response), $"{file} via {path}");
     }
 
-    /// <summary>
-    ///     Realm segments match case-insensitively and the response carries the canonical lowercase
-    ///     name, so a caller that got its realm from a scene deployment or a user does not have to
-    ///     normalise it first — and every response says the same thing about which realm it describes.
-    /// </summary>
     [TestCase("/realms/CozyFarm.dcl.eth/peers")]
     [TestCase("/realms/COZYFARM.DCL.ETH/peers")]
     [TestCase("/realms/cozyfarm.dcl.eth/peers")]
@@ -356,11 +303,7 @@ public class StatsGoldenTests
         Assert.That(body["peers"]!.AsArray(), Has.Count.EqualTo(1));
     }
 
-    /// <summary>
-    ///     A realm nobody is in is an empty realm on every route, not a 404: a realm exists exactly as
-    ///     long as it has peers, so a caller polling a world that has just emptied must not have to
-    ///     treat that as an error.
-    /// </summary>
+    /// <summary>A realm exists exactly as long as it has peers, so one nobody is in is empty, not a 404.</summary>
     [TestCase("/realms/nosuchrealm/peers")]
     [TestCase("/realms/nosuchrealm/parcels")]
     [TestCase("/realms/nosuchrealm/islands")]
@@ -380,9 +323,8 @@ public class StatsGoldenTests
     }
 
     /// <summary>
-    ///     An id that exists in another realm is not found under this one. Cluster ids come from one
-    ///     global counter, so they are unique platform-wide and this is the difference between "not
-    ///     here" and "nowhere" — which a caller holding a stale island id needs to be able to tell.
+    ///     Cluster ids come from one global counter, so <c>C3</c> is a real id under the wrong realm
+    ///     — a different case from <c>C99</c>, which exists nowhere.
     /// </summary>
     [Test]
     public void IslandFromAnotherRealm_IsNotFound()
@@ -392,10 +334,6 @@ public class StatsGoldenTests
         Assert.That(Request("/realms/main/islands/C99").Status, Is.EqualTo(404));
     }
 
-    /// <summary>
-    ///     A path this surface does not own is a 404 with no body, which is what <c>HttpService</c>
-    ///     answered before these routes existed.
-    /// </summary>
     [TestCase("/")]
     [TestCase("/realms/main")]
     [TestCase("/realms/main/peers/extra")]
@@ -419,9 +357,7 @@ public class StatsGoldenTests
             : router.Handle(pathAndQuery[..split], StatsQuery.Parse(pathAndQuery[(split + 1)..]));
     }
 
-    /// <summary>
-    ///     The path from a golden's <c>request</c> field, which reads <c>"GET /realms/main/peers"</c>.
-    /// </summary>
+    /// <summary>The path out of a golden's <c>request</c> field — <c>"GET /realms/main/peers"</c>.</summary>
     private static string RequestPathOf(JsonNode golden)
     {
         string request = golden["request"]!.GetValue<string>();
@@ -432,17 +368,11 @@ public class StatsGoldenTests
     private static JsonNode? BodyOf(StatsResponse response) =>
         response.Body is { } body ? JsonNode.Parse(Encoding.UTF8.GetString(body)) : null;
 
-    /// <summary>
-    ///     The body as the bytes on the wire, or null when there is none — so two responses compare
-    ///     on what a caller actually receives, key order and number formatting included.
-    /// </summary>
+    /// <summary>The raw body text, so comparisons cover key order and number formatting too.</summary>
     private static string? BodyText(StatsResponse response) =>
         response.Body is { } body ? Encoding.UTF8.GetString(body) : null;
 
-    /// <summary>
-    ///     <paramref name="count" /> distinct wallets, none of them online, so the only thing under
-    ///     test is how many ids the route accepts.
-    /// </summary>
+    /// <summary><paramref name="count" /> wallets, none online: only the id count is under test.</summary>
     private static string PathWithIds(int count) =>
         "/peers?" + string.Join('&', Enumerable.Range(1000, count).Select(static n => $"id={IterationTwoFixtures.Wallet(n)}"));
 }

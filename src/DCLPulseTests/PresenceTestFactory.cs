@@ -7,24 +7,16 @@ using Pulse.Presence;
 namespace DCLPulseTests;
 
 /// <summary>
-///     <see cref="ParcelChangeTracker" /> instances for fixtures that have to construct the peer
-///     pipeline but are not testing presence.
+///     <see cref="ParcelChangeTracker" /> instances for fixtures that have to construct the peer pipeline.
 /// </summary>
 internal static class PresenceTestFactory
 {
     public const int MAX_PEERS = 100;
 
-    /// <summary>
-    ///     A tracker with the feed off — the shape of a deployment with no broker configured, where
-    ///     every entry point is a no-op. What fixtures that only need the pipeline to compile want.
-    /// </summary>
+    /// <summary>A tracker with the feed off — no broker configured, so every entry point is a no-op.</summary>
     public static ParcelChangeTracker Disabled() =>
         Create(Substitute.For<IClusterFeedPublisher>(), natsUrl: string.Empty);
 
-    /// <summary>
-    ///     A tracker publishing to <paramref name="feed" />, for fixtures that assert on the entries
-    ///     a pass or a disconnect produces.
-    /// </summary>
     public static ParcelChangeTracker Publishing(IClusterFeedPublisher feed, int maxPeers = MAX_PEERS) =>
         Create(feed, natsUrl: "nats://localhost:4222", maxPeers);
 

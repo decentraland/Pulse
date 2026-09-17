@@ -165,16 +165,14 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
         feedEnabled = this.options.IsConfigured;
         presenceEnabled = feedEnabled && this.presenceOptions.Enabled && this.presenceOptions.BatchIntervalMs > 0;
 
-        // Consumers have nothing for this server_name yet, so the first batch of the process has to
-        // be a full snapshot (C1.4). Raised here rather than in the run loop so a broker that takes a
-        // while to reach cannot turn the opening batch into a delta against nothing.
+        // The first batch of the process has to be a full snapshot (C1.4). Raised here rather than in
+        // the run loop, so a slow-to-reach broker cannot turn the opening batch into a delta.
         if (presenceEnabled)
         {
             parcelSnapshotRequest = PresenceSnapshotReason.Start;
 
-            // The periodic deadline runs from process start, not from the epoch. Left at zero it is
-            // due on the first turn of the loop, which would raise an interval request on top of the
-            // start snapshot and spend the next batch re-sending what that snapshot just said.
+            // The periodic deadline runs from process start, not from the epoch: left at zero it is
+            // due on the first turn and re-sends what the start snapshot just said.
             lastParcelSnapshotUnixMs = this.timeProvider.UnixTimeMs;
         }
 
@@ -265,8 +263,7 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
                 topologyPool.Push(abandoned);
             }
 
-            // Presence entries are plain values rather than pooled messages, so dropping them is the
-            // whole of their teardown.
+            // Presence entries are plain values, not pooled messages — dropping them is the teardown.
             pendingParcelChangeByAddress.Clear();
             parcelChangeOrder.Clear();
             pendingParcelSnapshot = null;
@@ -558,17 +555,14 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
                 PARCEL_CHANGES_SUBJECT, options.ServerName, presenceOptions.BatchIntervalMs, presenceOptions.SnapshotIntervalMs);
         else
 
-            // Warning for the same reason stats-only mode is: production floors logging at Warning,
-            // and a presence feed that was meant to be on and silently is not is what an operator has
-            // to be able to see in the deployment log.
+            // Warning, not Information: production floors logging at Warning, and a feed that was
+            // meant to be on and silently is not has to be visible in the deployment log.
             logger.LogWarning(
                 "Presence feed disabled ({Subject} will carry nothing) — Presence:Enabled is {Enabled}, Presence:BatchIntervalMs is {BatchIntervalMs}",
                 PARCEL_CHANGES_SUBJECT, presenceOptions.Enabled, presenceOptions.BatchIntervalMs);
 
-        // The effective server_name, whether it was configured or defaulted (A3): consumers key
-        // their per-server presence state on it and replace that state per snapshot, so two replicas
-        // sharing one value delete each other's populations — and this line is the only place an
-        // operator can see which value this process actually resolved.
+        // The effective server_name, configured or defaulted (A3): the only place an operator can see
+        // which value this process resolved, and NatsOptions.ServerName says why it must be unique.
         logger.LogInformation("NATS publisher started — {Broker}, server_name {ServerName}",
             SanitizeBrokerUrl(options.Url), options.ServerName);
 
@@ -832,11 +826,9 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
     }
 
     /// <summary>
-    ///     Records an eviction — the outbox's one path to genuine loss — and, with it, that the
-    ///     presence delta stream is no longer complete, so the next presence batch has to be a full
-    ///     snapshot (C1.4). Every eviction counted here goes through this one method, whichever
-    ///     outbox let a message go, which is what makes "after any outbox eviction" one call site
-    ///     rather than a rule each outbox has to remember.
+    ///     Records an eviction — the outbox's one path to genuine loss — and with it that the presence
+    ///     delta stream is incomplete, so the next batch must be a snapshot (C1.4). One call site for
+    ///     every eviction, whichever outbox let the message go.
     /// </summary>
     private void CountDropped()
     {
@@ -923,11 +915,9 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
             Interlocked.Increment(ref reconnectCount);
             PulseMetrics.Nats.RECONNECTS.Add(1);
 
-            // A consumer that subscribed while this connection was down holds nothing for this
-            // server_name, and the consumer rule tells it to hold and wait on anything that is not a
-            // snapshot — so resuming mid-delta can leave it frozen for a whole snapshot interval.
-            // Labelled Start for the same reason the opening batch is: as far as the wire is
-            // concerned this is a fresh stream.
+            // A consumer that subscribed while the connection was down holds nothing for this
+            // server_name, so resuming mid-delta can freeze it for a whole snapshot interval.
+            // Labelled Start because, on the wire, this is a fresh stream.
             RequestParcelSnapshot(PresenceSnapshotReason.Start);
         }
 

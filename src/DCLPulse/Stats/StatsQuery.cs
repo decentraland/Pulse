@@ -1,11 +1,9 @@
 namespace Pulse.Stats;
 
 /// <summary>
-///     A parsed query string. Its own type rather than <c>NameValueCollection</c> because two things
-///     the stats surface needs are awkward there: a repeated key
-///     (<c>/peers?id=0x…&amp;id=0x…</c>) has to keep every value, and a redirect has to echo the
-///     query back <em>exactly</em> as it arrived — so the raw text is kept alongside the parsed
-///     values instead of being reconstructed from them.
+///     A parsed query string that keeps every value of a repeated key
+///     (<c>/peers?id=0x…&amp;id=0x…</c>), and the raw text beside them, since a redirect has to echo
+///     the query back exactly as it arrived rather than reconstruct it.
 /// </summary>
 public readonly struct StatsQuery
 {

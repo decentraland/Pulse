@@ -4,25 +4,19 @@ using Pulse.Clusters;
 namespace DCLPulseTests;
 
 /// <summary>
-///     <c>Nats:ServerName</c> is the key consumers replace presence state by: a
-///     <c>snapshot=true</c> batch tells them to drop everything they hold for that
-///     <c>server_name</c> and take the batch instead. Two replicas sharing one value therefore
-///     delete each other's populations once per snapshot interval and read as a permanent
-///     <c>seq</c> gap in between — a failure that is completely silent on the Pulse side, since both
-///     instances look healthy.
-///     <para />
-///     So the default has to be instance-unique rather than a shared literal (A3), and an explicit
-///     value still has to win, because that is how a deployment pins pod names.
+///     <c>Nats:ServerName</c> scopes presence state on the consumer side, so two replicas sharing
+///     one value wipe each other's populations every snapshot interval — silently, since both
+///     instances look healthy. Hence an instance-unique default (A3), with an explicit value still
+///     winning, which is how a deployment pins pod names.
 /// </summary>
 [TestFixture]
 public class NatsServerNameTests
 {
     /// <summary>
-    ///     The unconfigured default. The machine name is the pod name under default Kubernetes
-    ///     networking and the container id under plain Docker, so two replicas of one deployment do
-    ///     not share it — unless the pod's hostname is the node's (<c>hostNetwork: true</c>, a fixed
-    ///     <c>spec.hostname</c>) or two processes run on one machine, which is why the docs tell those
-    ///     deployments to configure it.
+    ///     The machine name is the pod name under default Kubernetes networking and the container id
+    ///     under plain Docker, so replicas of one deployment do not share it. The cases that break
+    ///     that — <c>hostNetwork: true</c>, a fixed <c>spec.hostname</c>, two processes per host —
+    ///     are the ones the docs tell operators to configure.
     /// </summary>
     [Test]
     public void ServerName_DefaultsToTheHostname_WhenNotConfigured()
@@ -37,9 +31,8 @@ public class NatsServerNameTests
     }
 
     /// <summary>
-    ///     A blank value is "not configured", not a server with an empty name: <c>appsettings.json</c>
-    ///     ships the key empty so that the shape of the configuration is discoverable, and an
-    ///     environment that sets <c>Nats__ServerName=</c> means the same thing.
+    ///     Blank is "not configured", not a server with an empty name — <c>appsettings.json</c> ships
+    ///     the key empty so the configuration shape is discoverable.
     /// </summary>
     [TestCase("")]
     [TestCase("   ")]
@@ -49,10 +42,7 @@ public class NatsServerNameTests
             Is.EqualTo($"pulse-{Environment.MachineName}"));
     }
 
-    /// <summary>
-    ///     Stable for the life of the process, whatever it resolved to — consumers key their
-    ///     per-server state on it, so a value that drifted would look like a second server (C1.5).
-    /// </summary>
+    /// <summary>A value that drifted mid-process would read as a second server (C1.5).</summary>
     [Test]
     public void ServerName_IsStableAcrossReads()
     {
@@ -65,10 +55,7 @@ public class NatsServerNameTests
         Assert.That(first, Is.Not.Empty);
     }
 
-    /// <summary>
-    ///     And what the shipped configuration resolves to, since a literal left in
-    ///     <c>appsettings.json</c> would defeat the whole default.
-    /// </summary>
+    /// <summary>A literal left in <c>appsettings.json</c> would defeat the default entirely.</summary>
     [Test]
     public void TheShippedAppsettings_DoesNotPinASharedServerName()
     {

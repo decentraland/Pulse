@@ -7,16 +7,12 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     Byte-for-byte checks against the iteration-2 contract pack's <c>parcel_changes/*.bin</c>. Every
-///     batch here is assembled by the real <see cref="Pulse.Presence.ParcelChangeTracker" /> from a
-///     real <c>ClusterTracker</c> pass, taken out of the real <c>NatsPublisher</c> outbox and written
-///     by the serializer the publisher hands to NATS — so what these assert is the bytes a deployed
-///     Pulse puts on <c>engine.parcel_changes</c>, not a hand-built message that happens to match.
+///     batch is assembled by the real <see cref="Pulse.Presence.ParcelChangeTracker" /> and written by
+///     the serializer the publisher hands to NATS, so what they pin is the bytes a deployed Pulse puts
+///     on <c>engine.parcel_changes</c>.
 ///     <para />
-///     Fixtures 01–06 and 08 are one continuous scenario on <c>pulse-1</c>: the sequence numbers, the
-///     server times and each peer's state carry from one to the next, which is why they are produced
-///     by one walk rather than per-test setups. 09 is a second instance and 10 a restart, so each has
-///     its own process. 07 is the invalid fixture — a realm that is not lowercase — and the only thing
-///     to assert about it is that this producer cannot emit it.
+///     01–06 and 08 come from one continuous <c>pulse-1</c> walk, since seq and peer state carry from
+///     one to the next. 09 is a second instance, 10 a restart, 07 the fixture this producer cannot emit.
 /// </summary>
 [TestFixture]
 public class PresenceWireFixtureTests
@@ -37,9 +33,8 @@ public class PresenceWireFixtureTests
     private Dictionary<string, byte[]> emitted;
 
     /// <summary>
-    ///     Walks the <c>pulse-1</c> scenario once and keeps the wire bytes of every batch it produced,
-    ///     so each fixture gets its own test name while the chain that produces them stays a single
-    ///     ordered story.
+    ///     Walks <c>pulse-1</c> once and keeps every batch's bytes, so each fixture gets its own test
+    ///     name while the chain producing them stays one ordered walk.
     /// </summary>
     [OneTimeSetUp]
     public void WalkPulseOneScenario()
@@ -47,9 +42,7 @@ public class PresenceWireFixtureTests
         var scenario = new PresenceScenario("pulse-1");
         emitted = new Dictionary<string, byte[]>(StringComparer.Ordinal);
 
-        // 01 — the whole state of pulse-1 as its opening batch. The peers are placed before the
-        // first pass, so the snapshot the publisher asked for on start is the first thing that goes
-        // out (C1.4 start).
+        // 01 — placed before the first pass, so the start snapshot is the first batch out (C1.4 start).
         scenario.Place(W1, IterationTwoFixtures.Wallet(1), MAIN, -1, 0);
         scenario.Place(W2, IterationTwoFixtures.Wallet(2), MAIN, 147, -3);
         scenario.Place(W3, IterationTwoFixtures.Wallet(3), COZYFARM, 0, 0);
@@ -63,8 +56,7 @@ public class PresenceWireFixtureTests
         scenario.RunPass();
         Capture(scenario, "02-delta-move", T0 + 2000);
 
-        // 03 — W1 leaves. The exit comes from the peer-lifecycle drain, never from "missing in this
-        // pass", so the pass that follows must add nothing.
+        // 03 — W1 leaves; the exit comes from the lifecycle drain, not from "missing in this pass".
         scenario.Remove(W1);
         scenario.RunPass();
         Capture(scenario, "03-exit", T0 + 4000);
@@ -81,17 +73,15 @@ public class PresenceWireFixtureTests
         scenario.RunPass();
         Capture(scenario, "05-coalesced", T0 + 8000);
 
-        // 06 — a handshake/teleport that arrived mixed-case on both the wallet and the realm, taken
-        // through the production ingest path so the canonicalizer is what lowercases them (C1.5).
+        // 06 — wallet and realm both arrive mixed-case; the ingest canonicalizer lowercases them (C1.5).
         scenario.Register(WAB, "0x00000000000000000000000000000000000000AB");
         scenario.Teleport(WAB, "CozyFarm.dcl.eth", 5, 6);
         scenario.RunPass();
         Capture(scenario, "06-mixed-case", T0 + 10000);
 
-        // Two batches that were assembled and never delivered — a broker that refused the publish.
-        // seq is stamped per assembled batch and never reused, which is what turns a failed publish
-        // into the real gap 08 pins. W4 steps away and back, so the state 10 restarts into is
-        // unchanged.
+        // Two batches assembled and never delivered, as a refused publish leaves them. seq is stamped
+        // per assembled batch and never reused, which is the gap 08 pins. W4 steps away and back, so
+        // the state 10 restarts into is unchanged.
         scenario.Move(W4, MAIN, 0, 0);
         scenario.RunPass();
         Assert.That(scenario.NextBatch(T0 + 12000)?.Seq, Is.EqualTo(7u), "the lost batch still consumes a seq");
@@ -120,10 +110,7 @@ public class PresenceWireFixtureTests
         AssertBytes(fixture, emitted[fixture]);
     }
 
-    /// <summary>
-    ///     A second instance announces itself with its own snapshot at seq 1: <c>seq</c> is per
-    ///     <c>server_name</c>, so nothing about pulse-1's stream is implied by it.
-    /// </summary>
+    /// <summary><c>seq</c> is per <c>server_name</c>, so a second instance opens at 1 of its own.</summary>
     [Test]
     public void SecondInstance_EmitsItsOwnOpeningSnapshot()
     {
@@ -135,11 +122,7 @@ public class PresenceWireFixtureTests
         AssertBytes("09-second-server", scenario.NextBatchBytes(T0 + 17000)!);
     }
 
-    /// <summary>
-    ///     A restart is a new process: <c>seq</c> is back to 1 and the batch is a snapshot, which is
-    ///     what tells a consumer to replace everything it holds for this <c>server_name</c> rather
-    ///     than to treat the drop as a gap (C1.4 start).
-    /// </summary>
+    /// <summary>A restart is a new process: <c>seq</c> back to 1, and a snapshot, not a gap (C1.4 start).</summary>
     [Test]
     public void Restart_EmitsASnapshotAtSeqOne()
     {
@@ -153,11 +136,9 @@ public class PresenceWireFixtureTests
     }
 
     /// <summary>
-    ///     07 is the fixture a conforming producer cannot emit. The realm is canonicalized at ingest,
-    ///     so a peer that handshakes into "Main" is placed in "main" and the feed says "main" — there
-    ///     is no path from a mixed-case realm on the wire in to a mixed-case realm on the wire out.
-    ///     Asserted against the invalid bytes themselves, so the test fails if a future ingest path
-    ///     ever lets one through.
+    ///     07 is the fixture a conforming producer cannot emit: realms are canonicalized at ingest, so
+    ///     there is no path from a mixed-case realm on the wire in to one on the wire out. Asserted
+    ///     against the invalid bytes, so a future ingest path that let one through fails here.
     /// </summary>
     [Test]
     public void MixedCaseRealm_IsUnreachable_SoFixture07CannotBeProduced()
@@ -179,9 +160,8 @@ public class PresenceWireFixtureTests
     }
 
     /// <summary>
-    ///     The exit is published once, by the lifecycle drain alone. If exits were also derived from
-    ///     "present last pass, missing in this one", the pass after a removal would emit a second
-    ///     one — so a batch here at all is the failure.
+    ///     The exit comes from the lifecycle drain alone. Were it also derived from "present last pass,
+    ///     missing in this one", the pass after a removal would emit a second.
     /// </summary>
     [Test]
     public void PassAfterARemoval_EmitsNothing()
@@ -213,10 +193,7 @@ public class PresenceWireFixtureTests
             emitted[fixture] = bytes;
     }
 
-    /// <summary>
-    ///     Compares against the pack's bytes, and on a mismatch prints both messages decoded so the
-    ///     failure names the field that drifted instead of an offset.
-    /// </summary>
+    /// <summary>On a mismatch, prints both messages decoded so the failure names the field, not an offset.</summary>
     private static void AssertBytes(string fixture, byte[] actual)
     {
         byte[] expected = IterationTwoFixtures.Bytes($"parcel_changes/{fixture}.bin");

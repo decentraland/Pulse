@@ -23,9 +23,8 @@ namespace DCLPulseTests;
 /// <summary>
 ///     A live presence pipeline: real boards, real <see cref="ClusterTracker" />, real
 ///     <see cref="ParcelChangeTracker" /> and the real <see cref="NatsPublisher" /> outbox and
-///     serializer, with only the broker and the clock replaced. Tests drive peers the way the server
-///     does — place, move, teleport, remove — and read back the batches the wire would carry, so the
-///     bytes they assert on came through every step the deployed feed goes through.
+///     serializer, with only the broker and the clock replaced. Tests place, move, teleport and remove
+///     peers, then read back the batches the wire would carry.
 /// </summary>
 internal sealed class PresenceScenario
 {
@@ -36,16 +35,14 @@ internal sealed class PresenceScenario
     private static readonly uint[] SIMULATION_STEPS = [50u, 100u, 200u];
 
     /// <summary>
-    ///     Phase-2 gate. Short so <see cref="DriveCleanup" /> can step past it without the monotonic
-    ///     clock running away from the wall-clock stamps the fixtures pin.
+    ///     Phase-2 cleanup gate. Short so <see cref="DriveCleanup" /> can step past it without the
+    ///     monotonic clock running away from the wall-clock stamps the fixtures pin.
     /// </summary>
     private const uint DISCONNECTION_CLEAN_TIMEOUT_MS = 100;
 
     /// <summary>
     ///     <paramref name="unixOriginMs" /> is the wall clock this process started at, and defaults to
-    ///     the contract pack's T0 so that every timestamp a test pins — a batch's <c>server_time</c>, a
-    ///     peer's <c>lastPing</c>, a pass's <c>lastUpdated</c> — is expressible as a monotonic offset
-    ///     from it, which is the only way the two clocks can agree the way they do in production.
+    ///     the contract pack's T0 so every timestamp a test pins is a monotonic offset from it.
     /// </summary>
     public PresenceScenario(
         string serverName = "pulse-1",
@@ -61,8 +58,7 @@ internal sealed class PresenceScenario
 
         var natsOptions = Options.Create(new NatsOptions
         {
-            // Any parseable broker: nothing connects, since the run loop is never started — the
-            // outbox and the batch assembly are what these tests drive.
+            // Any parseable broker: the run loop is never started, so nothing connects.
             Url = "nats://localhost:4222",
             ServerName = serverName,
             ChannelCapacity = channelCapacity,
@@ -143,11 +139,7 @@ internal sealed class PresenceScenario
 
     public MessagePipe MessagePipe { get; }
 
-    /// <summary>
-    ///     The real <see cref="PeerSimulation" />, wired to this scenario's boards and to the
-    ///     publishing <see cref="ParcelChanges" />, so an exit reaches the feed through the production
-    ///     cleanup rather than through a direct call.
-    /// </summary>
+    /// <summary>The real <see cref="PeerSimulation" />: an exit reaches the feed through its cleanup.</summary>
     public PeerSimulation Simulation { get; }
 
     /// <summary>The worker's peer set, as <c>PeersManager</c> keeps it.</summary>
@@ -160,10 +152,7 @@ internal sealed class PresenceScenario
     public static Vector3 CentreOf(int parcelX, int parcelY) =>
         new ((parcelX + 0.5f) * PARCEL_SIZE, 0f, (parcelY + 0.5f) * PARCEL_SIZE);
 
-    /// <summary>
-    ///     Registers a peer's wallet and puts it in a realm at a parcel, as authentication plus the
-    ///     first snapshot publish would.
-    /// </summary>
+    /// <summary>Registers a peer's wallet and places it, as authentication plus the first publish would.</summary>
     public void Place(PeerIndex peer, string wallet, string realm, int parcelX, int parcelY, Vector3? position = null)
     {
         IdentityBoard.Set(peer, wallet);
@@ -172,10 +161,8 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     Moves a peer to a parcel, publishing the snapshot and re-indexing the grid the way
-    ///     <see cref="PeerSnapshotPublisher" /> does — but with the exact global position the caller
-    ///     asked for, since the production path quantizes the in-parcel offset to a step far coarser
-    ///     than the goldens' tolerance.
+    ///     Moves a peer as <see cref="PeerSnapshotPublisher" /> would, but at the exact position asked
+    ///     for — the production path quantizes the in-parcel offset far coarser than the goldens need.
     /// </summary>
     public void Move(PeerIndex peer, string realm, int parcelX, int parcelY, Vector3? position = null)
     {
@@ -192,9 +179,8 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     Moves a peer through the production ingest path — <see cref="FieldValidator" /> then
-    ///     <see cref="PeerSnapshotPublisher" /> — so a test can assert what the realm canonicalizer
-    ///     does to a realm that arrives mixed-case.
+    ///     Moves a peer through the production ingest path, <see cref="FieldValidator" /> then
+    ///     <see cref="PeerSnapshotPublisher" />, so the realm canonicalizer runs on the way in.
     /// </summary>
     public void Teleport(PeerIndex peer, string realm, int parcelX, int parcelY)
     {
@@ -217,15 +203,10 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     Takes a peer out the way every exit path does: the <c>Disconnected</c> lifecycle event
-    ///     drained by the real <c>PeersManager</c> (phase 1 — off the grid, off the board, state
-    ///     DISCONNECTING), then a simulation tick past
-    ///     <see cref="DISCONNECTION_CLEAN_TIMEOUT_MS" /> so the real
-    ///     <see cref="PeerSimulation" /> cleanup runs (phase 2 — the presence feed's exit seam).
-    ///     <para />
-    ///     Whatever kicked the peer — a clean disconnect, an auth timeout, a duplicate-session kick, a
-    ///     ban, <c>PeerDefense</c> — reaches the feed through exactly this, because all of them are a
-    ///     transport disconnect and the transport raises one lifecycle event for each.
+    ///     Both phases of a transport disconnect: the <c>Disconnected</c> lifecycle event on the real
+    ///     <c>PeersManager</c>, then a tick past <see cref="DISCONNECTION_CLEAN_TIMEOUT_MS" /> for the
+    ///     <see cref="PeerSimulation" /> cleanup that is the feed's exit seam. Every way a peer can
+    ///     leave ends here, since all of them are a transport disconnect.
     /// </summary>
     public void Remove(PeerIndex peer)
     {
@@ -233,18 +214,11 @@ internal sealed class PresenceScenario
         DriveCleanup();
     }
 
-    /// <summary>
-    ///     Phase 1 alone: the lifecycle event a transport disconnect produces, drained on the owning
-    ///     worker against this scenario's peer set.
-    /// </summary>
+    /// <summary>Phase 1 alone: the lifecycle event a transport disconnect produces.</summary>
     public void DispatchDisconnected(PeerIndex peer) =>
         Dispatch(IncomingEvent.Disconnected(peer));
 
-    /// <summary>
-    ///     The <c>Connected</c> lifecycle event, which is what puts a peer in <c>PENDING_AUTH</c> and
-    ///     stamps the connection time the auth timeout is measured from — so a test of that timeout
-    ///     starts from the state production starts from rather than a hand-built one.
-    /// </summary>
+    /// <summary>The <c>Connected</c> event: <c>PENDING_AUTH</c> plus the stamp the auth timeout runs from.</summary>
     public void DispatchConnected(PeerIndex peer) =>
         Dispatch(IncomingEvent.Connected(peer));
 
@@ -256,10 +230,7 @@ internal sealed class PresenceScenario
         CreatePeersManager().DrainEvents(events.Reader, Peers, workerIndex: 0);
     }
 
-    /// <summary>
-    ///     Phase 2 alone: the clock steps past the cleanup gate and one tick runs, which is what
-    ///     releases the peer and publishes its exit.
-    /// </summary>
+    /// <summary>Phase 2 alone: steps past the cleanup gate and runs the tick that publishes the exit.</summary>
     public void DriveCleanup()
     {
         Clock.MonotonicTime += DISCONNECTION_CLEAN_TIMEOUT_MS;
@@ -267,10 +238,7 @@ internal sealed class PresenceScenario
         Simulation.SimulateTick(Peers, tickCounter: Clock.MonotonicTime / SIMULATION_STEPS[0]);
     }
 
-    /// <summary>
-    ///     Registers a peer as connected-and-authenticated in the worker's peer set, so the lifecycle
-    ///     paths that read <see cref="PeerState" /> see what they would in production.
-    /// </summary>
+    /// <summary>Puts a peer in the worker's set as AUTHENTICATED, without going through a handshake.</summary>
     public void Authenticate(PeerIndex peer)
     {
         Peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
@@ -291,10 +259,7 @@ internal sealed class PresenceScenario
             DisabledIpLimiter(),
             ParcelChanges);
 
-    /// <summary>
-    ///     Cap switched off — the limiter counts connections but refuses none, so it never interferes
-    ///     with the lifecycle path under test.
-    /// </summary>
+    /// <summary>Cap switched off: the limiter counts connections but refuses none.</summary>
     private static IpLimiter DisabledIpLimiter()
     {
         IOptionsMonitor<IpLimiterOptions> optionsMonitor = Substitute.For<IOptionsMonitor<IpLimiterOptions>>();
@@ -307,10 +272,7 @@ internal sealed class PresenceScenario
     public void RunPass() =>
         Tracker.RunPass();
 
-    /// <summary>
-    ///     Registers a peer's wallet and marks it active without placing it, for the paths where the
-    ///     first placement itself is what a test drives — the mixed-case handshake, above all.
-    /// </summary>
+    /// <summary><see cref="Place" /> minus the placement, for tests that drive the first one themselves.</summary>
     public void Register(PeerIndex peer, string wallet)
     {
         IdentityBoard.Set(peer, wallet);
@@ -318,17 +280,13 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     The next batch the presence loop would publish, stamped with
-    ///     <paramref name="serverTimeMs" />, or null when there is nothing to send. Goes through the
-    ///     loop's own per-batch turn, so the interval snapshot deadline and the metrics advance
-    ///     exactly as they do in the deployed publisher.
+    ///     The next batch the presence loop would publish at <paramref name="serverTimeMs" />, or null
+    ///     when there is nothing to send. Advances the snapshot deadline and the metrics as it does.
     /// </summary>
     public ParcelChangesBatch? NextBatch(long serverTimeMs) =>
         NextBatchWithReason(serverTimeMs).Batch;
 
-    /// <summary>
-    ///     <see cref="NextBatch" /> plus the reason the batch is a snapshot, for the cadence tests.
-    /// </summary>
+    /// <summary><see cref="NextBatch" /> plus the reason the batch is a snapshot.</summary>
     public (ParcelChangesBatch? Batch, PresenceSnapshotReason? Reason) NextBatchWithReason(long serverTimeMs)
     {
         Clock.UnixTimeMs = serverTimeMs;
@@ -339,14 +297,9 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     Empties the cluster feed's outbox, as a connected broker's drain loop does, and reports how
-    ///     many messages it took.
-    ///     <para />
-    ///     Load-bearing for any test about presence eviction: the two feeds share
-    ///     <c>Nats:ChannelCapacity</c> and the one <c>CountDropped</c> path, so an undelivered backlog
-    ///     of cluster assignments evicts — and forces a presence snapshot — quite apart from anything
-    ///     the presence outbox did. Draining it is what leaves the presence outbox as the only thing
-    ///     that can evict.
+    ///     Empties the cluster feed's outbox as a connected broker's drain loop does. Load-bearing for
+    ///     eviction tests: both feeds share <c>Nats:ChannelCapacity</c> and one <c>CountDropped</c>
+    ///     path, so an undrained cluster backlog evicts — and forces a presence snapshot — on its own.
     /// </summary>
     public int DrainClusterOutbox()
     {
@@ -362,12 +315,9 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     Every batch one turn of the publish loop would put on the wire, in order — the loop drains
-    ///     up to <see cref="NatsPublisher.MAX_PARCEL_BATCHES_PER_TURN" /> batches per tick, because a
-    ///     snapshot travels behind the delta batch that was pending when it was collected (A2).
-    ///     <para />
-    ///     Each batch is cloned: the publisher owns one reused instance, so the caller would otherwise
-    ///     be handed the same object twice.
+    ///     Every batch one turn of the publish loop would put on the wire, in order — up to
+    ///     <see cref="NatsPublisher.MAX_PARCEL_BATCHES_PER_TURN" />, because a snapshot travels behind
+    ///     the delta batch pending when it was collected (A2). Cloned: the publisher reuses one instance.
     /// </summary>
     public List<ParcelChangesBatch> NextTurn(long serverTimeMs)
     {
@@ -386,10 +336,7 @@ internal sealed class PresenceScenario
         return batches;
     }
 
-    /// <summary>
-    ///     <see cref="NextTurn" /> with each batch's snapshot reason alongside it, for the cadence
-    ///     tests.
-    /// </summary>
+    /// <summary><see cref="NextTurn" /> with each batch's snapshot reason alongside it.</summary>
     public List<(ParcelChangesBatch Batch, PresenceSnapshotReason? Reason)> NextTurnWithReasons(long serverTimeMs)
     {
         Clock.UnixTimeMs = serverTimeMs;
@@ -408,9 +355,8 @@ internal sealed class PresenceScenario
     }
 
     /// <summary>
-    ///     The next batch as bytes on the wire: the publisher's own serializer writing into a buffer,
-    ///     which is what <c>NatsConnection.PublishAsync</c> does with it. Null when there is nothing
-    ///     to send.
+    ///     The next batch as bytes on the wire — the publisher's own serializer into a buffer, which is
+    ///     what <c>NatsConnection.PublishAsync</c> is handed. Null when there is nothing to send.
     /// </summary>
     public byte[]? NextBatchBytes(long serverTimeMs)
     {

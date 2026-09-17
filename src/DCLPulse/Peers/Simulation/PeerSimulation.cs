@@ -890,14 +890,11 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     repeated here; both are idempotent, and keeping them leaves the whole teardown legible
     ///     in one place.
     ///     <para />
-    ///     It is also the presence feed's single exit seam (iteration-2 C1.2). Every way a peer can
-    ///     leave — clean disconnect, auth/idle timeout, duplicate-session kick, ban eviction,
-    ///     <c>PeerDefense</c> kick — is a transport disconnect, and every transport disconnect ends
-    ///     here exactly once, so one call covers all of them. Here rather than at the
-    ///     <c>Disconnected</c> lifecycle event because of the ordering that gate buys: phase 1
-    ///     removed the peer from the grid a whole
-    ///     <see cref="PeerOptions.DisconnectionCleanTimeoutMs" /> ago, so no clustering pass can
-    ///     still be holding a read that would republish it as present after its exit went out.
+    ///     It is also the presence feed's single exit seam (iteration-2 C1.2): every way a peer can
+    ///     leave is a transport disconnect, and every transport disconnect ends here exactly once.
+    ///     Here rather than at the <c>Disconnected</c> event for the ordering — phase 1 removed the
+    ///     peer from the grid a whole <see cref="PeerOptions.DisconnectionCleanTimeoutMs" /> ago, so
+    ///     no clustering pass can still hold a read that would republish it as present.
     /// </summary>
     private void CleanupDisconnectedPeer(PeerIndex peerId, PeerState peerState)
     {

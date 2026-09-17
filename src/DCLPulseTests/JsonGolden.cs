@@ -3,20 +3,16 @@ using System.Text.Json.Nodes;
 namespace DCLPulseTests;
 
 /// <summary>
-///     Structural comparison against a contract golden, reporting the JSON path of the first
-///     difference rather than dumping two documents and leaving the reader to diff them.
+///     Structural comparison against a contract golden, reporting the JSON path of each difference
+///     rather than dumping two documents for the reader to diff.
 ///     <para />
-///     A golden <c>null</c> means "this key is present and its value is null" — the response has to
-///     carry the key. A missing key is a difference, not a match: <c>/peers/{id}</c>'s 404 body is
-///     <c>{"ok":false,"peer":null}</c>, and a harness that accepted <c>{"ok":false}</c> for it would
-///     leave every null the contract pins unasserted. A golden with no <c>body</c> at all is still
-///     "no body" — <c>/health</c> and the 404s that answer with nothing.
+///     A golden <c>null</c> means "present and null" — a response missing the key is a difference,
+///     not a match. A golden with no <c>body</c> at all still means "no body".
 ///     <para />
-///     Numbers compare with an absolute tolerance of 1e-3, which is what the pack specifies for the
-///     fields Pulse computes in <c>float32</c> — <c>position</c>, <c>center</c>, <c>radius</c>. Every
-///     other number in these shapes is an integer (counts, parcels, unix milliseconds), and a
-///     tolerance below half a unit is exact for those, so one rule covers the whole document without
-///     a per-field table that could drift from the contract.
+///     Numbers compare with an absolute tolerance of 1e-3, the pack's figure for the <c>float32</c>
+///     fields (<c>position</c>, <c>center</c>, <c>radius</c>). Everything else in these shapes is an
+///     integer, for which a sub-half-unit tolerance is exact — so one rule covers the document and
+///     no per-field table can drift from the contract.
 /// </summary>
 internal static class JsonGolden
 {
@@ -24,9 +20,8 @@ internal static class JsonGolden
 
     /// <summary>
     ///     Fails unless <paramref name="actual" /> matches <paramref name="expected" /> exactly.
-    ///     <paramref name="allowedExtraKeys" /> names root-level keys the response may carry that the
-    ///     golden does not — used only where Pulse's response is a documented superset of the
-    ///     contract, so that the extra key has to be named here rather than slipping past.
+    ///     <paramref name="allowedExtraKeys" /> names root-level keys the response may carry and the
+    ///     golden does not, so a documented superset has to be spelled out rather than slip past.
     /// </summary>
     public static void AssertMatches(
         JsonNode? expected,
@@ -44,9 +39,8 @@ internal static class JsonGolden
 
     /// <summary>
     ///     Every difference between the two documents, as JSON paths. <see cref="AssertMatches" /> is
-    ///     this plus a failure message; it is exposed on its own so the harness can be tested for the
-    ///     differences it is able to see at all — a comparison that silently accepts a missing key
-    ///     makes every golden that pins one vacuous, and that cannot be checked by a golden.
+    ///     this plus a failure message; public on its own so tests can pin which differences the
+    ///     harness is able to see at all, which no golden could check.
     /// </summary>
     public static List<string> Differences(JsonNode? expected, JsonNode? actual, params string[] allowedExtraKeys)
     {
@@ -107,9 +101,8 @@ internal static class JsonGolden
 
         foreach ((string key, JsonNode? value) in expected)
         {
-            // TryGetPropertyValue rather than the indexer: a JSON null inside a JsonObject is stored
-            // as a null JsonNode, so the indexer cannot tell "present, null" from "absent" and a
-            // golden that pins a null would be satisfied by a response missing the key entirely.
+            // TryGetPropertyValue rather than the indexer: a JSON null is stored as a null JsonNode,
+            // so the indexer cannot tell "present, null" from "absent".
             if (!actualObject.TryGetPropertyValue(key, out JsonNode? actualValue))
             {
                 differences.Add($"{path}.{key}: missing, the contract golden has {value?.ToJsonString() ?? "null"}");
@@ -124,8 +117,7 @@ internal static class JsonGolden
         {
             if (expected.ContainsKey(key)) continue;
 
-            // Extra keys are allowed only at the root, and only when named: a nested shape is the
-            // contract verbatim, and an unexpected field inside one is drift.
+            // Only at the root and only when named: a nested shape is the contract verbatim.
             if (path == "$" && allowedExtraKeys.Contains(key, StringComparer.Ordinal)) continue;
 
             differences.Add($"{path}.{key}: not in the contract golden");

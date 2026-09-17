@@ -8,37 +8,13 @@ namespace Pulse.Stats;
 
 /// <summary>
 ///     The read-only stats surface (iteration-2 C2): the routes archipelago-stats used to answer,
-///     re-sourced from Pulse's own boards and scoped by realm. Unauthenticated, exactly like
-///     <c>/about</c> — the only thing here is who is standing where, which every client learns from
-///     the comms feed anyway — while <c>/metrics</c> keeps its bearer token and stays with
-///     <see cref="HttpService" />.
+///     re-sourced from Pulse's own boards and scoped by realm. Unauthenticated, like <c>/about</c>;
+///     <c>/metrics</c> keeps its bearer token and stays with <see cref="HttpService" />.
 ///     <para />
-///     A router rather than another arm of <c>HttpService</c>'s switch, and separate from the listener
-///     entirely, for two reasons: the paths now carry a variable segment (<c>/realms/{realm}/…</c>)
-///     that a switch cannot express, and every response can then be asserted against the contract
-///     goldens without an <c>HttpListener</c> in the test.
-///     <para />
-///     Three rules run through the whole surface:
-///     <list type="bullet">
-///         <item>
-///             a realm path segment matches case-insensitively and the response carries the canonical
-///             lowercase name, because a realm typed by a user or read off a scene deployment is the
-///             same realm however it was spelled;
-///         </item>
-///         <item>
-///             an unknown realm is an empty realm — 200 with an empty list, never 404. A realm exists
-///             exactly as long as someone is in it, so "nobody is there" and "there is no such place"
-///             are the same fact, and a caller polling a world that has just emptied should not have
-///             to treat that as an error;
-///         </item>
-///         <item>
-///             the legacy unscoped paths answer 308 into <c>/realms/main/…</c> with the query string
-///             intact, so a caller written against archipelago-stats keeps working while it is
-///             updated — except the two that are all-realms lookups and are therefore served where
-///             they stand: <c>/peers</c> carrying <c>id</c> or <c>all</c>, and <c>/peers/{id}</c>.
-///             Both are reachable under the <c>/comms/</c> prefix as well.
-///         </item>
-///     </list>
+///     Three rules run through it: a realm segment matches case-insensitively and the response
+///     carries the canonical lowercase name; an unknown realm is an empty realm — 200 and an empty
+///     list, never 404; and the legacy unscoped paths answer 308 into <c>/realms/main/…</c> with the
+///     query intact, except the all-realms lookups <c>/peers?id|all</c> and <c>/peers/{id}</c>.
 /// </summary>
 public sealed class StatsRouter(
     ClusterBoard clusterBoard,
@@ -48,32 +24,24 @@ public sealed class StatsRouter(
     ServiceIdentity identity,
     PulseFlagsConfigurationProvider featureFlags)
 {
-    /// <summary>
-    ///     The realm the legacy unscoped paths redirect to: Genesis City, which is what every one of
-    ///     them meant when there was only one realm to mean.
-    /// </summary>
+    /// <summary>Genesis City: the one realm the legacy unscoped paths were written against.</summary>
     public const string DEFAULT_REALM = "main";
 
     /// <summary>
-    ///     Cap on <c>/peers?id=</c>. The route exists so a consumer can resolve a page of wallets in
-    ///     one call; without a bound, one request could ask this server to scan its whole population
-    ///     per id, and a caller that wants everything has <c>?all=true</c>.
+    ///     Cap on <c>/peers?id=</c>, so one request cannot drive a scan per id. Everything at once is
+    ///     <c>?all=true</c> instead.
     /// </summary>
     public const int MAX_IDS = 200;
 
     /// <summary>
-    ///     Answers <paramref name="absolutePath" />, or reports 404 with no body for a path this
-    ///     surface does not own — which is what <see cref="HttpService" /> answered before these
-    ///     routes existed and what its remaining routes fall through to.
+    ///     Answers <paramref name="absolutePath" />, or 404 with no body for a path not owned here.
     /// </summary>
     public StatsResponse Handle(string absolutePath, StatsQuery query)
     {
         string[] segments = absolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        // The /comms/ prefix is a second spelling of the legacy paths — and of nothing else. Stripped
-        // before matching, but only for those: /comms/realms, /comms/status and the rest would
-        // otherwise be new unversioned public surface that nobody asked for and that becomes hard to
-        // withdraw once a caller depends on it.
+        // The /comms/ prefix is a second spelling of the legacy paths and of nothing else — stripped
+        // before matching, but only for those, so the rest do not become new public surface.
         if (segments is ["comms", ..])
         {
             segments = segments[1..];
@@ -93,9 +61,8 @@ public sealed class StatsRouter(
             ["realms", var realm, "islands"] => RealmIslands(realm),
             ["realms", var realm, "islands", var island] => RealmIsland(realm, island),
 
-            // All-realms peer lookups. They share a path with the legacy redirect, and the query
-            // decides which it is: an `id` or `all` parameter is a caller that already knows about
-            // this route, so it is answered rather than redirected.
+            // All-realms lookups share a path with the legacy redirect below; the query decides
+            // which it is, since `id` or `all` is a caller that already knows this route.
             ["peers"] when query.Has("id") => PeersByIds(query.All("id")),
             ["peers"] when query.Has("all") => AllPeers(),
             ["peers", var id] => SinglePeer(id),
@@ -107,18 +74,11 @@ public sealed class StatsRouter(
     }
 
     /// <summary>
-    ///     The paths archipelago-stats answered under the <c>/comms/</c> prefix, which are the only
-    ///     ones it is a second spelling of. Membership here decides whether the prefix is accepted and
-    ///     nothing else: what the path then answers is the switch above, unchanged — which is the
-    ///     point, since the contract is that the prefixed and unprefixed spellings are one route.
-    ///     <para />
-    ///     So <c>/peers</c> is in the set whether or not a query parameter turns it into an all-realms
-    ///     lookup (<c>/comms/peers?id=…</c> is answered directly, exactly like
-    ///     <c>/peers?id=…</c>), and <c>/peers/{id}</c> is in it because stats served
-    ///     <c>/comms/peers/{id}</c> with a live 200 (iteration-2 amendment A5). Callers of that alias
-    ///     exist in production, so it is answered rather than redirected — and a 308 could not stand
-    ///     in for it anyway: it would point at <c>/realms/main/peers/{id}</c>, which is not a route,
-    ///     and it would scope an all-realms lookup to Genesis City.
+    ///     The paths archipelago-stats answered under the <c>/comms/</c> prefix. Membership decides
+    ///     only whether the prefix is accepted — the switch above still decides the answer, so both
+    ///     spellings are one route. <c>/peers/{id}</c> is in the set because stats served
+    ///     <c>/comms/peers/{id}</c> live (iteration-2 amendment A5), and a 308 cannot stand in: it
+    ///     would point at <c>/realms/main/peers/{id}</c>, which is not a route.
     /// </summary>
     private static bool IsLegacyPath(string[] segments) =>
         segments is ["peers"] or ["peers", _] or ["parcels"] or ["islands"] or ["islands", _];
@@ -152,9 +112,8 @@ public sealed class StatsRouter(
     }
 
     /// <summary>
-    ///     One island, as the body itself rather than in an envelope — the shape stats answered, kept
-    ///     unchanged. Ids are unique across realms, so an id that exists in another realm is a 404
-    ///     here: the answer to "is this island in this realm" is no.
+    ///     One island, as the body itself rather than in an envelope — the shape stats answered. Ids
+    ///     are unique across realms, so an id that lives in another realm is a 404 here.
     /// </summary>
     private StatsResponse RealmIsland(string realm, string islandId)
     {
@@ -175,9 +134,8 @@ public sealed class StatsRouter(
         StatsResponse.Ok(new PeersResponse(Ok: true, Realm: null, Read().AllPeers()));
 
     /// <summary>
-    ///     One wallet across every realm. 404 with <c>{"ok":false,"peer":null}</c> rather than an
-    ///     empty body: the caller asked a yes/no question, and a body that says "no" is easier to
-    ///     handle than a status code alone.
+    ///     One wallet across every realm. Not found is 404 with <c>{"ok":false,"peer":null}</c>, not
+    ///     an empty body — the shape the contract pins.
     /// </summary>
     private StatsResponse SinglePeer(string id)
     {
@@ -189,9 +147,8 @@ public sealed class StatsRouter(
     }
 
     /// <summary>
-    ///     <c>version</c> is kept because the Godot client reads it; <c>currentTime</c> is now rather
-    ///     than the pass time, since a client using it to check its own clock wants this server's
-    ///     clock, not the age of its clustering.
+    ///     <c>currentTime</c> is now, not the pass time — this server's clock rather than the age of
+    ///     its clustering.
     /// </summary>
     private StatsResponse Status()
     {
@@ -204,11 +161,7 @@ public sealed class StatsRouter(
             view.Realms().Select(static realm => new RealmPeerCount(realm.Name, realm.Peers)).ToArray()));
     }
 
-    /// <summary>
-    ///     Built per request rather than cached: the feature-flag overrides change whenever a new
-    ///     remote document is applied, and the point of reporting them is to show what this task is
-    ///     running right now.
-    /// </summary>
+    /// <summary>Built per request: the feature-flag overrides change as remote documents apply.</summary>
     private StatsResponse About() =>
         StatsResponse.Ok(new AboutResponse(identity.CommitHash, Read().UserCount, featureFlags.AppliedOverrides));
 
@@ -225,14 +178,10 @@ public sealed class StatsRouter(
 
     /// <summary>
     ///     ISO-8601 UTC with milliseconds and a <c>Z</c> — what <c>new Date(ms).toISOString()</c>
-    ///     produces, since every consumer of this field parses it with a JavaScript <c>Date</c>.
-    ///     <para />
-    ///     <see cref="CultureInfo.InvariantCulture" /> is load-bearing, not decoration: <c>:</c> in a
-    ///     custom format string is <em>the culture's time separator</em>, so a container started with
-    ///     <c>LANG=fi_FI.UTF-8</c> would emit <c>2026-09-04T09.52.47.834Z</c> and every JS consumer's
-    ///     <c>new Date(…)</c> would read Invalid Date. The explicit pattern rather than <c>"o"</c>
-    ///     because the contract pins milliseconds and round-trip format writes seven fractional
-    ///     digits.
+    ///     produces. <see cref="CultureInfo.InvariantCulture" /> is load-bearing: <c>:</c> in a custom
+    ///     format string is the culture's time separator, so under <c>LANG=fi_FI.UTF-8</c> this would
+    ///     emit <c>2026-09-04T09.52.47.834Z</c>. The explicit pattern, not <c>"o"</c>, which writes
+    ///     seven fractional digits where the contract pins three.
     /// </summary>
     private static string IsoUtcMs(long unixMs) =>
         DateTimeOffset.FromUnixTimeMilliseconds(unixMs)

@@ -5,9 +5,7 @@ namespace Pulse.Stats;
 
 /// <summary>
 ///     What a stats route answered: a status, an optional JSON body and, for the legacy paths, the
-///     <c>Location</c> a 308 points at. A null <see cref="Body" /> is an empty response body —
-///     <c>/health</c>, and the 404s that archipelago-stats answers with nothing — not a JSON
-///     <c>null</c>.
+///     <c>Location</c> a 308 points at. A null <see cref="Body" /> is an empty body, not JSON null.
 /// </summary>
 public readonly record struct StatsResponse(int Status, byte[]? Body = null, string? Location = null)
 {
@@ -21,23 +19,18 @@ public readonly record struct StatsResponse(int Status, byte[]? Body = null, str
         new (status, StatsJson.Serialize(body));
 
     /// <summary>
-    ///     A permanent redirect that preserves the method and the query string — 308 rather than 301
-    ///     because the legacy callers are scripts and services whose requests must not be rewritten
-    ///     to GET by an intermediary.
+    ///     308, not 301: preserves the method, so no intermediary rewrites a legacy request to GET.
     /// </summary>
     public static StatsResponse MovedPermanently(string location) =>
         new (308, Location: location);
 }
 
 /// <summary>
-///     One JSON configuration for the whole stats surface: camelCase members, and proto3-style
-///     omission is <em>not</em> wanted here — a peer with no realm is not a peer, and every field in
-///     these shapes is one archipelago-stats always sent, so nothing is dropped for being default.
-///     <para />
-///     Nulls are omitted, which is what lets one <see cref="PeerResult" /> serve both the
-///     realm-scoped routes (no <c>realm</c> per entry — the envelope carries it) and the all-realms
-///     ones. A shape that has to write its null says so per property with
-///     <c>[JsonIgnore(Condition = JsonIgnoreCondition.Never)]</c>; see <see cref="PeerResponse" />.
+///     One JSON configuration for the whole stats surface: camelCase, nulls omitted — which is what
+///     lets one <see cref="PeerResult" /> serve both the realm-scoped routes (no <c>realm</c> per
+///     entry) and the all-realms ones — and defaults kept, since every field in these shapes is one
+///     archipelago-stats always sent. A shape that must write its null opts out per property; see
+///     <see cref="PeerResponse" />.
 /// </summary>
 public static class StatsJson
 {
@@ -52,10 +45,9 @@ public static class StatsJson
 }
 
 /// <summary>
-///     The archipelago-stats peer shape, unchanged, plus the <c>realm</c> the all-realms routes carry
-///     (<see cref="Realm" /> is null on the realm-scoped routes, where it would only repeat the
-///     envelope). <see cref="Id" /> duplicates <see cref="Address" /> because both were in the
-///     response every client reads today.
+///     The archipelago-stats peer shape, unchanged, plus the <c>realm</c> the all-realms routes
+///     carry (null on the realm-scoped routes, where it would repeat the envelope).
+///     <see cref="Id" /> duplicates <see cref="Address" />: both are in the frozen shape.
 /// </summary>
 public sealed record PeerResult(
     string Id,
@@ -72,18 +64,15 @@ public sealed record RealmPeerCount(string Name, int Peers);
 public sealed record RealmsResponse(IReadOnlyList<RealmSummary> Realms, string LastUpdated);
 
 /// <summary>
-///     A peers list. <see cref="Realm" /> is declared before <see cref="Peers" /> so the envelope
-///     reads before the payload on the wire — the shape the contract documents — and is null on the
-///     all-realms routes, where each entry carries its own realm instead.
+///     A peers list. <see cref="Realm" /> is declared before <see cref="Peers" /> so it serializes
+///     first, as the contract documents, and is null on the all-realms routes.
 /// </summary>
 public sealed record PeersResponse(bool Ok, string? Realm, IReadOnlyList<PeerResult> Peers);
 
 /// <summary>
-///     <c>/peers/{id}</c>. <c>peer</c> is written even when it is null, against
+///     <c>/peers/{id}</c>. <c>peer</c> is written even when null, against
 ///     <see cref="StatsJson.OPTIONS" />' omission of nulls: the 404 body is
-///     <c>{"ok":false,"peer":null}</c> per the contract and this repo's own <c>openapi.yaml</c>, and a
-///     consumer that tests <c>'peer' in body</c> or validates the published schema reads a body
-///     without the key as malformed rather than as "not online".
+///     <c>{"ok":false,"peer":null}</c> per <c>openapi.yaml</c>.
 /// </summary>
 public sealed record PeerResponse(
     bool Ok,
@@ -100,8 +89,7 @@ public sealed record ParcelsResponse(string Realm, IReadOnlyList<ParcelCount> Pa
 
 /// <summary>
 ///     A cluster in archipelago's island shape. <c>maxPeers</c> is zero because Pulse caps cluster
-///     size nowhere, and reporting a bound it does not enforce would be a lie the client could act
-///     on.
+///     size nowhere, and reporting a bound it does not enforce would be a lie.
 /// </summary>
 public sealed record IslandResult(
     string Id,
@@ -119,10 +107,8 @@ public sealed record StatusResponse(
     IReadOnlyList<RealmPeerCount> Realms);
 
 /// <summary>
-///     <c>/about</c>. <c>userCount</c> is what archipelago-stats reported and what realm-provider
-///     reads; <c>featureFlagOverrides</c> is Pulse's own addition and is reported verbatim — the
-///     remote document may set any configuration key, so whatever it sets appears here, on an
-///     endpoint that takes no bearer token.
+///     <c>/about</c>. <c>featureFlagOverrides</c> is reported verbatim, and the remote document may
+///     set any configuration key — so whatever it sets is public, on an endpoint with no token.
 /// </summary>
 public sealed record AboutResponse(
     string CommitHash,

@@ -7,19 +7,13 @@ namespace Pulse.Stats;
 
 /// <summary>
 ///     One consistent read of the boards, projected into the shapes the stats routes answer with.
+///     Everything comes off a single <see cref="ClusterPass" /> taken once per request, so no two
+///     fields of one response come from different instants and <c>/realms</c>' <c>lastUpdated</c> is
+///     the age of the pass, not the time of the reply.
 ///     <para />
-///     Everything comes off a single <see cref="ClusterPass" />, taken once per request: the pass
-///     already walked every realm's peers and carries each one's wallet, realm, position, parcel and
-///     cluster, so no route has to re-derive any of that and no two fields of one response can come
-///     from different instants. It is also what makes <c>/realms</c>' <c>lastUpdated</c> honest — the
-///     boards are exactly as fresh as the pass they were read from, and saying so is more useful than
-///     stamping the response with the time it was served.
-///     <para />
-///     The one thing the pass does not carry is when each peer was last heard from, which comes from
-///     <see cref="SnapshotBoard" /> per peer. A peer that left between the pass and this read has no
-///     snapshot left to read, so its <c>lastPing</c> falls back to the pass time rather than dropping
-///     the peer: one stale entry for at most one pass interval is a far smaller lie than a peer
-///     vanishing from a list that says it is there.
+///     <c>lastPing</c> is the exception, read per peer from <see cref="SnapshotBoard" />. A peer that
+///     left between the pass and this read has no snapshot, so it falls back to the pass time rather
+///     than dropping out of a list that says it is there.
 /// </summary>
 public sealed class StatsBoardView
 {
@@ -27,11 +21,9 @@ public sealed class StatsBoardView
     private readonly string[] clusterIds;
     private readonly ClusterPass pass;
 
-    // clusterId -> the peers assigned to it, in address order, built on the first island request of
-    // this view. Lazily, because most routes never ask: /peers, /parcels, /realms and /status all
-    // read the flat array. Before this, each island rescanned the whole peer array — O(peers x
-    // clusters) per request, which at 5000 peers and a few hundred clusters is ~10^6 ordinal string
-    // comparisons on a route several services poll.
+    // clusterId -> its peers in address order, built on the first island request of this view. Lazy
+    // because most routes never ask: /peers, /parcels, /realms and /status read the flat array, and
+    // rescanning it per island would be O(peers x clusters) per request.
     private Dictionary<string, List<PeerResult>>? membersByCluster;
 
     private StatsBoardView(ClusterPass pass, PeerResult[] peers, string[] clusterIds)
@@ -70,9 +62,8 @@ public sealed class StatsBoardView
                 ? timeProvider.ToUnixTimeMs(snapshot.ServerTick)
                 : pass.TakenAtUnixMs;
 
-            // Lowercased here for the same reason the presence feed lowercases it: the wallet arrives
-            // from the auth chain in whatever casing the client signed with — EIP-55 checksum form,
-            // most often — and every consumer of this surface compares addresses as strings.
+            // The wallet arrives from the auth chain in whatever casing the client signed with —
+            // EIP-55 checksum form, usually — and this surface compares addresses ordinally.
             string address = CanonicalName.Of(info.Wallet);
 
             peers[i] = new PeerResult(
@@ -85,9 +76,8 @@ public sealed class StatsBoardView
             order[i] = i;
         }
 
-        // Sorted once, by address, which is the order every peers list in C2 is specified in. The
-        // parallel cluster-id array is permuted with it so island membership stays keyed to the peer
-        // it belongs to.
+        // Sorted once by address, the order every peers list in C2 is specified in. The parallel
+        // cluster-id array is permuted with it so membership stays keyed to its own peer.
         Array.Sort(order, (a, b) => string.CompareOrdinal(peers[a].Address, peers[b].Address));
 
         var sortedPeers = new PeerResult[count];
@@ -103,9 +93,8 @@ public sealed class StatsBoardView
     }
 
     /// <summary>
-    ///     Every realm holding at least one peer, peers descending then name ascending. A realm has no
-    ///     existence apart from the peers in it, so an empty one is simply absent — which is the same
-    ///     statement as <c>/realms/{unknown}/peers</c> answering an empty list rather than 404.
+    ///     Every realm holding at least one peer, peers descending then name ascending. A realm has
+    ///     no existence apart from the peers in it, so an empty one is simply absent.
     /// </summary>
     public IReadOnlyList<RealmSummary> Realms()
     {
@@ -126,10 +115,7 @@ public sealed class StatsBoardView
               .ToArray();
     }
 
-    /// <summary>
-    ///     The peers of one realm, without the redundant <c>realm</c> on each entry — the envelope
-    ///     already says which realm this is.
-    /// </summary>
+    /// <summary>The peers of one realm, entries dropping the realm the envelope carries.</summary>
     public IReadOnlyList<PeerResult> PeersIn(string realm) =>
         peers.Where(peer => string.Equals(peer.Realm, realm, StringComparison.Ordinal))
              .Select(static peer => peer with { Realm = null })
@@ -140,8 +126,7 @@ public sealed class StatsBoardView
 
     /// <summary>
     ///     The peers whose address is in <paramref name="addresses" />, matched case-insensitively so
-    ///     a caller holding EIP-55 checksummed wallets does not have to lowercase them first. Ids that
-    ///     match nothing are simply absent: this is a lookup, and "not online" is an answer.
+    ///     EIP-55 checksummed wallets match. Ids that match nothing are simply absent.
     /// </summary>
     public IReadOnlyList<PeerResult> PeersMatching(IReadOnlyCollection<string> addresses)
     {
@@ -154,9 +139,8 @@ public sealed class StatsBoardView
         peers.FirstOrDefault(peer => string.Equals(peer.Address, address, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    ///     Occupied parcels of one realm, busiest first then by coordinate. Realm scoping is not
-    ///     optional here: worlds number their parcels from (0,0), so an unscoped parcel count would
-    ///     add together players standing in different universes.
+    ///     Occupied parcels of one realm, busiest first then by coordinate. Scoping is not optional:
+    ///     every world numbers its parcels from (0,0), so an unscoped count would merge worlds.
     /// </summary>
     public IReadOnlyList<ParcelCount> ParcelsIn(string realm)
     {
@@ -179,9 +163,8 @@ public sealed class StatsBoardView
     }
 
     /// <summary>
-    ///     The clusters of one realm in natural id order, members by address. Ids come from one global
-    ///     counter, so they are unique across realms — which is why asking for an island by id under
-    ///     the wrong realm is a 404 rather than a match.
+    ///     The clusters of one realm in natural id order, members by address. Ids come from one
+    ///     global counter, so they are unique across realms.
     /// </summary>
     public IReadOnlyList<IslandResult> IslandsIn(string realm)
     {
@@ -218,10 +201,8 @@ public sealed class StatsBoardView
             MembersOf(cluster.Id));
 
     /// <summary>
-    ///     The members of one cluster, in address order. Indexed in a single walk of the peer array
-    ///     the first time any island is asked for, so a request costs one pass over the peers rather
-    ///     than one per island — the loop shape, not caching, which is why it needs no invalidation:
-    ///     the index belongs to this view and dies with it.
+    ///     The members of one cluster, in address order. Indexed in one walk of the peer array on the
+    ///     first island request, so a request costs one pass rather than one per island.
     /// </summary>
     private IReadOnlyList<PeerResult> MembersOf(string clusterId)
     {
@@ -229,8 +210,7 @@ public sealed class StatsBoardView
         {
             membersByCluster = new Dictionary<string, List<PeerResult>>(StringComparer.Ordinal);
 
-            // The parallel arrays are in address order already, so members come out sorted without a
-            // second sort per island.
+            // The parallel arrays are already in address order, so members need no second sort.
             for (var i = 0; i < peers.Length; i++)
             {
                 if (!membersByCluster.TryGetValue(clusterIds[i], out List<PeerResult>? members))
@@ -244,10 +224,9 @@ public sealed class StatsBoardView
     }
 
     /// <summary>
-    ///     C1 &lt; C2 &lt; C10, which plain ordinal ordering gets wrong. Ids are
-    ///     <c>{Clusters:IdPrefix}{n}</c>, so the comparison is on the numeric tail; anything that does
-    ///     not end in digits falls back to ordinal rather than throwing, since the prefix is
-    ///     configurable and nothing here should depend on its shape.
+    ///     C1 &lt; C2 &lt; C10, which ordinal ordering gets wrong. Ids are
+    ///     <c>{Clusters:IdPrefix}{n}</c>, so the comparison is on the numeric tail; anything without
+    ///     one falls back to ordinal, since the prefix is configurable.
     /// </summary>
     private static int NaturalIdOrder(string left, string right)
     {

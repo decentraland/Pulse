@@ -15,11 +15,9 @@ using Pulse.Transport;
 namespace DCLPulseTests;
 
 /// <summary>
-///     The five guarantees Pulse holds for <c>engine.parcel_changes</c> (iteration-2 C1), one test per
-///     clause, each written so that it fails when the clause is violated rather than when the
-///     implementation is merely rearranged. Everything runs through the real pass, the real outbox and
-///     the real peer-lifecycle cleanup; the bytes those produce are pinned separately in
-///     <see cref="PresenceWireFixtureTests" />.
+///     The guarantees Pulse holds for <c>engine.parcel_changes</c> (iteration-2 C1), one test per
+///     clause, all driven through the real pass, outbox and peer-lifecycle cleanup. The bytes they
+///     produce are pinned in <see cref="PresenceWireFixtureTests" />.
 /// </summary>
 [TestFixture]
 public class PresenceGuaranteeTests
@@ -37,12 +35,6 @@ public class PresenceGuaranteeTests
 
     // ── C1.1 first placement ────────────────────────────────────────
 
-    /// <summary>
-    ///     A peer that joins after the opening snapshot has no previous state at all, so its first
-    ///     placement is a change — from nowhere — and goes out once. Nothing follows while it stands
-    ///     still, which is the other half of the guarantee: the entry has to be the placement itself,
-    ///     not a side effect of a later move.
-    /// </summary>
     [Test]
     public void FirstPlacement_IsPublishedOnce_EvenIfThePeerNeverMoves()
     {
@@ -65,11 +57,7 @@ public class PresenceGuaranteeTests
 
     // ── C1.2 exit paths ─────────────────────────────────────────────
 
-    /// <summary>
-    ///     The transport's own <c>Disconnected</c> event — a client that closed the connection, or an
-    ///     ENet timeout — is the baseline exit: one parcel-absent entry, keeping the realm the peer
-    ///     was last in so a consumer can scope the removal.
-    /// </summary>
+    /// <summary>The baseline exit: a client close or an ENet timeout, carrying the realm last seen.</summary>
     [Test]
     public void CleanDisconnect_EmitsExactlyOneExitEntry()
     {
@@ -81,16 +69,7 @@ public class PresenceGuaranteeTests
         AssertSingleExit(scenario, Wallet(1), MAIN);
     }
 
-    /// <summary>
-    ///     A peer that never authenticated has no presence to withdraw: it was never placed in a
-    ///     realm, so it never reached the feed and its removal must stay silent. Publishing an exit
-    ///     for it would tell every consumer to remove a wallet it had never been told about — and for
-    ///     the duplicate-session case, a wallet that is at that moment online on another connection.
-    ///     <para />
-    ///     The timeout itself is driven here, not simulated: the real
-    ///     <see cref="PeerSimulation.SimulateTick" /> is what disconnects a peer left in
-    ///     <c>PENDING_AUTH</c> past <c>Peers:PendingAuthCleanTimeoutMs</c>.
-    /// </summary>
+    /// <summary>A peer that never authenticated was never placed, so it never reached the feed.</summary>
     [Test]
     public void PendingAuthTimeout_DisconnectsThePeer_AndAnnouncesNoExit()
     {
@@ -112,13 +91,7 @@ public class PresenceGuaranteeTests
             "a peer that was never on the feed has no exit to announce");
     }
 
-    /// <summary>
-    ///     A second connection for the same wallet evicts the first.
-    ///     <c>HandshakeHandlerTests.Handle_CleanupOfEvictedPeer_ThirdHandshakeStillEvictsLiveSession</c>
-    ///     pins that the handshake calls <c>transport.Disconnect(evicted, DUPLICATE_SESSION)</c>; what
-    ///     this pins is the half that belongs to the feed — the lifecycle event that kick produces
-    ///     withdraws the evicted peer's presence exactly once.
-    /// </summary>
+    /// <summary>The feed's half of a duplicate-session kick — <c>HandshakeHandlerTests</c> has the other.</summary>
     [Test]
     public void DuplicateSessionKick_EmitsExactlyOneExitEntry()
     {
@@ -131,24 +104,13 @@ public class PresenceGuaranteeTests
         AssertSingleExit(scenario, Wallet(1), MAIN);
     }
 
-    /// <summary>
-    ///     ...and the case that makes the exit <b>wallet-scoped</b> (A1). The handshake accepts the
-    ///     new session at once and the evicted slot is only cleaned
-    ///     <c>Peers:DisconnectionCleanTimeoutMs</c> later, so by the time the cleanup runs the wallet
-    ///     is already standing somewhere on a newer connection. Consumers key presence by wallet, so
-    ///     withdrawing it here takes a peer that is online offline — and if both entries land in one
-    ///     batch, per-address coalescing keeps the exit and the new placement is never seen at all.
-    ///     <para />
-    ///     The newer placement is the whole of this wallet's presence, so the stale slot's departure
-    ///     is not news.
-    /// </summary>
+    /// <summary>Why the exit is wallet-scoped (A1): the evicted slot is cleaned last.</summary>
     [Test]
     public void DuplicateSessionKick_ForAWalletAlreadyPlacedOnANewerSlot_EmitsNoExit()
     {
         PresenceScenario scenario = OpenedScenario();
 
-        // The second client instance handshakes: the existing session is kicked and the new one is
-        // placed on its own slot, for the same wallet.
+        // The second client handshakes: the old session is kicked, the new one placed on its own slot.
         scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
         scenario.Place(P2, Wallet(1), MAIN, 5, 5);
         scenario.RunPass();
@@ -165,11 +127,7 @@ public class PresenceGuaranteeTests
         Assert.That(scenario.NextBatch(T0 + 4000), Is.Null);
     }
 
-    /// <summary>
-    ///     The same rule the other way round: once the newer connection goes too, the wallet is on no
-    ///     slot of this server and the exit is due. Otherwise A1 would turn into "a wallet that ever
-    ///     had two sessions never leaves".
-    /// </summary>
+    /// <summary>A1 the other way round: on no slot of this server, the wallet's exit is finally due.</summary>
     [Test]
     public void WhenTheLastConnectionOfAWalletIsCleanedUp_TheExitIsPublished()
     {
@@ -190,10 +148,7 @@ public class PresenceGuaranteeTests
         Assert.That(Entries(scenario.NextBatch(T0 + 6000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -" }));
     }
 
-    /// <summary>
-    ///     A mid-session ban: the real <see cref="BanEnforcer" /> is handed a list the peer's wallet
-    ///     has just joined, and the eviction it enqueues has to end in one exit entry.
-    /// </summary>
+    /// <summary>A mid-session ban, driven through the real <see cref="BanEnforcer" />.</summary>
     [Test]
     public void BanEnforcerEviction_EmitsExactlyOneExitEntry()
     {
@@ -213,12 +168,7 @@ public class PresenceGuaranteeTests
         AssertSingleExit(scenario, Wallet(1), MAIN);
     }
 
-    /// <summary>
-    ///     A <see cref="PeerDefense" /> kick, driven through the real <see cref="FieldValidator" /> —
-    ///     a teleport with no realm, which is a malformed message rather than a move. The peer goes
-    ///     PENDING_DISCONNECT at once and the transport disconnect that follows has to produce one
-    ///     exit entry, not zero (the peer was on the feed) and not two.
-    /// </summary>
+    /// <summary>A <see cref="PeerDefense" /> kick, driven through the real <see cref="FieldValidator" />.</summary>
     [Test]
     public void PeerDefenseKick_EmitsExactlyOneExitEntry()
     {
@@ -238,11 +188,7 @@ public class PresenceGuaranteeTests
         AssertSingleExit(scenario, Wallet(1), MAIN);
     }
 
-    /// <summary>
-    ///     A realm change is not an exit followed by an entry: the new realm's non-null entry is the
-    ///     whole of it, and the old realm is implied because a wallet is in one realm at a time. An
-    ///     exit entry here would make a consumer drop the peer it has just been told about.
-    /// </summary>
+    /// <summary>A realm change is one non-null entry for the new realm, not an exit and an entry.</summary>
     [Test]
     public void RealmChange_EmitsOneNonNullEntryForTheNewRealmOnly()
     {
@@ -258,11 +204,7 @@ public class PresenceGuaranteeTests
 
     // ── C1.3 coalescing ────────────────────────────────────────────
 
-    /// <summary>
-    ///     Within one batch a wallet appears once, carrying its latest state — a peer running across
-    ///     parcels costs one entry per interval, not one per step — while a second wallet in the same
-    ///     window is untouched by that.
-    /// </summary>
+    /// <summary>The second wallet is there to show the coalescing is per wallet, not per batch.</summary>
     [Test]
     public void ManyMovesInOneInterval_CoalesceToTheLatestStatePerWallet()
     {
@@ -286,11 +228,7 @@ public class PresenceGuaranteeTests
         }));
     }
 
-    /// <summary>
-    ///     An exit that lands on top of an undelivered move supersedes it: the peer has left, so
-    ///     publishing where it last stood would leave every consumer holding it there until the next
-    ///     snapshot.
-    /// </summary>
+    /// <summary>An exit supersedes an undelivered move — the peer has left, so its parcel is not news.</summary>
     [Test]
     public void ExitAfterAnUndeliveredMove_ReplacesIt()
     {
@@ -307,17 +245,8 @@ public class PresenceGuaranteeTests
     // ── C1.3 in a snapshot ─────────────────────────────────────────
 
     /// <summary>
-    ///     C1.3 is a property of a <em>batch</em>, so it binds a snapshot exactly as it binds a delta
-    ///     — and the snapshot is the harder half, because it is assembled by walking slots rather than
-    ///     the per-address outbox. A1's window is where that breaks: a duplicate-session kick takes the
-    ///     evicted connection off the spatial grid at once, but its tracker slot is cleared only by the
-    ///     cleanup a full <c>Peers:DisconnectionCleanTimeoutMs</c> later, so for five seconds by design
-    ///     the wallet stands on two slots.
-    ///     <para />
-    ///     A snapshot that named both would tell a last-write-wins consumer — comms-gatekeeper's
-    ///     <c>applyChange</c> is one — that the wallet is wherever the stale entry happened to sort,
-    ///     and nothing would correct it until the wallet moved or the first snapshot after the cleanup,
-    ///     up to <c>Presence:SnapshotIntervalMs</c> later.
+    ///     C1.3 binds a snapshot too, and the snapshot is the harder half: it walks slots, and inside
+    ///     A1's window — a whole <c>Peers:DisconnectionCleanTimeoutMs</c> — a wallet is on two of them.
     /// </summary>
     [Test]
     public void AnIntervalSnapshot_OfAWalletOnTwoSlots_CarriesItOnce_AtTheLiveSlot()
@@ -338,18 +267,13 @@ public class PresenceGuaranteeTests
             "the snapshot must place the wallet on its live connection, not on the slot being cleaned up");
     }
 
-    /// <summary>
-    ///     The same for the snapshot a rebuilt broker connection raises — the one path that makes this
-    ///     window <em>more</em> reachable, since a client's reconnect and Pulse's own reconnect are
-    ///     often the same network event.
-    /// </summary>
+    /// <summary>The same for a rebuilt broker connection, the likeliest way into that window.</summary>
     [Test]
     public async Task AReconnectSnapshot_OfAWalletOnTwoSlots_CarriesItOnce_AtTheLiveSlot()
     {
         PresenceScenario scenario = DuplicateSlotScenario();
 
-        // The first open is the one the constructor already raised Start for; every open after it is
-        // a reconnect.
+        // The constructor already raised Start for the first open; every open after it is a reconnect.
         await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("first"));
         await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("rebuilt"));
 
@@ -362,19 +286,13 @@ public class PresenceGuaranteeTests
         Assert.That(Entries(batch!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }));
     }
 
-    /// <summary>
-    ///     And for the eviction snapshot, which is the worst place to duplicate a wallet: it is the
-    ///     batch that exists to repair a delta stream a consumer is known to have holes in, so there
-    ///     is nothing else left to correct it with.
-    /// </summary>
+    /// <summary>And for the eviction snapshot, which exists to repair what nothing else will correct.</summary>
     [Test]
     public void AnEvictionSnapshot_OfAWalletOnTwoSlots_CarriesItOnce_AtTheLiveSlot()
     {
         PresenceScenario scenario = DuplicateSlotScenario(channelCapacity: 2);
 
-        // The two feeds share Nats:ChannelCapacity and the one CountDropped path, so whatever the
-        // cluster feed evicted while this state was built is answered and delivered first — see
-        // EvictingScenario. After this the presence outbox is the only thing that can evict.
+        // Both feeds share Nats:ChannelCapacity, so clear the cluster feed's own eviction first.
         scenario.DrainClusterOutbox();
         scenario.RunPass();
         scenario.NextTurn(T0 + 4000);
@@ -382,8 +300,7 @@ public class PresenceGuaranteeTests
         // Past the eviction coalescing window, so the eviction below is the one being measured.
         scenario.Clock.UnixTimeMs = T0 + 20_000;
 
-        // Three distinct wallets change inside one interval against a two-entry outbox, so one of
-        // them is dropped and the snapshot that repairs it is taken while the first is on two slots.
+        // Three wallets change against a two-entry outbox, so one is dropped and a snapshot repairs it.
         scenario.Place(P3, Wallet(3), MAIN, 9, 9);
         scenario.Place(P4, Wallet(4), MAIN, 8, 8);
         scenario.Move(P2, MAIN, 6, 6);
@@ -407,11 +324,8 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     The instant before all of those: between <c>HandshakeHandlerBase.EvictDuplicateSession</c>
-    ///     calling <c>transport.Disconnect</c> and the lifecycle event it produces being drained, both
-    ///     connections really are in the spatial grid, so one pass observes the wallet twice. The entry
-    ///     then has to be the placement that has just handshaked — the slot that was kicked is on its
-    ///     way out and its parcel is not news.
+    ///     The instant before all of those: between the kick's <c>transport.Disconnect</c> and the
+    ///     lifecycle event it produces, both connections are in the grid and one pass observes both.
     /// </summary>
     [Test]
     public void ASnapshotTakenBeforeTheKickedSlotLeavesTheGrid_CarriesTheNewerPlacementOnce()
@@ -434,48 +348,21 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     The adverse half of that instant: the kicked client is still walking. Its
-    ///     <c>transport.Disconnect</c> leaves as ENet's <em>queued</em> disconnect, so the lifecycle
-    ///     event that takes it off the spatial grid waits on the client's acknowledgement — a round
-    ///     trip during which its position messages keep being processed and keep moving it between
-    ///     cells. A pass that observes the <em>stale</em> slot as a change too therefore has to decide
-    ///     which of the two is the wallet's presence, and which of them changed last is decided by
-    ///     <c>grid.GetOccupiedCells()</c> order, which is spatial and uncorrelated with which session
-    ///     is newer.
-    ///     <para />
-    ///     So the tie-break has to be recency of the <em>session</em> — which slot's occupancy started
-    ///     later — rather than recency of the placement: the kicked session's occupancy always started
-    ///     before the session that kicked it, whereas its last step can easily be the most recent
-    ///     thing that happened. On the other reading the snapshot names the parcel the player has just
-    ///     left — or, with the two clients in two realms, the realm the player is not in — and strands
-    ///     it there for up to <c>Presence:SnapshotIntervalMs</c>: once the kicked slot leaves the grid
-    ///     the surviving slot is observed unchanged, so nothing re-states it, and A1 suppresses the
-    ///     stale slot's exit.
-    ///     <para />
-    ///     <c>ClusterTracker</c> now filters the kicked peer out of the pass on its own — it collects
-    ///     only the wallet's live binding — so this is the narrower residual: a single traversal
-    ///     straddling the handshake's rebind. See <see cref="AssertTheWalkingKickedSlotIsSuperseded" />
-    ///     for why the pass is built by hand rather than run.
+    ///     The adverse half of that instant: the kicked client is still walking, because ENet's queued
+    ///     disconnect waits on its ack. So the tie-break is recency of the <em>session</em>, not of the
+    ///     placement — the kicked session always started first, but its last step can be the newest thing.
     /// </summary>
     [Test]
     public void ASnapshotTakenWhileTheKickedSlotIsStillWalking_CarriesTheNewerSessionsSlot()
     {
-        // Both traversal orders, because either is a real one for two cells read either side of the
-        // rebind. One of the two always stamps the kicked slot last.
+        // Both traversal orders: one of them always stamps the kicked slot last.
         AssertTheWalkingKickedSlotIsSuperseded(kickedObservedLast: true);
         AssertTheWalkingKickedSlotIsSuperseded(kickedObservedLast: false);
     }
 
     /// <summary>
-    ///     The order of a batch is a function of its content — "two servers with the same state
-    ///     produce the same bytes", which is what lets the wire fixtures be compared byte for byte —
-    ///     and a duplicated address quietly breaks it: two entries for one wallet compare equal under
-    ///     the address-only comparator, so their relative order is whatever the sort behind it makes of
-    ///     the slot order rather than something the content decides.
-    ///     <para />
-    ///     Driven with the transport slots both ways round, which is what a FIFO free list produces:
-    ///     the wallet's stale connection is the low index on one server and the high index on the
-    ///     other, and the two servers hold the same state either way.
+    ///     Batch order is a function of content — what lets the wire fixtures compare byte for byte —
+    ///     but two entries for one wallet tie under the address-only comparator, whose sort is not stable.
     /// </summary>
     [Test]
     public void TwoServersHoldingOneWalletOnTwoSlots_ProduceTheSameSnapshotBytes()
@@ -493,39 +380,24 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     One wallet on two slots inside A1's window with <b>both</b> slots observed in the tie pass,
-    ///     the kicked connection having taken one more step.
-    ///     <para />
-    ///     The pass is handed to the tracker directly, because that interleaving is no longer
-    ///     reachable through <c>ClusterTracker.RunPass</c>: it collects only the wallet's live
-    ///     binding, and the handshake rebinds the wallet before the incoming session enters the grid,
-    ///     so a traversal that reads both cells after the rebind sees the kicked peer filtered out.
-    ///     What remains is the weakly-consistent grid read behind the traversal —
-    ///     <c>GetOccupiedCells</c> reaching the kicked peer's cell before the rebind and the incoming
-    ///     peer's cell after its placement — which yields exactly the pass built here.
-    ///     <paramref name="kickedObservedLast" /> picks which cell that traversal reached last;
-    ///     either is a real order, and one of them always stamps the kicked slot last.
+    ///     One wallet on two slots, both observed in one pass, the kicked connection a step ahead —
+    ///     built by hand, since <c>ClusterTracker.RunPass</c> now collects only the live binding.
     /// </summary>
     private static void AssertTheWalkingKickedSlotIsSuperseded(bool kickedObservedLast)
     {
         PresenceScenario scenario = OpenedScenario();
 
-        // The kick with the client still on the wire: no lifecycle event is dispatched, so P1 keeps
-        // its place in the spatial grid and its position messages keep being processed — the state
-        // PeersManager.HandleDisconnected has not yet undone.
+        // The kick with the client still on the wire: no lifecycle event yet, so P1 keeps its cell.
         scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
 
-        // The server really is in this state: the incoming session has handshaked onto P2, rebinding
-        // the wallet, and the kicked client's last step has moved P1 — into the grid cell P2 was
-        // placed in, since parcels 1,1 and 5,5 both sit inside one 100-unit cell.
+        // The kicked client's last step moves P1 into P2's cell — parcels 1,1 and 5,5 share one cell.
         scenario.Place(P2, Wallet(1), MAIN, 5, 5);
         scenario.Move(P1, MAIN, 1, 1);
 
         Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null,
             "the interval deadline passes on a turn with nothing to send");
 
-        // P2's occupancy starts in this pass; P1's started in the opening one, so its last step only
-        // moves a slot it already held — whichever of the two the traversal reached last.
+        // P2's occupancy starts in this pass; P1's started in the opening one.
         ClusterPeerInfo kicked = TiePassMember(scenario, P1, 1, 1);
         ClusterPeerInfo live = TiePassMember(scenario, P2, 5, 5);
 
@@ -541,18 +413,13 @@ public class PresenceGuaranteeTests
           + $"connection's last step (kicked observed last: {kickedObservedLast})");
     }
 
-    /// <summary>
-    ///     One member of a hand-built pass, carrying the wallet both sessions authenticate as.
-    /// </summary>
+    /// <summary>One member of a hand-built pass, carrying the wallet both sessions authenticate as.</summary>
     private static ClusterPeerInfo TiePassMember(
         PresenceScenario scenario, PeerIndex peer, int parcelX, int parcelY) =>
         new (peer, Wallet(1), "C1", MAIN, PresenceScenario.CentreOf(parcelX, parcelY),
             scenario.ParcelEncoder.Encode(parcelX, parcelY));
 
-    /// <summary>
-    ///     A pass carrying the given members in the given order, which is the order the tracker
-    ///     observes them in.
-    /// </summary>
+    /// <summary>A pass carrying the given members in the order the tracker observes them in.</summary>
     private static ClusterPass TiePass(params ClusterPeerInfo[] members)
     {
         var clusterIdByPeer = new string?[PresenceScenario.MAX_PEERS];
@@ -567,11 +434,8 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     A wallet on two slots, in the state A1 leaves behind: the evicted connection is off the
-    ///     spatial grid (phase 1 of the disconnect, which the lifecycle event does at once) but its
-    ///     tracker slot is still there, because only <c>CleanupDisconnectedPeer</c> clears it and that
-    ///     runs a full <c>Peers:DisconnectionCleanTimeoutMs</c> later. The opening snapshot and the new
-    ///     placement's delta have both been delivered, so the next batch is the snapshot under test.
+    ///     A wallet on two slots, the state A1 leaves behind: the evicted connection is off the grid but
+    ///     its tracker slot survives until <c>CleanupDisconnectedPeer</c>. Opening batches delivered.
     /// </summary>
     private static PresenceScenario DuplicateSlotScenario(
         int channelCapacity = 1024, PeerIndex? staleSlot = null, PeerIndex? liveSlot = null)
@@ -586,8 +450,8 @@ public class PresenceGuaranteeTests
         scenario.RunPass();
         scenario.NextBatch(T0);
 
-        // The second client instance handshakes: the existing session is kicked, its lifecycle event
-        // takes it off the grid, and the new session is allocated a free index and placed at once.
+        // The second client handshakes: the existing session is kicked and taken off the grid by its
+        // lifecycle event, and the new one is placed on a free index at once.
         scenario.Transport.Disconnect(stale, DisconnectReason.DUPLICATE_SESSION);
         scenario.DispatchDisconnected(stale);
         scenario.Place(live, Wallet(1), MAIN, 5, 5);
@@ -600,9 +464,8 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     One interval snapshot's bytes, with the two fields that are meant to differ between batches
-    ///     — <c>seq</c> and <c>server_time</c> — zeroed, so what is compared is the entries and the
-    ///     order they were written in.
+    ///     One interval snapshot's bytes with <c>seq</c> and <c>server_time</c> zeroed, so what is
+    ///     compared is the entries and the order they were written in.
     /// </summary>
     private static byte[] IntervalSnapshotBytes(PresenceScenario scenario, long at)
     {
@@ -622,11 +485,7 @@ public class PresenceGuaranteeTests
         return PresenceScenario.Serialize(normalized);
     }
 
-    /// <summary>
-    ///     C1.3 read off a whole batch: each address once, and ascending — which is also what makes
-    ///     the batch order a function of its content, since the comparator ties on equal addresses and
-    ///     the sort behind it is not stable.
-    /// </summary>
+    /// <summary>C1.3 read off a whole batch: each address once, and ascending.</summary>
     private static void AssertOneEntryPerAddress(ParcelChangesBatch batch)
     {
         string[] addresses = batch.Changes.Select(static change => change.Address).ToArray();
@@ -637,10 +496,7 @@ public class PresenceGuaranteeTests
 
     // ── C1.4 cadence ───────────────────────────────────────────────
 
-    /// <summary>
-    ///     The first batch of the process is a full snapshot: consumers hold nothing for this
-    ///     <c>server_name</c> yet, so a delta would be a diff against nothing.
-    /// </summary>
+    /// <summary>The process's first batch is a snapshot — a delta would be a diff against nothing.</summary>
     [Test]
     public void FirstBatch_IsASnapshot_LabelledStart()
     {
@@ -656,18 +512,13 @@ public class PresenceGuaranteeTests
         Assert.That(reason, Is.EqualTo(PresenceSnapshotReason.Start));
     }
 
-    /// <summary>
-    ///     <c>Presence:SnapshotIntervalMs</c> is a recovery deadline: whatever a consumer missed, a
-    ///     full snapshot corrects it within that window. Measured from the snapshot published, so the
-    ///     opening one resets it.
-    /// </summary>
+    /// <summary>The deadline is measured from the snapshot published, so the opening one resets it.</summary>
     [Test]
     public void AfterTheSnapshotInterval_TheNextBatchIsASnapshot_LabelledInterval()
     {
         PresenceScenario scenario = OpenedScenario();
 
-        // Nothing moved, so this turn sends nothing — but it is the turn on which the deadline
-        // passes, so it raises the request the next pass answers.
+        // Nothing moved, so this turn sends nothing — but the deadline passes on it, raising the request.
         Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null);
 
         scenario.RunPass();
@@ -680,12 +531,7 @@ public class PresenceGuaranteeTests
             "a snapshot carries one non-null entry per active peer");
     }
 
-    /// <summary>
-    ///     One interval, one snapshot. The request the deadline raises is answered by the next pass
-    ///     and published by the turn after that, so for two turns the deadline is still nominally
-    ///     past — and a second request raised in that window costs a whole extra snapshot of this
-    ///     server's population, every minute, saying exactly what the first one said.
-    /// </summary>
+    /// <summary>One interval, one snapshot: the deadline stays past while the request is in flight.</summary>
     [Test]
     public void TheIntervalSnapshot_IsPublishedOnce_NotAgainWhileItIsInFlight()
     {
@@ -707,30 +553,23 @@ public class PresenceGuaranteeTests
         Assert.That(scenario.NextBatch(T0 + 66_000), Is.Null);
     }
 
-    /// <summary>
-    ///     The outbox's one path to real loss is eviction, and a consumer applying the deltas either
-    ///     side of one would hold a peer at a parcel it has left. So an eviction forces a snapshot:
-    ///     consumers never run on a delta stream that is known to be incomplete.
-    /// </summary>
+    /// <summary>Eviction is the outbox's one path to real loss, so it forces a snapshot at once.</summary>
     [Test]
     public void OutboxEviction_ForcesASnapshot_LabelledEviction_OnTheVeryNextTurn()
     {
         PresenceScenario scenario = EvictingScenario();
 
-        // Past the eviction coalescing window, so the eviction below is the one being measured
-        // rather than one already covered by an earlier snapshot.
+        // Past the eviction coalescing window, so the eviction below is the one being measured.
         scenario.Clock.UnixTimeMs = T0 + 20_000;
 
-        // Three wallets change inside one interval against a two-entry outbox, so the third insert
-        // drops one of them — a change that no consumer will ever receive.
+        // Three wallets change against a two-entry outbox, so the third insert drops one of them.
         scenario.Move(P1, MAIN, -2, 0);
         scenario.Move(P2, MAIN, 6, 5);
         scenario.Move(P3, COZYFARM, 1, 1);
         scenario.RunPass();
 
-        // No second pass: the eviction was caused by the deltas this pass published, and the pass
-        // answers the request it raised before it returns. "Immediately after any outbox eviction"
-        // is the next turn, not the turn after the pass after it.
+        // No second pass: the pass answers the request its own deltas raised before it returns, so
+        // "immediately after an eviction" is this turn.
         List<(ParcelChangesBatch Batch, PresenceSnapshotReason? Reason)> turn =
             scenario.NextTurnWithReasons(T0 + 20_000);
 
@@ -739,8 +578,7 @@ public class PresenceGuaranteeTests
         Assert.That(turn[0].Reason, Is.Null);
         Assert.That(turn[0].Batch.Snapshot, Is.False);
 
-        // Which of the three was dropped is the outbox's admission order, not a contract; that two
-        // survived and still go out is the A2 half — a snapshot does not swallow them.
+        // Which one was dropped is admission order, not contract; that the other two go out is A2.
         Assert.That(turn[0].Batch.Changes, Has.Count.EqualTo(2),
             "what survived the eviction still goes out — the snapshot repairs what did not");
 
@@ -757,13 +595,9 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     An eviction means the broker is already behind, and a full-population snapshot is the
-    ///     largest message this feed can produce — so raising one per batch for as long as the outbox
-    ///     keeps evicting is the worst thing to do at that moment. Eviction snapshots are coalesced to
-    ///     at most one per
-    ///     <c>Presence:SnapshotIntervalMs / NatsPublisher.EVICTION_SNAPSHOT_INTERVAL_DIVISOR</c> — 15 s
-    ///     on the defaults — while the first one is still immediate, which is the half that repairs
-    ///     the loss.
+    ///     An eviction means the broker is already behind and a full snapshot is this feed's largest
+    ///     message, so after the first they are coalesced to one per
+    ///     <c>Presence:SnapshotIntervalMs / NatsPublisher.EVICTION_SNAPSHOT_INTERVAL_DIVISOR</c> — 15 s.
     /// </summary>
     [Test]
     public void SustainedEviction_RaisesOneSnapshotPerCoalescingWindow_NotOnePerBatch()
@@ -772,8 +606,7 @@ public class PresenceGuaranteeTests
 
         Assert.That(EvictOnce(scenario, step: 1, at: T0 + 20_000), Is.True, "the first eviction snapshots at once");
 
-        // Same window: the loss is repaired by the snapshot that has just gone out, and a second full
-        // snapshot two seconds later would say the same thing at the worst possible moment.
+        // Same window: the snapshot that has just gone out already repaired the loss.
         Assert.That(EvictOnce(scenario, step: 2, at: T0 + 22_000), Is.False);
         Assert.That(EvictOnce(scenario, step: 3, at: T0 + 24_000), Is.False);
 
@@ -782,9 +615,8 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     Moves three wallets against a two-entry outbox at wall-clock <paramref name="at" /> — so
-    ///     one change is evicted — and reports whether the turn that follows carried an eviction
-    ///     snapshot. The clock is set before the pass, because the request is raised inside it.
+    ///     Moves three wallets against a two-entry outbox at <paramref name="at" /> — evicting one — and
+    ///     reports whether the next turn carried an eviction snapshot. The clock leads the pass.
     /// </summary>
     private static bool EvictOnce(PresenceScenario scenario, int step, long at)
     {
@@ -801,14 +633,8 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     A snapshot never discards a pending change (A2). It supersedes the <em>placements</em>
-    ///     among them — it states each of those peers' position itself — but it cannot name an exit:
-    ///     the departed peer's slot is already cleared, so <c>CollectLivePresence</c> does not list
-    ///     it. Clearing the pending set therefore made that exit path publish nothing at all, while
-    ///     C1 §2 says it publishes exactly one entry.
-    ///     <para />
-    ///     So the batch that was pending when the snapshot was collected goes out first, under its own
-    ///     <c>seq</c>, and the snapshot follows on the next one — both on the wire, in that order.
+    ///     A snapshot never discards a pending change (A2): it supersedes the placements among them, but
+    ///     it cannot name an exit, so the pending batch goes out first under its own <c>seq</c>.
     /// </summary>
     [Test]
     public void ASnapshotDoesNotDiscardAPendingExit_ItPublishesItFirst()
@@ -837,19 +663,13 @@ public class PresenceGuaranteeTests
         Assert.That(Entries(turn[1].Batch), Is.Empty, "and the server is empty, which the snapshot says");
     }
 
-    /// <summary>
-    ///     A rebuilt broker connection restates the world. A consumer that subscribed while Pulse was
-    ///     disconnected holds nothing for this <c>server_name</c>, and the consumer rule tells it to
-    ///     hold and wait on anything that is not a snapshot — so resuming mid-delta leaves it frozen
-    ///     for up to a snapshot interval.
-    /// </summary>
+    /// <summary>A rebuilt connection restates the world; a subscriber that arrived mid-outage holds nothing.</summary>
     [Test]
     public async Task AReconnect_MakesTheNextBatchASnapshot()
     {
         PresenceScenario scenario = OpenedScenario();
 
-        // The first open is the one the constructor already raised Start for; every open after it is
-        // a reconnect.
+        // The constructor already raised Start for the first open; every open after it is a reconnect.
         await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("first"));
         await scenario.Publisher.OnConnectionOpened(null, new NatsEventArgs("rebuilt"));
 
@@ -863,11 +683,8 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     <c>PeerIndex</c> is a recycled transport slot. Nothing releases one today except the
-    ///     cleanup that clears the tracker's slot, but the codebase already guards the same class of
-    ///     aliasing for the observer view — and if a slot were ever reused without it, a new wallet
-    ///     landing on the departed one's parcel would publish nothing, and the next snapshot would
-    ///     report the peer that left as standing there.
+    ///     <c>PeerIndex</c> is a recycled transport slot: a new wallet landing on a departed one's parcel
+    ///     has to publish, or the next snapshot would report the peer that left as standing there.
     /// </summary>
     [Test]
     public void ANewWalletOnARecycledSlot_IsPublished_EvenAtTheSameParcel()
@@ -883,9 +700,8 @@ public class PresenceGuaranteeTests
     // ── C1.5 canonical identifiers ─────────────────────────────────
 
     /// <summary>
-    ///     Realm and address reach the wire lowercase however they arrived, and <c>server_name</c> is
-    ///     the same string for the life of the process — consumers key their per-server state on it,
-    ///     so a value that drifted would look like a second server.
+    ///     Realm and address reach the wire lowercase however they arrived, and <c>server_name</c> is one
+    ///     string for the life of the process — a value that drifted would look like a second server.
     /// </summary>
     [Test]
     public void RealmAndAddress_AreLowercased_AndServerNameIsStable()
@@ -911,11 +727,7 @@ public class PresenceGuaranteeTests
 
     // ── Rollback default ──────────────────────────────────────────
 
-    /// <summary>
-    ///     The feed follows the existing NATS gating, so a deploy that changes no configuration
-    ///     publishes nothing — the tracker is inert and every entry point a no-op. This is the
-    ///     property that makes the whole feature safe to merge before it is switched on anywhere.
-    /// </summary>
+    /// <summary>The existing NATS gating governs the feed: no config change, nothing published.</summary>
     [Test]
     public void WithNoBrokerConfigured_TheTrackerPublishesNothing()
     {
@@ -930,10 +742,7 @@ public class PresenceGuaranteeTests
         Assert.That(feed.ReceivedCalls(), Is.Empty);
     }
 
-    /// <summary>
-    ///     And the switch for the feed alone: a broker is configured, but <c>Presence:Enabled</c> is
-    ///     off, so clustering and <c>engine.islands</c> carry on and only presence goes quiet.
-    /// </summary>
+    /// <summary>And the switch for the feed alone: clustering and <c>engine.islands</c> carry on.</summary>
     [Test]
     public void WithPresenceDisabled_TheTrackerPublishesNothing()
     {
@@ -951,9 +760,8 @@ public class PresenceGuaranteeTests
     // ── Helpers ───────────────────────────────────────────────────
 
     /// <summary>
-    ///     A scenario whose opening snapshot has already gone out, holding one peer in main — the
-    ///     state every delta test starts from, since a pending snapshot would otherwise absorb the
-    ///     change under test.
+    ///     One peer in main with the opening snapshot already delivered — where every delta test starts,
+    ///     since a pending snapshot would otherwise absorb the change under test.
     /// </summary>
     private static PresenceScenario OpenedScenario()
     {
@@ -967,10 +775,7 @@ public class PresenceGuaranteeTests
         return scenario;
     }
 
-    /// <summary>
-    ///     Each entry as <c>"address realm x,y"</c>, or <c>"address realm -"</c> for an exit, so a
-    ///     failure prints what the batch said instead of a protobuf dump.
-    /// </summary>
+    /// <summary>Each entry as <c>"address realm x,y"</c>, or <c>"address realm -"</c> for an exit.</summary>
     private static string[] Entries(ParcelChangesBatch batch) =>
         batch.Changes
              .Select(static change => change.Parcel is { } parcel
@@ -988,15 +793,9 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     Three peers in a two-entry outbox, with the opening snapshot delivered and the cluster feed
-    ///     drained — so the next pass in which all three move is the one that evicts, and nothing
-    ///     else has evicted before it.
-    ///     <para />
-    ///     That last part needs doing explicitly: the two feeds share <c>Nats:ChannelCapacity</c> and
-    ///     the one <c>CountDropped</c> path, and the cluster feed publishes three first-time
-    ///     assignments in the opening pass, so it evicts one of its own and raises the presence
-    ///     snapshot request that goes with it. Real, and the reason eviction snapshots are coalesced
-    ///     at all — but not what these two tests are about, so it is answered and cleared here.
+    ///     Three peers in a two-entry outbox with the opening snapshot delivered and the cluster feed
+    ///     drained. That draining needs doing explicitly: the cluster feed evicts one of its own three
+    ///     first-time assignments in the opening pass, raising a snapshot request that is not under test.
     /// </summary>
     private static PresenceScenario EvictingScenario()
     {

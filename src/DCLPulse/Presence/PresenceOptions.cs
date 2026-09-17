@@ -1,35 +1,25 @@
 namespace Pulse.Presence;
 
 /// <summary>
-///     Knobs for the <c>engine.parcel_changes</c> presence feed (iteration-2 C1).
-///     <para />
-///     <see cref="Enabled" /> defaults to true, but the feed still follows the existing NATS gating:
-///     with <c>Nats:Url</c> unset there is no broker and nothing is published, exactly as before this
-///     feed existed. So a deploy that changes no configuration behaves as it does today, and a
-///     deployment that already points Pulse at a broker gets the feed.
+///     Knobs for the <c>engine.parcel_changes</c> presence feed (iteration-2 C1). <see cref="Enabled" />
+///     defaults to true, but the NATS gating still applies: no <c>Nats:Url</c>, no broker, nothing published.
 /// </summary>
 public sealed class PresenceOptions
 {
     public const string SECTION_NAME = "Presence";
 
-    /// <summary>
-    ///     Feature flag. False stops the feed while leaving clustering, <c>engine.islands</c> and the
-    ///     stats surface untouched — the rollback switch for this feed alone.
-    /// </summary>
+    /// <summary>Rollback switch for this feed alone; clustering, <c>engine.islands</c> and stats stay on.</summary>
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    ///     How often a non-empty batch of changes goes out. Also the window over which changes for one
-    ///     wallet coalesce, so a peer running across parcels costs one entry per interval rather than
-    ///     one per step.
+    ///     How often a non-empty batch of changes goes out, and the window over which changes for one
+    ///     wallet coalesce — a peer running across parcels costs one entry per interval, not per step.
     /// </summary>
     public int BatchIntervalMs { get; set; } = 2000;
 
     /// <summary>
-    ///     How often the full state of this server goes out as a <c>snapshot=true</c> batch. This is
-    ///     the bound on how long a consumer that missed a delta — a broker outage, a publish that
-    ///     threw — serves stale state before it is corrected, so it is a recovery deadline rather
-    ///     than a refresh rate.
+    ///     How often the full state of this server goes out as a <c>snapshot=true</c> batch. A recovery
+    ///     deadline rather than a refresh rate: it bounds how long a missed delta leaves stale state.
     /// </summary>
     public int SnapshotIntervalMs { get; set; } = 60000;
 }

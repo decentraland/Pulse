@@ -7,18 +7,13 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     The contract pack's five-peer world, built into real boards by a real clustering pass, with a
-///     <see cref="StatsRouter" /> over it. Every <c>http/*.json</c> golden is derived from this state,
-///     so one setup answers the whole C2 surface.
+///     <see cref="StatsRouter" /> over it — the state every <c>http/*.json</c> golden was derived
+///     from.
 ///     <para />
-///     The wall clock is anchored so that each peer's <c>lastPing</c> and the pass's
-///     <c>lastUpdated</c> come out as the pack's exact unix milliseconds: the origin sits 100 ms
-///     before T0, each peer's snapshot is published on the monotonic tick that lands on its stamp,
-///     and the pass runs at T0 + 30.
-///     <para />
-///     Placement order is load-bearing. Cluster ids come from one global counter in the order the
-///     pass walks realms and cells, so main's two cells are filled before the world's for the ids to
-///     come out C1, C2, C3 as the pack has them — which is also the order a real server would produce
-///     them in, since Genesis City is populated before any one world.
+///     The clock is anchored so each peer's <c>lastPing</c> and the pass's <c>lastUpdated</c> come out
+///     as the pack's exact unix milliseconds. Placement order is load-bearing: cluster ids come off one
+///     global counter in the order the pass walks realms and cells, so main must be filled before the
+///     world for the ids to come out C1, C2, C3 as the pack has them.
 /// </summary>
 internal static class StatsFixtureWorld
 {
@@ -50,8 +45,8 @@ internal static class StatsFixtureWorld
     }
 
     /// <summary>
-    ///     A router over <paramref name="scenario" />'s boards, with the version and commit hash the
-    ///     goldens were generated with — a real build's own values could not appear in a fixture.
+    ///     A router over <paramref name="scenario" />'s boards, carrying the version and commit hash
+    ///     the goldens were generated with — a real build's own values could not sit in a fixture.
     /// </summary>
     public static StatsRouter RouterOver(PresenceScenario scenario) =>
         new (

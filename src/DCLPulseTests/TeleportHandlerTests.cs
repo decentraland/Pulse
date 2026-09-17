@@ -153,10 +153,9 @@ public class TeleportHandlerTests
     }
 
     /// <summary>
-    ///     C1.5 / iteration-2 realm canonicalization: realms are the partition key everything
-    ///     compares Ordinal on — <see cref="RealmSpatialGrids" />' grid keys, the presence feed's
-    ///     coalescing, the <c>/realms/{realm}</c> routes — so a mixed-case realm off the wire must
-    ///     land in the lowercase partition, and the snapshot must carry the lowercase name.
+    ///     C1.5 realm canonicalization: realms are the partition key everything compares Ordinal on,
+    ///     so a mixed-case realm off the wire must land in the lowercase partition and the snapshot
+    ///     must carry the lowercase name.
     /// </summary>
     [Test]
     public void Handle_MixedCaseRealm_LandsInTheLowercasePartition()

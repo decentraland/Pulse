@@ -5,10 +5,9 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     Access to the iteration-2 contract fixture pack, copied verbatim into
-///     <c>Fixtures/iteration-2</c> from <c>archipelago-workers/docs/contracts/iteration-2</c>. Copied
-///     rather than referenced because CI has no sibling checkout — and checked against the pack's own
-///     <c>manifest.json</c> by <see cref="AssertMatchesManifest" />, so a copy that drifts from the
-///     contract fails a test instead of quietly asserting the wrong thing.
+///     <c>Fixtures/iteration-2</c> from <c>archipelago-workers/docs/contracts/iteration-2</c> —
+///     copied rather than referenced because CI has no sibling checkout, and pinned by
+///     <see cref="AssertMatchesManifest" /> against the pack's own <c>manifest.json</c>.
 /// </summary>
 internal static class IterationTwoFixtures
 {
@@ -27,15 +26,13 @@ internal static class IterationTwoFixtures
         JsonNode.Parse(File.ReadAllText(Path(relativePath)))
         ?? throw new InvalidOperationException($"{relativePath} is not JSON");
 
-    /// <summary>
-    ///     The wallet the pack's peer set uses for peer <paramref name="n" /> — <c>0x000…000N</c>.
-    /// </summary>
+    /// <summary>The pack's wallet for peer <paramref name="n" /> — <c>0x000…000N</c>.</summary>
     public static string Wallet(int n) =>
         "0x" + n.ToString("x").PadLeft(40, '0');
 
     /// <summary>
     ///     Fails when any copied file's sha256 differs from the pack's manifest. One test calls this;
-    ///     every other fixture test can then trust the bytes it reads.
+    ///     every other fixture test then trusts the bytes it reads.
     /// </summary>
     public static void AssertMatchesManifest()
     {

@@ -293,6 +293,23 @@ public class HandshakeHandlerTests
         transport.Received(1).Disconnect(peerN, DisconnectReason.DUPLICATE_SESSION);
     }
 
+    /// <summary>
+    ///     The auth boundary is the one place checksum casing is stripped, and everything downstream
+    ///     leans on it: realm and address are compared Ordinal and go on the wire lowercase (C1.5).
+    /// </summary>
+    [Test]
+    public void Handle_ChecksummedWallet_IsStoredLowercase()
+    {
+        const string CHECKSUMMED = "0xAbC0000000000000000000000000000000000001";
+
+        handler.Handle(peers, peer, BuildHandshake(initialState: null, wallet: CHECKSUMMED));
+
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+
+        // Ordinal, not IgnoreCase: the point is the stored form, not that it matches case-insensitively.
+        Assert.That(identityBoard.GetWalletIdByPeerIndex(peer), Is.EqualTo(WALLET));
+    }
+
     [Test]
     public void Handle_SecondHandshakeOnAuthenticatedPeer_IsDroppedAndDoesNotRekey()
     {

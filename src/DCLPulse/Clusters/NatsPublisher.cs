@@ -294,10 +294,9 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
             rented.DisplacedSession = session.DisplacedSession ?? string.Empty;
             rented.DisplacedClusterId = session.DisplacedClusterId ?? string.Empty;
 
-            // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
-            // chain carried. The subject is also the coalescing key, so per-subject latest-wins is
-            // exactly per-peer latest-wins.
-            var subject = $"peer.{wallet.ToLowerInvariant()}.cluster_change";
+            // Lower-cased so one wallet always maps to one subject. The subject is also the coalescing
+            // key, so per-subject latest-wins is exactly per-peer latest-wins.
+            var subject = $"peer.{CanonicalName.Of(wallet)}.cluster_change";
 
             PeerClusterChange change = rented;
             rented = null;

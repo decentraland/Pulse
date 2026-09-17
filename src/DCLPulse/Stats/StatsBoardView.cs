@@ -62,8 +62,8 @@ public sealed class StatsBoardView
                 ? timeProvider.ToUnixTimeMs(snapshot.ServerTick)
                 : pass.TakenAtUnixMs;
 
-            // The wallet arrives from the auth chain in whatever casing the client signed with —
-            // EIP-55 checksum form, usually — and this surface compares addresses ordinally.
+            // Already lowercase in production — AuthChainValidator normalizes before IdentityBoard —
+            // so this is defensive, and free when it holds.
             string address = CanonicalName.Of(info.Wallet);
 
             peers[i] = new PeerResult(

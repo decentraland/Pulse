@@ -32,7 +32,9 @@ RANGE_FN_RE = re.compile(r"\b(rate|irate|increase|delta|idelta|\w+_over_time)\s*
 # A counter is also consumed correctly as an exact difference against its own past value:
 # sum(x) - sum(x offset 1m). No extrapolation, so a test aid can read whole events.
 COUNTER_DIFF_RE = re.compile(r"\boffset\s+\d+[smhdw]\b")
-AGGREGATION_RE = re.compile(r"\b(sum|max|min|avg|count|topk|bottomk|quantile|group)\b\s*(?:by|without)?\s*\(")
+AGGREGATION_RE = re.compile(
+    r"\b(sum|max|min|avg|count_values|count|topk|bottomk|quantile|stddev|stdvar|group)\b\s*(?:by|without)?\s*\("
+)
 LABEL_SPLIT_RE = re.compile(r"\b(?:by|without)\s*\(([^)]*)\)")
 FIXED_WINDOW_RE = re.compile(r"\[\d+[smhdw]\]")
 # The server writes le="1"; the scrape pipeline stores le="1.0". A literal match is silently empty.
@@ -46,6 +48,17 @@ DEFAULT_THRESHOLDS = [("green", None), ("red", 80)]
 DESCRIBED_TYPES = {"timeseries", "stat", "heatmap", "gauge", "bargauge", "table", "barchart", "histogram"}
 UNIT_TYPES = {"timeseries", "stat", "gauge", "bargauge"}
 FULL_WIDTH = 24
+REDACTED = "<redacted>"
+# This output is pasted into a public PR, so no finding echoes an environment-identifying
+# value. The rule plus the panel id locate it in the file without naming it.
+NOT_PRINTED = "values not printed: this output may be pasted into a public PR"
+
+
+def redact(text: str) -> str:
+    """The same text with every deployment name and task hostname replaced by a placeholder."""
+    for rx in DEPLOYMENT_NAME_RES:
+        text = rx.sub(REDACTED, text)
+    return text
 
 
 class Findings:
@@ -54,7 +67,7 @@ class Findings:
 
     def add(self, severity: str, panel: dict | None, message: str) -> None:
         where = f"id={panel.get('id')} '{panel.get('title')}'" if panel else "dashboard"
-        self.rows.append((severity, f"{where}: {message}"))
+        self.rows.append((severity, redact(f"{where}: {message}")))
 
     def count(self, severity: str) -> int:
         return sum(1 for s, _ in self.rows if s == severity)
@@ -74,7 +87,7 @@ def rows_in_order(panels: list[dict]) -> list[dict]:
     return [p for p in panels if p.get("type") == "row"]
 
 
-def strings_in(node) -> list[str]:
+def strings_in(node: object) -> list[str]:
     """Every string value anywhere inside a panel, unescaped, for name/filter scans."""
     if isinstance(node, str):
         return [node]
@@ -98,7 +111,7 @@ def target_exprs(panel: dict) -> list[tuple[dict, str]]:
     return [(t, (t.get("expr") or "").strip()) for t in panel.get("targets", [])]
 
 
-def is_templated_datasource(ds) -> bool:
+def is_templated_datasource(ds: dict | str | None) -> bool:
     if ds is None:
         return True  # inherits from the panel / dashboard default
     if isinstance(ds, str):
@@ -141,10 +154,10 @@ def lint(dashboard: dict, exported: set[str], findings: Findings) -> None:
 
         # --- datasource templating -----------------------------------------------------------
         if not is_templated_datasource(p.get("datasource")):
-            findings.add("E", p, f"panel datasource is hard-coded: {p.get('datasource')}")
+            findings.add("E", p, f"panel datasource is hard-coded; use ${{datasource}} ({NOT_PRINTED})")
         for t in p.get("targets", []):
             if not is_templated_datasource(t.get("datasource")):
-                findings.add("E", p, f"target {t.get('refId')} datasource is hard-coded: {t.get('datasource')}")
+                findings.add("E", p, f"target {t.get('refId')} datasource is hard-coded; use ${{datasource}} ({NOT_PRINTED})")
 
         # --- per-target query rules ----------------------------------------------------------
         for t, expr in target_exprs(p):
@@ -164,8 +177,9 @@ def lint(dashboard: dict, exported: set[str], findings: Findings) -> None:
                 labels = [s.strip() for s in split.group(1).split(",") if s.strip() and s.strip() != "le"]
                 if labels:
                     findings.add("W", p, f"target {t.get('refId')} splits by {labels} but legend '{legend}' has no {{{{label}}}} template")
-            if FIXED_WINDOW_RE.search(expr) and "$__rate_interval" not in expr and "$__interval" not in expr:
-                findings.add("I", p, f"target {t.get('refId')} uses a fixed range window {FIXED_WINDOW_RE.search(expr).group(0)}; $__rate_interval unless the fixed window is the point")
+            window = FIXED_WINDOW_RE.search(expr)
+            if window and "$__rate_interval" not in expr and "$__interval" not in expr:
+                findings.add("I", p, f"target {t.get('refId')} uses a fixed range window {window.group(0)}; $__rate_interval unless the fixed window is the point")
             for le in EXACT_LE_RE.findall(expr):
                 findings.add("W", p, f"target {t.get('refId')} pins le=\"{le}\" literally; Prometheus stores bucket labels as floats (1.0), so match le=~\"{le.split('.')[0]}|{le.split('.')[0]}.0\" (no backslash: PromQL unescapes string literals Go-style first)")
             if legend == "__auto":
@@ -196,11 +210,11 @@ def lint(dashboard: dict, exported: set[str], findings: Findings) -> None:
         texts = strings_in({k: v for k, v in p.items() if k != "panels"})
         for rx in DEPLOYMENT_NAME_RES:
             hits = {h for s in texts for h in rx.findall(s)}
-            for hit in sorted(hits):
-                findings.add("W", p, f"hard-coded deployment name '{hit}'; use a variable, a wildcard dimension, or an aggregate")
+            if hits:
+                findings.add("W", p, f"hard-codes {len(hits)} deployment name(s) matching {rx.pattern}; use a variable, a wildcard dimension, or an aggregate ({NOT_PRINTED})")
         instance_filters = {h for s in texts for h in INSTANCE_FILTER_RE.findall(s)}
-        for hit in sorted(instance_filters):
-            findings.add("I", p, f"instance filter {hit}; fine for shared runtime metrics (process_*, dotnet_*), a smell on dcl_pulse_* series")
+        if instance_filters:
+            findings.add("I", p, f"{len(instance_filters)} instance filter(s); fine for shared runtime metrics (process_*, dotnet_*), a smell on dcl_pulse_* series ({NOT_PRINTED})")
 
         # --- layout ------------------------------------------------------------------------------
         gp = p.get("gridPos", {})
@@ -211,7 +225,7 @@ def lint(dashboard: dict, exported: set[str], findings: Findings) -> None:
     for v in dashboard.get("templating", {}).get("list", []):
         names = {h for s in strings_in(v) for rx in DEPLOYMENT_NAME_RES for h in rx.findall(s)}
         if names:
-            findings.add("I", None, f"variable '{v.get('name')}' hard-codes {len(names)} deployment name(s); add the new one there after a blue/green rotation (values not printed: this output may be pasted into a public PR)")
+            findings.add("I", None, f"variable '{v.get('name')}' hard-codes {len(names)} deployment name(s); add the new one there after a blue/green rotation ({NOT_PRINTED})")
 
     # --- coverage --------------------------------------------------------------------------------
     referenced_bases = {HISTOGRAM_SUFFIX_RE.sub("", m) for m in referenced_metrics} | referenced_metrics
@@ -224,7 +238,7 @@ def lint(dashboard: dict, exported: set[str], findings: Findings) -> None:
         distinct = {o.get("id") for o in owners}
         if len(distinct) > 1:
             titles = ", ".join(f"id={o.get('id')} '{o.get('title')}'" for o in owners)
-            findings.add("I", None, f"same query on {len(distinct)} panels ({titles}): {expr[:90]}")
+            findings.add("I", None, f"same query on {len(distinct)} panels ({titles}): {redact(expr)[:90]}")
 
     # --- rows --------------------------------------------------------------------------------------
     expanded = [r for r in rows if not r.get("collapsed")]

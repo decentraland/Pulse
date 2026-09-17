@@ -35,10 +35,12 @@ Read these before touching a panel; the dashboard restates nothing they already 
    | rare counter, events per window | timeseries, `round(sum(increase(x[$__rate_interval])))`, unit `none` | `IP Connection Limit` (id 48) |
    | gauge | timeseries, `sum(x)` or `sum by(instance)(x)` + `total`, unit `none` | `Clusters` (id 53) |
    | 0/1 gauge | stat, `max(x)`, value mappings `Down`/`Up`, `No data` for null | `NATS Feed` (id 60) |
-   | histogram | timeseries p50/p95/p99 via `histogram_quantile(q, sum by (le) (rate(x_bucket[$__rate_interval])))`; heatmap `sum by (le) (rate(x_bucket[…]))` beside it when the distribution shape matters | `Resync Seq Gap` (id 77), `Resync Seq Gap Distribution` (id 80) |
+   | histogram | timeseries p50/p95/p99 via `histogram_quantile(q, sum by (le) (rate(x_bucket[$__rate_interval])))`; heatmap `sum by (le) (rate(x_bucket[…]))` beside it when the distribution shape matters | `Resync Seq Gap (baseline behind latest)` (id 77), `Resync Seq Gap Distribution` (id 80) |
    | histogram with a label | one quantile line per label value, `and on (label) (sum by (label) (rate(x_count[…])) > 0)` to hide idle values | `Peer RTT p50 by Region` (id 39) |
    | ratio against a limit | timeseries with dashed `crit`/`warn` lines from a `${x_crit}` textbox variable, plus a 4-wide stat `(% to crit)` colored green/yellow/red at 0.2/1.0 | `Resyncs as % of Deltas` (id 13) + id 26 |
    | derived mean from `_sum`/`_count` | `sum(rate(x_sum[…])) / sum(rate(x_count[…]))` | `Visible Subjects per Listener Tick` (id 46) |
+
+   The ids are where those panels sat at the last curation pass, and an optimize pass may have merged or renumbered one since. Match on the title, fall back to the nearest panel of the same shape, and never copy an id from this table into the file.
 
 5. **Describe.** First sentence: what it measures, in plain words. Then `Normal:` and `Worry when:` lines, and what to check next — lifted from the metric's `Signal | Meaning` table. The Clusters row (ids 53–69) is the tone.
 6. **Lint.** Zero `[E]`, and every `[W]` you leave is named in the report with its reason.

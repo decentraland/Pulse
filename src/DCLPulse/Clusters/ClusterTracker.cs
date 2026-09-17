@@ -47,9 +47,19 @@ public sealed class ClusterTracker : BackgroundService
     // Whether engine.parcel_changes is derived at all. No broker means nothing to publish to.
     private readonly bool presenceEnabled;
 
-    // Guards the presence columns of peerStates alone. The pass writes them on this thread and
-    // OnPeerRemoved on a peer worker; the clustering columns are this thread's only and take no lock.
-    private readonly Lock presenceLock = new ();
+    // Whether a pass will ever run to drain departures. Without it a disabled tracker would let the
+    // queue grow for the life of the process.
+    private readonly bool passRuns;
+
+    // Departure handoff, one flag per peer. A PeerSimulation call tree may not block (see CLAUDE.md),
+    // and retiring a presence needs both this tracker's columns and the publisher's outbox, each
+    // owned by another thread — so a worker raises the flag and the next pass does the work.
+    // Preallocated, so the handoff costs no allocation and no queue, and bounded by construction
+    // since a peer holds one index.
+    //
+    // This array is the only state of this class another thread ever writes. Every column of
+    // peerStates is therefore single-threaded, which is what removes the lock entirely.
+    private readonly bool[] departed;
 
     // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
     // its own union-find state. Cleared between realms — the same cell exists in every realm, and
@@ -67,8 +77,8 @@ public sealed class ClusterTracker : BackgroundService
     // and holds one entry per previous cluster the component draws members from.
     private readonly Dictionary<string, int> overlapCounts = new ();
 
-    // State carried across passes. The clustering columns are this thread's alone; the presence
-    // columns are shared with OnPeerRemoved under presenceLock.
+    // State carried across passes, read and written by this thread alone. Departures reach it through
+    // the departed flags rather than from the worker that raised them.
     private readonly PeerState[] peerStates;
     private readonly Dictionary<string, ClusterRecord> clusterRecords = new ();
 
@@ -115,8 +125,10 @@ public sealed class ClusterTracker : BackgroundService
         this.timeProvider = timeProvider;
 
         presenceEnabled = natsOptions.Value.IsConfigured;
+        passRuns = this.options.Enabled && this.options.PassIntervalMs > 0;
 
         peerStates = new PeerState[maxPeers];
+        departed = new bool[maxPeers];
     }
 
     /// <summary>
@@ -188,6 +200,10 @@ public sealed class ClusterTracker : BackgroundService
     internal void RunPass()
     {
         long startTicks = Stopwatch.GetTimestamp();
+
+        // First, so a departure is retired before this pass places anyone: the wallet's newer
+        // connection then supersedes it in the same batch rather than racing it.
+        DrainDepartures();
 
         // Stamps every per-pass liveness check: a peer slot, a cluster record and a claim are
         // current exactly when they carry this number, so nothing has to be cleared to go stale.
@@ -653,8 +669,7 @@ public sealed class ClusterTracker : BackgroundService
     ///     <para />
     ///     Both feeds come off the same walk of the same members, so what
     ///     <c>engine.parcel_changes</c> says and what the stats surface serves cannot disagree by more
-    ///     than one pass. The presence half runs under <see cref="presenceLock" />, which is also what
-    ///     makes "read the slot, publish, write the slot" atomic against <see cref="OnPeerRemoved" />.
+    ///     than one pass. Both halves run on the tracker thread, which owns every column they touch.
     /// </summary>
     private int PublishPeerChanges()
     {
@@ -671,12 +686,8 @@ public sealed class ClusterTracker : BackgroundService
 
             foreach (PassMember member in MembersOf(component))
             {
-                // Taken per member rather than around the whole walk: OnPeerRemoved runs on a peer
-                // worker inside the simulation tick, so it must not queue behind the assignment half
-                // as well. Uncontended acquisitions, at one pass per second.
                 if (presenceEnabled)
-                    lock (presenceLock)
-                        ObservePresence(member, info.Realm, publishChange: !snapshot);
+                    ObservePresence(member, info.Realm, publishChange: !snapshot);
 
                 if (TryPublishAssignment(member, info.Id, info.Realm))
                     reassignments++;
@@ -695,8 +706,7 @@ public sealed class ClusterTracker : BackgroundService
         }
 
         if (snapshot)
-            lock (presenceLock)
-                feedPublisher.PublishParcelSnapshot(CollectLivePresence(), reason);
+            feedPublisher.PublishParcelSnapshot(CollectLivePresence(), reason);
 
         return reassignments;
     }
@@ -858,42 +868,71 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     public void OnPeerRemoved(PeerIndex peer)
     {
-        if (!presenceEnabled) return;
+        if (!presenceEnabled || !passRuns) return;
 
         var index = (int)peer.Value;
 
-        if (index >= peerStates.Length) return;
+        if (index >= departed.Length) return;
 
-        lock (presenceLock)
+        // Raised before PeerSimulation releases the index to the allocator, which is what lets the
+        // drain trust the slot: nothing can reissue this index, be placed, and overwrite the columns
+        // before a pass has consumed the flag, because placement happens later in a pass than the
+        // drain does.
+        Volatile.Write(ref departed[index], true);
+    }
+
+    /// <summary>
+    ///     Retires every peer a worker has handed over since the last pass. Runs first, so an exit is
+    ///     published ahead of this pass's own placements and ahead of any snapshot that would
+    ///     otherwise contradict it — a snapshot collected after the clear cannot list the departed
+    ///     wallet, and the publisher stages a pending exit ahead of the snapshot (A2).
+    /// </summary>
+    private void DrainDepartures()
+    {
+        if (!presenceEnabled) return;
+
+        for (var index = 0; index < departed.Length; index++)
         {
-            ref PeerState state = ref peerStates[index];
+            if (!Volatile.Read(ref departed[index])) continue;
 
-            if (state.Realm is not { } realm)
-            {
-                ClearPresence(ref state);
-
-                return;
-            }
-
-            string address = state.Address!;
-            string wallet = state.Wallet!;
-
-            // Cleared before the binding is read, so this slot cannot answer for itself.
-            ClearPresence(ref state);
-            liveCount--;
-
-            // Suppressed only when the replacement actually has a presence of its own. The binding
-            // alone is not enough: the legacy connect flow binds a wallet at AUTHENTICATED but places
-            // it only on its first TeleportRequest, so a reconnect that drops before that teleport
-            // would leave this exit suppressed and its own slot empty — no exit for the wallet at all
-            // until the next snapshot.
-            if (identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live)
-                && live != peer
-                && live.Value < peerStates.Length
-                && peerStates[live.Value].Realm is not null) return;
-
-            feedPublisher.PublishParcelChange(address, realm, parcel: null);
+            Volatile.Write(ref departed[index], false);
+            RetirePresence(new PeerIndex((uint)index));
         }
+    }
+
+    /// <summary>
+    ///     One departed peer: clears its presence columns and publishes the exit, unless the wallet is
+    ///     left placed elsewhere on this server.
+    /// </summary>
+    private void RetirePresence(PeerIndex peer)
+    {
+        ref PeerState state = ref peerStates[(int)peer.Value];
+
+        if (state.Realm is not { } realm)
+        {
+            ClearPresence(ref state);
+
+            return;
+        }
+
+        string address = state.Address!;
+        string wallet = state.Wallet!;
+
+        // Cleared before the binding is read, so this slot cannot answer for itself.
+        ClearPresence(ref state);
+        liveCount--;
+
+        // Suppressed only when the replacement actually has a presence of its own. The binding alone
+        // is not enough: the legacy connect flow binds a wallet at AUTHENTICATED but places it only on
+        // its first TeleportRequest, so a reconnect that drops before that teleport would leave this
+        // exit suppressed and its own slot empty — no exit for the wallet at all until the next
+        // snapshot.
+        if (identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live)
+            && live != peer
+            && live.Value < peerStates.Length
+            && peerStates[live.Value].Realm is not null) return;
+
+        feedPublisher.PublishParcelChange(address, realm, parcel: null);
     }
 
     /// <summary>
@@ -978,9 +1017,9 @@ public sealed class ClusterTracker : BackgroundService
             // An unstamped slot is already clear — never collected, or forgotten by an earlier pass.
             if (state.LastSeenPass == passNumber || state.LastSeenPass == 0) continue;
 
-            // Clustering columns only. The presence columns are shared with OnPeerRemoved, which is
-            // the one thing allowed to retire a presence entry (A1, C1.2); clearing the whole struct
-            // here would race it and drop an exit. Zeroing LastSeenPass is what makes a slot that has
+            // Clustering columns only. Retiring a presence is RetirePresence's alone (A1, C1.2) —
+            // clearing one here would drop the exit for a peer that is merely absent from a pass,
+            // which is not the same thing as gone. Zeroing LastSeenPass is what makes a slot that has
             // left the grid lose every Supersedes tie until then.
             state.PreviousPassClusterId = null;
             state.PublishedClusterId = null;
@@ -1084,10 +1123,9 @@ public sealed class ClusterTracker : BackgroundService
     /// <summary>
     ///     What the tracker carries about one peer slot between passes, for both feeds.
     ///     <para />
-    ///     Columns group by owning thread, which is the whole thread-safety argument: the presence
-    ///     columns are written by the pass's publish walk <i>and</i> by <see cref="OnPeerRemoved" />
-    ///     on a peer worker, so both take <see cref="presenceLock" />; the clustering columns are the
-    ///     pass thread's alone and take none. Nothing may write the struct whole.
+    ///     Every column belongs to the tracker thread. A worker never touches this struct: it raises a
+    ///     <see cref="departed" /> flag and <see cref="DrainDepartures" /> does the work on this
+    ///     thread, which is what leaves the whole table lock-free.
     ///     <para />
     ///     Two notions of "previous cluster", deliberately kept apart:
     ///     <see cref="PreviousPassClusterId" /> is what the last pass <i>computed</i>, which is what
@@ -1103,7 +1141,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private struct PeerState
     {
-        // --- Presence columns. Under presenceLock. Realm doubles as the occupancy flag.
+        // --- Presence columns. Realm doubles as the occupancy flag.
         public string? Wallet;
         public string? Address;
         public string? Realm;

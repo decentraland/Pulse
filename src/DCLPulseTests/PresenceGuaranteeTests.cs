@@ -68,6 +68,25 @@ public class PresenceGuaranteeTests
         AssertSingleExit(scenario, Wallet(1), MAIN);
     }
 
+    /// <summary>
+    ///     Cleanup hands the departure over and returns — a <c>PeerSimulation</c> call tree may not
+    ///     block, and publishing would take the outbox lock. The pass does the work.
+    /// </summary>
+    [Test]
+    public void TheExitIsPublishedByTheNextPass_NotByCleanup()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        scenario.Remove(P1);
+
+        Assert.That(scenario.NextBatch(T0 + 2000), Is.Null,
+            "nothing may reach the outbox from the worker that ran the cleanup");
+
+        scenario.RunPass();
+
+        Assert.That(Entries(scenario.NextBatch(T0 + 4000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -" }));
+    }
+
     /// <summary>A peer that never authenticated was never placed, so it never reached the feed.</summary>
     [Test]
     public void PendingAuthTimeout_DisconnectsThePeer_AndAnnouncesNoExit()

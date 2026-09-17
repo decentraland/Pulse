@@ -329,6 +329,10 @@ Network-level defenses live in `src/DCLPulse/Transport/Hardening/` and `src/DCLP
 
 Hardening knobs are boot-time `appsettings.json` values, with one exception: `Transport:Hardening:IpLimiter` is reconfigurable on a running server from the remote Unleash document. [docs/feature-flags.md](docs/feature-flags.md) covers that mechanism — the `pulse.json` endpoint, `dynamicconfig.json` as the offline defaults and type schema for the remote values, and the procedure for adding a dynamic knob (`IOptionsMonitor<T>`, never `IOptions<T>`).
 
+## Grafana Dashboard
+
+`pulse-server-dashboard.json` (repo root, **gitignored — never commit it**; the repository is public and the export carries deployment names) is the local copy of the Grafana **Pulse Server** dashboard export; Grafana imports it by `uid`, and the operator re-exports after UI edits. Any change that adds, renames or relabels an exported series — `PrometheusFormatter.cs`, `PulseMetrics.*.cs`, a feature with its own counters or histograms — is finished only when the `dashboard-curator` agent (`.claude/agents/dashboard-curator.md`) has added or updated the panels and `python scripts/dashboard-lint.py` reports zero errors. Dispatch the same agent to review a dashboard diff or to consolidate the dashboard; the mechanical rules live in the lint, the judgement rules and field notes in the agent file. This repository is public: a panel's internals — deployment names, hostnames, datasource ids — stay in the dashboard JSON and are never repeated in docs, PR text or reports.
+
 ---
 
 ## Docker — Deployment & Debugging

@@ -379,3 +379,4 @@ resync-path deltas are excluded from `delta_staleness`).
 2. Run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
 3. If `MeterListenerMetricsCollector` or `ConsoleDashboard` ctor signatures changed, update DI in `Program.cs` and any tests that construct them.
 4. If Rider MCP is available, run `mcp__rider__get_file_problems` on each touched file to catch convention warnings before reporting done.
+5. Grafana: dispatch the `dashboard-curator` agent (`.claude/agents/dashboard-curator.md`) with the new `dcl_pulse_*` series names. It adds the panel(s) to `pulse-server-dashboard.json` in the house style and leaves `python scripts/dashboard-lint.py` at zero errors. A series that ships without a panel is unfinished.

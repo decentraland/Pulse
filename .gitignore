@@ -66,3 +66,9 @@ nunit-*.xml
 
 # AI
 /.claude/settings.local.json
+
+## Grafana dashboard export — local only, never committed (public repo; carries deployment names)
+/pulse-server-dashboard.json
+
+# Python bytecode from scripts/*.py
+__pycache__/

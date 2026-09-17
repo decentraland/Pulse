@@ -351,6 +351,17 @@ worker-shard rule above: the tick hands work over and moves on. Consequences wor
 - A worker cannot mutate another component's per-peer table inline, for the same reason.
 - Prefer the existing lock-free primitives over inventing one — `SnapshotBoard`'s ring seqlock,
   `ClusterBoard`'s whole-result `Volatile.Write` swap, `IdentityBoard`'s `ConcurrentDictionary`.
+- Concurrent collections are not the answer. `ConcurrentQueue.Enqueue` takes a lock of its own when it
+  appends a segment, and allocates one per ~32 items. Preallocate an array sized to
+  `Transport:MaxPeers` and index it by `PeerIndex`.
+
+**A lock off the tick is fine, and `outboxLock` is the worked example.** The rule bans blocking *on a
+worker*, not locks as such. `NatsPublisher`'s outbox keeps its lock deliberately: `ClusterTracker` is
+its only producer, so it serializes one 1 Hz producer against one drain loop, and holds are in-memory
+only because `await` cannot appear under `lock`. Making it lock-free would mean an SPSC rewrite of the
+supersede-by-subject dictionary and the instance pools — real work to remove microseconds of
+uncontended locking that no tick ever waits on. The check to apply is "can a `PeerSimulation` call
+tree reach this?", not "is there a lock?".
 
 ## PeerSimulation — method decoupling
 

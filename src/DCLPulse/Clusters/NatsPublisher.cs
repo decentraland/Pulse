@@ -98,6 +98,10 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
     // left. Every entry holds a message instance checked out of a free list, so anything that leaves
     // the outbox — superseded, evicted, dequeued or abandoned at shutdown — is returned by whoever took
     // it out.
+    //
+    // This lock is deliberate and stays. It is off the tick: ClusterTracker is the only producer, so
+    // it serializes one 1 Hz producer against one drain, never a peer worker — see the lock-free rule
+    // in CLAUDE.md. Holds are in-memory only, since `await` cannot appear under `lock`.
     private readonly Lock outboxLock = new ();
     private readonly Dictionary<string, PeerClusterChange> pendingChangeBySubject = new (StringComparer.Ordinal);
     private readonly Queue<string> changeOrder = new ();

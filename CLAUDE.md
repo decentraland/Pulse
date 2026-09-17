@@ -319,6 +319,29 @@ Concrete consequences:
 - Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~(`VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL`) × `BaseTickMs` ≈ 4 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
 - Different-wallet on a recycled ENet slot: the allocator's pending-recycle already prevents the server from issuing the same `PeerIndex` to a different wallet within the grace window, so this case does not produce aliased observer views; the original bug is fixed.
 
+## A PeerSimulation call tree must be lock-free
+
+`PeerSimulation` runs on the worker threads that drive the simulation tick. **Nothing reachable from
+it may block**: no `lock`/`Monitor`, no `SemaphoreSlim.Wait`, no blocking channel write, no
+`Task.Wait()` or `.Result`. A worker stalled on a lock delays every peer on its shard, and the holder
+is on a schedule of its own — a 1 Hz `ClusterTracker` pass, a broker drain — so the stall is unbounded
+in tick terms and invisible in tick metrics.
+
+This binds the **whole call tree, not the first frame**. When `PeerSimulation` calls a shared
+component, that method and everything it reaches must be lock-free *on that path*. Adding a `lock` to
+a method that is only called from a background service is fine until something in `PeerSimulation`
+reaches it; check the callers before you add one.
+
+Cross-thread work leaves the worker by **handoff, never by waiting** — a lock-free queue, or a
+single-writer field the owning thread polls on its own schedule. This is the same principle as the
+worker-shard rule above: the tick hands work over and moves on. Consequences worth naming:
+
+- A worker cannot publish to the NATS outbox inline: `NatsPublisher`'s publish methods take
+  `outboxLock`. It enqueues and lets the owning thread publish.
+- A worker cannot mutate another component's per-peer table inline, for the same reason.
+- Prefer the existing lock-free primitives over inventing one — `SnapshotBoard`'s ring seqlock,
+  `ClusterBoard`'s whole-result `Volatile.Write` swap, `IdentityBoard`'s `ConcurrentDictionary`.
+
 ## PeerSimulation — method decoupling
 
 `PeerSimulation` is on the hot path and already long. New logic added to it must go into its own private method — do not inline new behavior into existing methods. Keep each method focused on a single concern (e.g. tier gating, delta computation, aliasing detection, profile announcement). The orchestrator `ProcessVisibleSubjects` should read as a short sequence of named calls, not a wall of conditionals. This keeps the per-subject control flow legible and makes it possible to test or reason about each concern in isolation.

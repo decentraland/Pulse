@@ -5,32 +5,24 @@ using Pulse.Metrics;
 namespace Pulse.Clusters;
 
 /// <summary>
-///     The <c>engine.parcel_changes</c> half of the publisher (iteration-2 C1). Same fail-soft outbox
-///     as the cluster feed, with one difference that follows from the message: a batch is assembled
-///     from the outbox when the timer fires rather than handed in, so coalescing is per address and
-///     the wire message is built at send time.
-///     <para />
-///     Three things can be pending: per-address changes, latest-wins and capped at
-///     <see cref="NatsOptions.ChannelCapacity" /> addresses; a full snapshot, which never discards a
-///     pending change (A2); and a snapshot <em>request</em>, answered by
-///     <see cref="ClusterTracker" />, which holds the state a snapshot needs.
+///     The <c>engine.parcel_changes</c> half of the publisher (iteration-2 C1). A batch is assembled
+///     when the timer fires rather than handed in, so coalescing is per address. Three things can be
+///     pending: changes capped at <see cref="NatsOptions.ChannelCapacity" />, a snapshot, and a request.
 /// </summary>
 public sealed partial class NatsPublisher
 {
     /// <summary>
-    ///     What <see cref="PresenceOptions.SnapshotIntervalMs" /> is divided by to bound eviction
-    ///     snapshots: at most one per quarter of the recovery deadline, 15 s on the defaults. An
-    ///     eviction means the broker is already behind, so one full-population snapshot per evicting
-    ///     batch would push this feed's largest message exactly when it is dropping messages.
-    /// </summary>
-    internal const int EVICTION_SNAPSHOT_INTERVAL_DIVISOR = 4;
-
-    /// <summary>
-    ///     Batches one turn of the presence cadence may publish. Two, because a snapshot goes out
-    ///     behind the delta batch that was pending when it was collected (A2); no more, so a producer
-    ///     that keeps enqueueing cannot hold the turn and turn the cadence into a busy loop.
+    ///     Batches one turn may publish. Two, because a snapshot goes out behind the delta batch that
+    ///     was pending when it was collected (A2).
     /// </summary>
     internal const int MAX_PARCEL_BATCHES_PER_TURN = 2;
+
+    /// <summary>
+    ///     Bounds eviction snapshots to one per quarter of
+    ///     <see cref="PresenceOptions.SnapshotIntervalMs" />: an eviction means the broker is already
+    ///     behind, so one snapshot per evicting batch would push the largest message exactly then.
+    /// </summary>
+    private const int EVICTION_SNAPSHOT_INTERVAL_DIVISOR = 4;
 
     // Presence outbox, under the same outboxLock as the cluster feed — one ordering, not two.
     private readonly Dictionary<string, PendingParcelChange> pendingParcelChangeByAddress = new (StringComparer.Ordinal);
@@ -38,9 +30,9 @@ public sealed partial class NatsPublisher
     private IReadOnlyList<PeerPresence>? pendingParcelSnapshot;
     private PresenceSnapshotReason pendingParcelSnapshotReason;
 
-    // Changes that were already pending when a snapshot was collected. Older than it, so they go out
-    // ahead of it under their own seq (A2). Latest-wins per address and deliberately uncapped — the
-    // bound is the addresses this server holds, and dropping one is the loss this staging prevents.
+    // Changes already pending when a snapshot was collected. Older than it, so they go out ahead of it
+    // under their own seq (A2). Bounded per staging round by ChannelCapacity, being filled only from
+    // the capped dictionary above.
     private readonly Dictionary<string, PendingParcelChange> parcelChangesAheadOfSnapshot = new (StringComparer.Ordinal);
 
     // The batch instance the presence loop owns, reused across sends; every field is rewritten first.
@@ -109,7 +101,7 @@ public sealed partial class NatsPublisher
     {
         if (!presenceEnabled) return;
 
-        var superseded = 0;
+        var superseded = false;
 
         lock (outboxLock)
         {
@@ -121,14 +113,13 @@ public sealed partial class NatsPublisher
             pendingParcelChangeByAddress.Clear();
             parcelChangeOrder.Clear();
 
-            if (pendingParcelSnapshot is not null)
-                superseded++;
+            superseded = pendingParcelSnapshot is not null;
 
             pendingParcelSnapshot = presence;
             pendingParcelSnapshotReason = reason;
         }
 
-        for (var i = 0; i < superseded; i++)
+        if (superseded)
             CountSuperseded();
     }
 
@@ -150,147 +141,9 @@ public sealed partial class NatsPublisher
     }
 
     /// <summary>
-    ///     Raises a snapshot request, answered by the tracker on its next pass. First-wins, so a
-    ///     request already waiting keeps its original reason. Eviction requests are additionally
-    ///     coalesced to one per <see cref="PresenceOptions.SnapshotIntervalMs" /> /
-    ///     <see cref="EVICTION_SNAPSHOT_INTERVAL_DIVISOR" />; a non-positive interval leaves them
-    ///     unbounded, the recovery deadline having been turned off.
-    /// </summary>
-    private void RequestParcelSnapshot(PresenceSnapshotReason reason)
-    {
-        if (!presenceEnabled) return;
-
-        lock (outboxLock)
-        {
-            if (parcelSnapshotRequest is not null) return;
-
-            if (reason == PresenceSnapshotReason.Eviction)
-            {
-                long now = timeProvider.UnixTimeMs;
-                int window = Math.Max(0, presenceOptions.SnapshotIntervalMs) / EVICTION_SNAPSHOT_INTERVAL_DIVISOR;
-
-                if (now - lastEvictionSnapshotRequestUnixMs < window) return;
-
-                lastEvictionSnapshotRequestUnixMs = now;
-            }
-
-            parcelSnapshotRequest = reason;
-        }
-    }
-
-    /// <summary>
-    ///     Assembles the next batch from the outbox, or reports there is nothing to send: an empty
-    ///     delta is not published, while an empty snapshot is — it says this server holds nobody.
-    ///     <paramref name="snapshotReason" /> is non-null exactly when the batch is a snapshot.
-    ///     Internal so the batch, and the bytes it serializes to, can be asserted without a broker.
-    ///     <para />
-    ///     Entries are ordered by address, so a batch is a function of its content alone. What is
-    ///     waiting goes out in the order it happened — changes pending when a snapshot was collected,
-    ///     then that snapshot, then anything raised after it — which makes it lossless both ways (A2).
-    /// </summary>
-    internal bool TryBuildParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? snapshotReason)
-    {
-        batch = parcelBatch;
-        snapshotReason = null;
-
-        IReadOnlyList<PeerPresence>? snapshot;
-
-        parcelBatchScratch.Clear();
-
-        lock (outboxLock)
-        {
-            snapshot = null;
-
-            if (parcelChangesAheadOfSnapshot.Count > 0)
-            {
-                foreach (KeyValuePair<string, PendingParcelChange> pending in parcelChangesAheadOfSnapshot)
-                    parcelBatchScratch.Add(pending.Value);
-
-                parcelChangesAheadOfSnapshot.Clear();
-            }
-            else if (pendingParcelSnapshot is { } collected)
-            {
-                snapshot = collected;
-                snapshotReason = pendingParcelSnapshotReason;
-                pendingParcelSnapshot = null;
-            }
-            else
-            {
-                if (pendingParcelChangeByAddress.Count == 0) return false;
-
-                foreach (KeyValuePair<string, PendingParcelChange> pending in pendingParcelChangeByAddress)
-                    parcelBatchScratch.Add(pending.Value);
-
-                pendingParcelChangeByAddress.Clear();
-                parcelChangeOrder.Clear();
-            }
-        }
-
-        if (snapshot is not null)
-            foreach (PeerPresence presence in snapshot)
-                parcelBatchScratch.Add(new PendingParcelChange(presence.Address, presence.Realm, presence.Parcel));
-
-        // A total order only because every source is keyed by address, the snapshot list included
-        // (C1.3): two entries for one address would compare equal, and List<T>.Sort is not stable.
-        parcelBatchScratch.Sort(static (a, b) => string.CompareOrdinal(a.Address, b.Address));
-
-        FillParcelBatch(snapshotReason is not null);
-
-        return true;
-    }
-
-    /// <summary>
-    ///     Projects <see cref="parcelBatchScratch" /> onto the reused batch instance: every field in
-    ///     use is rewritten and the previous batch's entries go back to the free list first, so
-    ///     nothing survives the batch this instance last held.
-    /// </summary>
-    private void FillParcelBatch(bool snapshot)
-    {
-        for (var i = 0; i < parcelBatch.Changes.Count; i++)
-            parcelChangePool.Push(parcelBatch.Changes[i]);
-
-        // RepeatedField.Clear keeps its backing array, so refilling the list allocates nothing.
-        parcelBatch.Changes.Clear();
-
-        parcelBatch.ServerName = options.ServerName;
-        parcelBatch.Seq = ++parcelSeq;
-        parcelBatch.Snapshot = snapshot;
-        parcelBatch.ServerTime = (ulong)timeProvider.UnixTimeMs;
-
-        foreach (PendingParcelChange pending in parcelBatchScratch)
-        {
-            ParcelChange change = RentParcelChange();
-
-            change.Address = pending.Address;
-            change.Realm = pending.Realm;
-
-            if (pending.Parcel is { } parcel)
-            {
-                // Reuses the entry's own parcel, so a steady stream of placements allocates nothing.
-                Parcel target = change.Parcel ?? new Parcel();
-
-                target.X = parcel.X;
-                target.Y = parcel.Y;
-                change.Parcel = target;
-            }
-            else
-
-                // An absent parcel is the exit signal, so the reference is dropped rather than
-                // zeroed: (0,0) is the world origin, a placement like any other.
-                change.Parcel = null;
-
-            parcelBatch.Changes.Add(change);
-        }
-    }
-
-    private ParcelChange RentParcelChange() =>
-        parcelChangePool.TryPop(out ParcelChange? pooled) ? pooled : new ParcelChange();
-
-    /// <summary>
     ///     One turn of the presence cadence: raise the interval request if due, take what the outbox
-    ///     holds, and account for it — batch size, and for a snapshot the reason counter and the
-    ///     deadline it resets. Everything a batch does but the publish, so a test drives the cadence
-    ///     the loop runs. False means nothing to send this interval.
+    ///     holds, and account for it. Everything a batch does but the publish, so a test drives the
+    ///     cadence the loop runs. False means nothing to send this interval.
     /// </summary>
     internal bool TryTakeNextParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? snapshotReason)
     {
@@ -314,10 +167,8 @@ public sealed partial class NatsPublisher
 
     /// <summary>
     ///     Publishes up to <see cref="MAX_PARCEL_BATCHES_PER_TURN" /> batches once per
-    ///     <see cref="PresenceOptions.BatchIntervalMs" />, straight to the connection rather than
-    ///     through the wake-signalled drain: a batch does not exist until the timer fires, so there is
-    ///     nothing to queue. Awaiting each publish before assembling the next keeps the reused batch
-    ///     instance safe. A fault that ends the loop is logged once and cancels <paramref name="loops" />.
+    ///     <see cref="PresenceOptions.BatchIntervalMs" />, straight to the connection: a batch does not
+    ///     exist until the timer fires. Awaiting each send keeps the reused batch instance safe.
     /// </summary>
     private async Task PublishParcelChangesPeriodicallyAsync(NatsConnection connection, CancellationTokenSource loops)
     {
@@ -371,12 +222,36 @@ public sealed partial class NatsPublisher
     }
 
     /// <summary>
-    ///     Raises the periodic snapshot request. Measured from the last snapshot <em>published</em>,
-    ///     not requested, so a request the tracker has not answered — a stopped clustering pass, say
-    ///     — does not reset the deadline it exists to enforce. A snapshot already in flight does
-    ///     satisfy it: the request is answered a pass later and published the turn after, so a second
-    ///     one in that window costs a full snapshot saying what the first said. Checked under the
-    ///     outbox lock together with the set, so a snapshot being taken elsewhere cannot slip between.
+    ///     Raises a snapshot request, answered by the tracker on its next pass. First-wins, so a
+    ///     request already waiting keeps its original reason. Eviction requests are additionally
+    ///     coalesced; a non-positive interval leaves them unbounded, the deadline having been turned off.
+    /// </summary>
+    private void RequestParcelSnapshot(PresenceSnapshotReason reason)
+    {
+        if (!presenceEnabled) return;
+
+        lock (outboxLock)
+        {
+            if (parcelSnapshotRequest is not null) return;
+
+            if (reason == PresenceSnapshotReason.Eviction)
+            {
+                long now = timeProvider.UnixTimeMs;
+                int window = Math.Max(0, presenceOptions.SnapshotIntervalMs) / EVICTION_SNAPSHOT_INTERVAL_DIVISOR;
+
+                if (now - lastEvictionSnapshotRequestUnixMs < window) return;
+
+                lastEvictionSnapshotRequestUnixMs = now;
+            }
+
+            parcelSnapshotRequest = reason;
+        }
+    }
+
+    /// <summary>
+    ///     Raises the periodic snapshot request, measured from the last snapshot <em>published</em>
+    ///     rather than requested, so a request the tracker has not answered does not reset the deadline
+    ///     it exists to enforce. A snapshot already in flight satisfies it.
     /// </summary>
     private void RequestParcelSnapshotIfDue()
     {
@@ -391,6 +266,110 @@ public sealed partial class NatsPublisher
             parcelSnapshotRequest ??= PresenceSnapshotReason.Interval;
         }
     }
+
+    /// <summary>
+    ///     Assembles the next batch, or reports there is nothing to send: an empty delta is not
+    ///     published, an empty snapshot is — it says this server holds nobody. What is waiting goes out
+    ///     in the order it happened, which is what makes a snapshot lossless both ways (A2).
+    /// </summary>
+    private bool TryBuildParcelBatch(out ParcelChangesBatch batch, out PresenceSnapshotReason? snapshotReason)
+    {
+        batch = parcelBatch;
+        snapshotReason = null;
+
+        IReadOnlyList<PeerPresence>? snapshot;
+
+        parcelBatchScratch.Clear();
+
+        lock (outboxLock)
+        {
+            snapshot = null;
+
+            if (parcelChangesAheadOfSnapshot.Count > 0)
+            {
+                foreach (KeyValuePair<string, PendingParcelChange> pending in parcelChangesAheadOfSnapshot)
+                    parcelBatchScratch.Add(pending.Value);
+
+                parcelChangesAheadOfSnapshot.Clear();
+            }
+            else if (pendingParcelSnapshot is { } collected)
+            {
+                snapshot = collected;
+                snapshotReason = pendingParcelSnapshotReason;
+                pendingParcelSnapshot = null;
+            }
+            else
+            {
+                if (pendingParcelChangeByAddress.Count == 0) return false;
+
+                foreach (KeyValuePair<string, PendingParcelChange> pending in pendingParcelChangeByAddress)
+                    parcelBatchScratch.Add(pending.Value);
+
+                pendingParcelChangeByAddress.Clear();
+                parcelChangeOrder.Clear();
+            }
+        }
+
+        if (snapshot is not null)
+            foreach (PeerPresence presence in snapshot)
+                parcelBatchScratch.Add(new PendingParcelChange(presence.Address, presence.Realm, presence.Parcel));
+
+        // A total order only because every source is keyed by address, the snapshot list included
+        // (C1.3): two entries for one address would compare equal, and List<T>.Sort is not stable.
+        parcelBatchScratch.Sort(static (a, b) => string.CompareOrdinal(a.Address, b.Address));
+
+        FillParcelBatch(snapshotReason is not null);
+
+        return true;
+    }
+
+    /// <summary>
+    ///     Projects <see cref="parcelBatchScratch" /> onto the reused batch instance. The previous
+    ///     batch's entries go back to the free list first, so nothing survives the batch this instance
+    ///     last held.
+    /// </summary>
+    private void FillParcelBatch(bool snapshot)
+    {
+        for (var i = 0; i < parcelBatch.Changes.Count; i++)
+            parcelChangePool.Push(parcelBatch.Changes[i]);
+
+        // RepeatedField.Clear keeps its backing array, so refilling the list allocates nothing.
+        parcelBatch.Changes.Clear();
+
+        parcelBatch.ServerName = options.ServerName;
+        parcelBatch.Seq = ++parcelSeq;
+        parcelBatch.Snapshot = snapshot;
+        parcelBatch.ServerTime = (ulong)timeProvider.UnixTimeMs;
+
+        foreach (PendingParcelChange pending in parcelBatchScratch)
+        {
+            ParcelChange change = RentParcelChange();
+
+            change.Address = pending.Address;
+            change.Realm = pending.Realm;
+
+            if (pending.Parcel is { } parcel)
+            {
+                // Reuses the entry's own parcel when it has one; an exit dropped it, so the next
+                // placement on this instance allocates.
+                Parcel target = change.Parcel ?? new Parcel();
+
+                target.X = parcel.X;
+                target.Y = parcel.Y;
+                change.Parcel = target;
+            }
+            else
+
+                // An absent parcel is the exit signal, so the reference is dropped rather than
+                // zeroed: (0,0) is the world origin, a placement like any other.
+                change.Parcel = null;
+
+            parcelBatch.Changes.Add(change);
+        }
+    }
+
+    private ParcelChange RentParcelChange() =>
+        parcelChangePool.TryPop(out ParcelChange? pooled) ? pooled : new ParcelChange();
 
     /// <summary>
     ///     One peer's undelivered presence: the values a <see cref="ParcelChange" /> is built from,

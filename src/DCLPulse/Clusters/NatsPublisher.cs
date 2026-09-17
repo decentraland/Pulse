@@ -123,13 +123,9 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
 
     private readonly string commitHash;
 
-    // Topology scratch, reached from FillIslandStatus alone and so covered by no lock of its own: it
-    // relies on PublishTopology's callers serializing their calls, which nothing here enforces, and two
-    // concurrent fills would interleave into both snapshots. islandById maps one pass's cluster ids to
-    // the islands just built, so its members are filed in a single walk; islandPool holds the IslandData
-    // a shrinking snapshot no longer needs, so a later one that grows again reuses them. An instance is
-    // only ever filled while no other holder has it, so the islands reached through either of these
-    // belong to no live message.
+    // Topology scratch, reached from FillIslandStatus alone and so needing no lock: ClusterTracker is
+    // its only caller, one pass at a time. islandById files one pass's members in a single walk;
+    // islandPool holds the IslandData a shrinking snapshot no longer needs.
     private readonly Dictionary<string, IslandData> islandById = new (StringComparer.Ordinal);
     private readonly Stack<IslandData> islandPool = new ();
 
@@ -269,6 +265,7 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
             // Presence entries are plain values, not pooled messages — dropping them is the teardown.
             pendingParcelChangeByAddress.Clear();
             parcelChangeOrder.Clear();
+            parcelChangesAheadOfSnapshot.Clear();
             pendingParcelSnapshot = null;
 
             foreach (KeyValuePair<string, PeerClusterChange> pending in pendingChangeBySubject)

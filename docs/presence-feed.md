@@ -52,8 +52,9 @@ Two spellings matter on the wire and are easy to get wrong:
      reached the feed;
    - a connection whose wallet is **already placed on a newer connection of this server**. A
      duplicate session (or a reconnect after a network blip) is accepted immediately while the
-     evicted slot is cleaned up `Peers:DisconnectionCleanTimeoutMs` later, so the wallet is standing
-     somewhere by then; withdrawing it would take a peer that is online offline until the next
+     evicted slot is cleaned up `Peers:DisconnectionCleanTimeoutMs` after its transport disconnect
+     lands, so the wallet is standing somewhere by then; withdrawing it would take a peer that is
+     online offline until the next
      snapshot, and inside one batch the per-address coalescing would keep the exit and swallow the
      new placement entirely.
 
@@ -69,10 +70,16 @@ Two spellings matter on the wire and are easy to get wrong:
 4. **Within a batch a wallet appears at most once, with its latest state.** A peer running across
    parcels costs one entry per batch interval, not one per step. This holds for a snapshot as well as
    a delta, and a snapshot is the case worth spelling out: entries are per **wallet**, not per
-   connection, so a wallet briefly standing on two connections — the
-   `Peers:DisconnectionCleanTimeoutMs` window after a duplicate-session kick or a fast reconnect —
-   appears once, at the connection that is actually placed. Consumers may therefore apply a batch as
-   a straight last-write-wins per address, in wire order, without checking for repeats.
+   connection, so a wallet briefly standing on two connections — after a duplicate-session kick or a
+   fast reconnect, until the evicted connection's transport disconnect lands and its slot is cleaned
+   up `Peers:DisconnectionCleanTimeoutMs` later — appears once, at the connection that is actually
+   placed. Consumers may therefore apply a batch as a straight last-write-wins per address, in wire
+   order, without checking for repeats.
+
+   That window is bounded by `Transport:PeerTimeoutMs` (the evicted connection's ENet disconnect is
+   queued, so it waits on the client's acknowledgement) plus `Peers:DisconnectionCleanTimeoutMs` —
+   about 10 s on production defaults, but `appsettings.Development.json` raises the first to 300 s so
+   a paused debugger does not drop peers.
 5. **`realm` and `address` are lowercase**, canonicalized at ingest (handshake and teleport), and
    `server_name` is the same string for the life of the process — **and unique per replica**, which
    the `pulse-<hostname>` default gives you per *host* rather than per process, see

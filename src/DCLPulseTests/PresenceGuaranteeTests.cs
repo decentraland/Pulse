@@ -438,9 +438,10 @@ public class PresenceGuaranteeTests
     ///     <c>transport.Disconnect</c> leaves as ENet's <em>queued</em> disconnect, so the lifecycle
     ///     event that takes it off the spatial grid waits on the client's acknowledgement — a round
     ///     trip during which its position messages keep being processed and keep moving it between
-    ///     cells. The tie pass can therefore observe the <em>stale</em> slot as a change too, and
-    ///     which of the two changed last is then decided by <c>grid.GetOccupiedCells()</c> order,
-    ///     which is spatial and uncorrelated with which session is newer.
+    ///     cells. A pass that observes the <em>stale</em> slot as a change too therefore has to decide
+    ///     which of the two is the wallet's presence, and which of them changed last is decided by
+    ///     <c>grid.GetOccupiedCells()</c> order, which is spatial and uncorrelated with which session
+    ///     is newer.
     ///     <para />
     ///     So the tie-break has to be recency of the <em>session</em> — which slot's occupancy started
     ///     later — rather than recency of the placement: the kicked session's occupancy always started
@@ -450,15 +451,19 @@ public class PresenceGuaranteeTests
     ///     it there for up to <c>Presence:SnapshotIntervalMs</c>: once the kicked slot leaves the grid
     ///     the surviving slot is observed unchanged, so nothing re-states it, and A1 suppresses the
     ///     stale slot's exit.
+    ///     <para />
+    ///     <c>ClusterTracker</c> now filters the kicked peer out of the pass on its own — it collects
+    ///     only the wallet's live binding — so this is the narrower residual: a single traversal
+    ///     straddling the handshake's rebind. See <see cref="AssertTheWalkingKickedSlotIsSuperseded" />
+    ///     for why the pass is built by hand rather than run.
     /// </summary>
     [Test]
     public void ASnapshotTakenWhileTheKickedSlotIsStillWalking_CarriesTheNewerSessionsSlot()
     {
-        // Both intra-cell orders, because the order the pass observes the two peers in is the order
-        // they entered the cell they share — and either one is a real arrival order for the two
-        // position messages behind it. One of the two always stamps the kicked slot last.
-        AssertTheWalkingKickedSlotIsSuperseded(kickedStepsLast: true);
-        AssertTheWalkingKickedSlotIsSuperseded(kickedStepsLast: false);
+        // Both traversal orders, because either is a real one for two cells read either side of the
+        // rebind. One of the two always stamps the kicked slot last.
+        AssertTheWalkingKickedSlotIsSuperseded(kickedObservedLast: true);
+        AssertTheWalkingKickedSlotIsSuperseded(kickedObservedLast: false);
     }
 
     /// <summary>
@@ -488,13 +493,20 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     One wallet on two slots inside A1's window with <b>both</b> slots changing in the tie pass:
-    ///     the kicked connection takes one more step, into the grid cell the new session was placed in
-    ///     — parcels <c>1,1</c> and <c>5,5</c> both sit inside one 100-unit cell — so the pass observes
-    ///     the two in the order they entered that cell, and <paramref name="kickedStepsLast" /> picks
-    ///     which order that is.
+    ///     One wallet on two slots inside A1's window with <b>both</b> slots observed in the tie pass,
+    ///     the kicked connection having taken one more step.
+    ///     <para />
+    ///     The pass is handed to the tracker directly, because that interleaving is no longer
+    ///     reachable through <c>ClusterTracker.RunPass</c>: it collects only the wallet's live
+    ///     binding, and the handshake rebinds the wallet before the incoming session enters the grid,
+    ///     so a traversal that reads both cells after the rebind sees the kicked peer filtered out.
+    ///     What remains is the weakly-consistent grid read behind the traversal —
+    ///     <c>GetOccupiedCells</c> reaching the kicked peer's cell before the rebind and the incoming
+    ///     peer's cell after its placement — which yields exactly the pass built here.
+    ///     <paramref name="kickedObservedLast" /> picks which cell that traversal reached last;
+    ///     either is a real order, and one of them always stamps the kicked slot last.
     /// </summary>
-    private static void AssertTheWalkingKickedSlotIsSuperseded(bool kickedStepsLast)
+    private static void AssertTheWalkingKickedSlotIsSuperseded(bool kickedObservedLast)
     {
         PresenceScenario scenario = OpenedScenario();
 
@@ -503,21 +515,22 @@ public class PresenceGuaranteeTests
         // PeersManager.HandleDisconnected has not yet undone.
         scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
 
-        if (kickedStepsLast)
-        {
-            scenario.Place(P2, Wallet(1), MAIN, 5, 5);
-            scenario.Move(P1, MAIN, 1, 1);
-        }
-        else
-        {
-            scenario.Move(P1, MAIN, 1, 1);
-            scenario.Place(P2, Wallet(1), MAIN, 5, 5);
-        }
+        // The server really is in this state: the incoming session has handshaked onto P2, rebinding
+        // the wallet, and the kicked client's last step has moved P1 — into the grid cell P2 was
+        // placed in, since parcels 1,1 and 5,5 both sit inside one 100-unit cell.
+        scenario.Place(P2, Wallet(1), MAIN, 5, 5);
+        scenario.Move(P1, MAIN, 1, 1);
 
         Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null,
             "the interval deadline passes on a turn with nothing to send");
 
-        scenario.RunPass();
+        // P2's occupancy starts in this pass; P1's started in the opening one, so its last step only
+        // moves a slot it already held — whichever of the two the traversal reached last.
+        ClusterPeerInfo kicked = TiePassMember(scenario, P1, 1, 1);
+        ClusterPeerInfo live = TiePassMember(scenario, P2, 5, 5);
+
+        scenario.ParcelChanges.ObservePass(
+            kickedObservedLast ? TiePass(live, kicked) : TiePass(kicked, live));
 
         ParcelChangesBatch batch = scenario.NextBatchWithReason(T0 + 62_000).Batch!;
 
@@ -525,7 +538,32 @@ public class PresenceGuaranteeTests
 
         Assert.That(Entries(batch), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
             "this wallet's presence is the session that has just handshaked, not the kicked "
-          + $"connection's last step (kicked stepped last: {kickedStepsLast})");
+          + $"connection's last step (kicked observed last: {kickedObservedLast})");
+    }
+
+    /// <summary>
+    ///     One member of a hand-built pass, carrying the wallet both sessions authenticate as.
+    /// </summary>
+    private static ClusterPeerInfo TiePassMember(
+        PresenceScenario scenario, PeerIndex peer, int parcelX, int parcelY) =>
+        new (peer, Wallet(1), "C1", MAIN, PresenceScenario.CentreOf(parcelX, parcelY),
+            scenario.ParcelEncoder.Encode(parcelX, parcelY));
+
+    /// <summary>
+    ///     A pass carrying the given members in the given order, which is the order the tracker
+    ///     observes them in.
+    /// </summary>
+    private static ClusterPass TiePass(params ClusterPeerInfo[] members)
+    {
+        var clusterIdByPeer = new string?[PresenceScenario.MAX_PEERS];
+
+        foreach (ClusterPeerInfo member in members)
+            clusterIdByPeer[(int)member.Peer.Value] = member.ClusterId;
+
+        return new ClusterPass(
+            [new ClusterInfo("C1", MAIN, members.Length, PresenceScenario.CentreOf(5, 5), 0f)],
+            members,
+            clusterIdByPeer);
     }
 
     /// <summary>

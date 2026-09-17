@@ -370,8 +370,10 @@ touching it:
   which is what it is; consumers hold their state and are corrected by the next snapshot. Do not
   retry a batch under its old `seq`.
 - **Every batch is per wallet, not per slot, and a snapshot discards nothing.** Slots are per
-  connection and a wallet sits on two of them for a whole `Peers:DisconnectionCleanTimeoutMs` after a
-  duplicate-session kick or a fast reconnect, so both entry points reduce per address:
+  connection and a wallet sits on two of them after a duplicate-session kick or a fast reconnect —
+  until the evicted connection's transport disconnect lands (its ENet disconnect is queued, so that
+  waits on the client's ack, up to `Transport:PeerTimeoutMs`) and for a further
+  `Peers:DisconnectionCleanTimeoutMs` after that — so both entry points reduce per address:
   `OnPeerRemoved` publishes an exit only when the wallet is left on no slot of this server (otherwise
   the kick withdraws a peer that is online on its newer connection), and `CollectLivePresence` emits
   one entry per wallet, at the slot the latest pass saw — never the stale one, whose parcel a

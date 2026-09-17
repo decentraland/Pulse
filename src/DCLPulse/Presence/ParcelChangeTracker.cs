@@ -26,9 +26,10 @@ namespace Pulse.Presence;
 ///     address, so both kinds of entry are reduced to one per wallet before they go out — an exit by
 ///     <see cref="IsPlaced" /> (A1) and a snapshot by <see cref="CollectLivePresence" /> (C1.3). Both
 ///     exist for the same window: a duplicate-session kick or a fast reconnect leaves a wallet
-///     standing on two slots for a whole <c>Peers:DisconnectionCleanTimeoutMs</c>, because the
-///     evicted connection leaves the spatial grid at once while its slot is cleared only by the
-///     cleanup.
+///     standing on two slots until the evicted connection's transport disconnect lands — its ENet
+///     disconnect is queued, so that waits on the client's acknowledgement, up to
+///     <c>Transport:PeerTimeoutMs</c> — and then for a further
+///     <c>Peers:DisconnectionCleanTimeoutMs</c>, which is what clears the slot.
 ///     <para />
 ///     Exits are deliberately <b>not</b> derived from "present last pass, missing in this one".
 ///     Every way a peer can leave — clean disconnect, auth/idle timeout, duplicate-session kick,
@@ -59,12 +60,11 @@ public sealed class ParcelChangeTracker
     // server does not walk the whole table to find nothing.
     private int liveCount;
 
-    // Which pass a slot was last seen in, and the order placements were written in. Both are needed
-    // only to tell a wallet's live connection from the stale one it is briefly duplicated on
-    // (CollectLivePresence): the pass number, because the kicked connection stops being observed as
-    // soon as it leaves the spatial grid, and the placement order for the instant before that, where
-    // both connections are still in the grid and the one that has just handshaked is the newer
-    // placement. ulong at one pass per second, so neither can wrap.
+    // Which pass a slot was last seen in, and the order occupancies were acquired in. Both are
+    // needed only to tell a wallet's live connection from the stale one it is briefly duplicated on
+    // (CollectLivePresence): the pass number, because the kicked connection stops being collected as
+    // soon as the handshake rebinds the wallet, and the occupancy order for a pass whose traversal
+    // straddled that rebind and so observed both. ulong at one pass per second, so neither can wrap.
     private ulong passStamp;
     private ulong occupancyStamp;
 
@@ -263,14 +263,17 @@ public sealed class ParcelChangeTracker
         slot.Realm = realm;
         slot.Parcel = parcel;
 
-        // Stamped on acquisition only, never on a later move. The reduction's tie-break has to be
-        // recency of the *session*, and a kicked connection keeps moving for a whole client round
-        // trip after transport.Disconnect — its ENet disconnect is queued, so the lifecycle event
-        // that takes it off the spatial grid waits on the client's ack. A stamp rewritten on every
-        // change would therefore be the stale slot's whenever the kicked client took one more step
-        // in the tie pass, and which of the two moved last is decided by grid.GetOccupiedCells()
-        // order, which is spatial. Occupancy order is monotone in session age; placement order is
-        // not.
+        // Stamped on acquisition only, never on a later move, so the reduction's tie-break is
+        // recency of the *session*. A kicked connection keeps moving for a whole client round trip
+        // after transport.Disconnect — its ENet disconnect is queued, so the lifecycle event that
+        // takes it off the spatial grid waits on the client's ack — and a pass that observes both
+        // slots therefore sees the stale one change too. A stamp rewritten on every change would be
+        // the stale slot's whenever the kicked client moved last, and which of the two moved last is
+        // decided by grid.GetOccupiedCells() order, which is spatial. Occupancy order is monotone in
+        // session age; placement order is not.
+        //
+        // ClusterTracker collects only the wallet's live binding, so the two slots reach one pass
+        // solely through a traversal that straddles the handshake's rebind.
         if (acquired)
             slot.OccupiedAt = ++occupancyStamp;
 
@@ -283,11 +286,11 @@ public sealed class ParcelChangeTracker
     ///     non-null entry per active peer with a known realm and parcel.
     ///     <para />
     ///     Reduced <b>per address, not per slot</b> (C1.3). Slots are per connection, and A1's window
-    ///     puts one wallet on two of them for a whole <c>Peers:DisconnectionCleanTimeoutMs</c>: the
-    ///     evicted connection is off the spatial grid immediately but its slot is cleared only by
-    ///     <c>PeerSimulation</c>'s cleanup. A snapshot naming both entries would tell a last-write-wins
-    ///     consumer that the wallet is wherever the stale one happened to sort — uncorrected until the
-    ///     wallet moves or the first snapshot after the cleanup, up to a whole
+    ///     puts one wallet on two of them until the evicted connection's transport disconnect lands
+    ///     and <c>PeerSimulation</c>'s cleanup then clears its slot a
+    ///     <c>Peers:DisconnectionCleanTimeoutMs</c> later. A snapshot naming both entries would tell a
+    ///     last-write-wins consumer that the wallet is wherever the stale one happened to sort —
+    ///     uncorrected until the wallet moves or the first snapshot after the cleanup, up to a whole
     ///     <c>Presence:SnapshotIntervalMs</c> — and it would also stop the batch order being a function
     ///     of the batch's content, since two entries for one address tie under the publisher's
     ///     address-only comparator.
@@ -331,18 +334,20 @@ public sealed class ParcelChangeTracker
 
     /// <summary>
     ///     Which of two slots holding one wallet is that wallet's presence. The slot the latest pass
-    ///     saw wins: a kicked connection leaves the spatial grid at once, so it stops being observed a
-    ///     full <c>Peers:DisconnectionCleanTimeoutMs</c> before its slot is cleared, and one pass is
-    ///     enough to separate it from the connection that is still standing there.
+    ///     saw wins: <c>ClusterTracker</c> collects only the wallet's live binding, so a kicked
+    ///     connection stops being observed as soon as the handshake rebinds the wallet — well before
+    ///     its slot is cleared — and one pass is then enough to separate it from the connection that
+    ///     is still standing there.
     ///     <para />
-    ///     Both seen in the same pass means both connections really were in the grid — the instant
-    ///     between <c>HandshakeHandlerBase.EvictDuplicateSession</c> calling
-    ///     <c>transport.Disconnect</c> and the lifecycle event it raises being drained — and there the
-    ///     newer <b>occupancy</b> wins, which is the session that has just handshaked. Occupancy, not
-    ///     the newer placement: the kicked connection is still on the wire for a client round trip and
-    ///     is very often the one that moved most recently, so a placement-recency tie-break would name
-    ///     the parcel the player has just left. A session's occupancy always starts after the
-    ///     occupancy of the session it kicks, whatever either of them does afterwards.
+    ///     Both seen in the same pass means one traversal read both slots, which needs it to have
+    ///     straddled that rebind: the weakly-consistent grid read reaching the kicked connection's
+    ///     cell before <c>HandshakeHandlerBase.EvictDuplicateSession</c>'s rebind and the incoming
+    ///     connection's cell after it entered the grid. There the newer <b>occupancy</b> wins, which
+    ///     is the session that has just handshaked. Occupancy, not the newer placement: the kicked
+    ///     connection is still on the wire for a client round trip and is very often the one that
+    ///     moved most recently, so a placement-recency tie-break would name the parcel the player has
+    ///     just left. A session's occupancy always starts after the occupancy of the session it
+    ///     kicks, whatever either of them does afterwards.
     ///     <para />
     ///     Slot order decides nothing either way: the allocator's free list hands out the oldest freed
     ///     index, so it is as likely to be below the stale slot as above it.

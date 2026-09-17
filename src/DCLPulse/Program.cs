@@ -1,4 +1,4 @@
-using DCL.Auth;
+﻿using DCL.Auth;
 using DCL.WebTransport;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
@@ -265,7 +265,6 @@ builder.Services.AddSingleton(sp =>
     return new ParcelChangeTracker(
         sp.GetRequiredService<IClusterFeedPublisher>(),
         sp.GetRequiredService<ParcelEncoder>(),
-        sp.GetRequiredService<IOptions<PresenceOptions>>(),
         sp.GetRequiredService<IOptions<NatsOptions>>(),
         transportOptions.MaxPeers);
 });

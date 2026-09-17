@@ -732,22 +732,7 @@ public class PresenceGuaranteeTests
     public void WithNoBrokerConfigured_TheTrackerPublishesNothing()
     {
         IClusterFeedPublisher feed = Substitute.For<IClusterFeedPublisher>();
-        ParcelChangeTracker tracker = TrackerWith(feed, natsUrl: string.Empty, presenceEnabled: true);
-
-        Assert.That(tracker.Enabled, Is.False);
-
-        tracker.ObservePass(OnePeerPass());
-        tracker.OnPeerRemoved(P1);
-
-        Assert.That(feed.ReceivedCalls(), Is.Empty);
-    }
-
-    /// <summary>And the switch for the feed alone: clustering and <c>engine.islands</c> carry on.</summary>
-    [Test]
-    public void WithPresenceDisabled_TheTrackerPublishesNothing()
-    {
-        IClusterFeedPublisher feed = Substitute.For<IClusterFeedPublisher>();
-        ParcelChangeTracker tracker = TrackerWith(feed, natsUrl: "nats://localhost:4222", presenceEnabled: false);
+        ParcelChangeTracker tracker = TrackerWith(feed, natsUrl: string.Empty);
 
         Assert.That(tracker.Enabled, Is.False);
 
@@ -830,11 +815,10 @@ public class PresenceGuaranteeTests
         return disconnected.ToArray();
     }
 
-    private static ParcelChangeTracker TrackerWith(IClusterFeedPublisher feed, string natsUrl, bool presenceEnabled) =>
+    private static ParcelChangeTracker TrackerWith(IClusterFeedPublisher feed, string natsUrl) =>
         new (
             feed,
             PresenceTestFactory.Encoder(),
-            Options.Create(new PresenceOptions { Enabled = presenceEnabled }),
             Options.Create(new NatsOptions { Url = natsUrl }),
             PresenceScenario.MAX_PEERS);
 

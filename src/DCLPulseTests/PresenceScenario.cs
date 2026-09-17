@@ -70,7 +70,7 @@ internal sealed class PresenceScenario
             NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
             natsOptions, presenceOptions, Clock, SnapshotBoard);
 
-        ParcelChanges = new ParcelChangeTracker(Publisher, ParcelEncoder, presenceOptions, natsOptions, MAX_PEERS);
+        ParcelChanges = new ParcelChangeTracker(Publisher, ParcelEncoder, natsOptions, MAX_PEERS);
 
         Tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,

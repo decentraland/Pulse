@@ -447,7 +447,8 @@ published, by what forced one.
 | **Any rate of `eviction`** | The outbox is losing changes — presence or cluster assignments, the counter is shared — so the delta stream is incomplete and consumers are being repaired by brute force. Same lever as `dcl_pulse_nats_dropped_total`: raise `Nats:ChannelCapacity`. Bounded at one per quarter of `Presence:SnapshotIntervalMs`, so it climbs far more slowly than `dropped` under sustained loss; a flat `eviction` rate at the bound with `dropped` still climbing means loss is continuous, not a burst |
 | No `interval` at all with the feed enabled | Either `Presence:SnapshotIntervalMs` is non-positive, or the clustering pass has stopped — the tracker is what answers a snapshot request, so a stalled pass leaves the request outstanding and the recovery deadline unenforced |
 
-Both series stay at zero when the feed is off — no broker configured, or `Presence:Enabled` false.
+Both series stay at zero when the feed is off — no broker configured, or a non-positive
+`Presence:BatchIntervalMs`.
 
 ## Feature flags — no metrics
 

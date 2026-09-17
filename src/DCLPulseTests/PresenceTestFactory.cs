@@ -27,7 +27,6 @@ internal static class PresenceTestFactory
         new (
             feed,
             Encoder(),
-            Options.Create(new PresenceOptions()),
             Options.Create(new NatsOptions { Url = natsUrl }),
             maxPeers);
 }

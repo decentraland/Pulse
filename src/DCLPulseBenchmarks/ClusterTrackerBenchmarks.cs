@@ -110,7 +110,6 @@ public class ClusterTrackerBenchmarks
         var parcelChanges = new ParcelChangeTracker(
             feedPublisher,
             new ParcelEncoder(new OptionsWrapper<ParcelEncoderOptions>(new ParcelEncoderOptions())),
-            new OptionsWrapper<PresenceOptions>(new PresenceOptions()),
             new OptionsWrapper<NatsOptions>(new NatsOptions { Url = string.Empty }),
             peerCount);
 

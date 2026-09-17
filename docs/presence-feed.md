@@ -160,14 +160,13 @@ Two more rules for the values themselves:
 | Key | Env var | Default | Notes |
 |---|---|---|---|
 | `Nats:ServerName` | `Nats__ServerName` | `pulse-<hostname>` | The `server_name` on every batch. **Two replicas must never share it** — see below |
-| `Presence:Enabled` | `Presence__Enabled` | `true` | Rollback switch for this feed alone. False leaves clustering, `engine.islands` and the HTTP surface untouched |
 | `Presence:BatchIntervalMs` | `Presence__BatchIntervalMs` | `2000` | Also the window changes coalesce over. A non-positive value disables the feed |
 | `Presence:SnapshotIntervalMs` | `Presence__SnapshotIntervalMs` | `60000` | Recovery deadline. Non-positive disables the periodic snapshot; start and eviction still fire |
 
-`Presence:Enabled` defaults to true, but the feed follows the existing NATS gating: with `Nats:Url`
-unset there is no broker and nothing is published, exactly as before this feed existed. **A deploy
-that changes no configuration behaves as it did before**, and a deployment already pointing Pulse at
-a broker gets the feed.
+The feed follows the existing NATS gating: with `Nats:Url` unset there is no broker and nothing is
+published, exactly as before this feed existed. **A deploy that changes no configuration behaves as
+it did before**, and a deployment already pointing Pulse at a broker gets the feed. To turn the feed
+off on a server that does have a broker, set `Presence:BatchIntervalMs` to `0`.
 
 ### `server_name` must be unique per replica
 

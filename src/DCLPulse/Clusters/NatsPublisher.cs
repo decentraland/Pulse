@@ -163,7 +163,7 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
 
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
-        presenceEnabled = feedEnabled && this.presenceOptions.Enabled && this.presenceOptions.BatchIntervalMs > 0;
+        presenceEnabled = feedEnabled && this.presenceOptions.BatchIntervalMs > 0;
 
         // The first batch of the process has to be a full snapshot (C1.4). Raised here rather than in
         // the run loop, so a slow-to-reach broker cannot turn the opening batch into a delta.
@@ -558,8 +558,8 @@ public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPubli
             // Warning, not Information: production floors logging at Warning, and a feed that was
             // meant to be on and silently is not has to be visible in the deployment log.
             logger.LogWarning(
-                "Presence feed disabled ({Subject} will carry nothing) — Presence:Enabled is {Enabled}, Presence:BatchIntervalMs is {BatchIntervalMs}",
-                PARCEL_CHANGES_SUBJECT, presenceOptions.Enabled, presenceOptions.BatchIntervalMs);
+                "Presence feed disabled ({Subject} will carry nothing) — Presence:BatchIntervalMs is {BatchIntervalMs}",
+                PARCEL_CHANGES_SUBJECT, presenceOptions.BatchIntervalMs);
 
         // The effective server_name, configured or defaulted (A3): the only place an operator can see
         // which value this process resolved, and NatsOptions.ServerName says why it must be unique.

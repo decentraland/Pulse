@@ -82,7 +82,7 @@ public readonly record struct MetricsSnapshot
 
     /// <summary>
     ///     The <c>engine.parcel_changes</c> feed. Stays zero when the feed is off — no broker
-    ///     configured, or <c>Presence:Enabled</c> false.
+    ///     configured, or a non-positive <c>Presence:BatchIntervalMs</c>.
     /// </summary>
     public readonly record struct PresenceSnapshot
     {

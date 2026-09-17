@@ -1,15 +1,12 @@
 namespace Pulse.Presence;
 
 /// <summary>
-///     Knobs for the <c>engine.parcel_changes</c> presence feed (iteration-2 C1). <see cref="Enabled" />
-///     defaults to true, but the NATS gating still applies: no <c>Nats:Url</c>, no broker, nothing published.
+///     Knobs for the <c>engine.parcel_changes</c> presence feed (iteration-2 C1). The NATS gating
+///     governs the feed: no <c>Nats:Url</c>, no broker, nothing published.
 /// </summary>
 public sealed class PresenceOptions
 {
     public const string SECTION_NAME = "Presence";
-
-    /// <summary>Rollback switch for this feed alone; clustering, <c>engine.islands</c> and stats stay on.</summary>
-    public bool Enabled { get; set; } = true;
 
     /// <summary>
     ///     How often a non-empty batch of changes goes out, and the window over which changes for one

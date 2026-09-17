@@ -45,16 +45,14 @@ public sealed class ParcelChangeTracker
     public ParcelChangeTracker(
         IClusterFeedPublisher feed,
         ParcelEncoder parcelEncoder,
-        IOptions<PresenceOptions> presenceOptions,
         IOptions<NatsOptions> natsOptions,
         int maxPeers)
     {
         this.feed = feed;
         this.parcelEncoder = parcelEncoder;
 
-        // Follows the existing NATS gating: no broker means nothing to publish to. Resolved once —
-        // neither option can change after start.
-        enabled = presenceOptions.Value.Enabled && natsOptions.Value.IsConfigured;
+        // No broker means nothing to publish to. Resolved once — the option cannot change after start.
+        enabled = natsOptions.Value.IsConfigured;
 
         slots = new Slot[maxPeers];
     }

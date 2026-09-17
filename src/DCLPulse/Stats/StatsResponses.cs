@@ -12,10 +12,10 @@ public readonly record struct StatsResponse(int Status, byte[]? Body = null, str
     public static StatsResponse NotFound() =>
         new (404);
 
-    public static StatsResponse Ok(object body) =>
+    public static StatsResponse Ok<T>(T body) =>
         new (200, StatsJson.Serialize(body));
 
-    public static StatsResponse Json(int status, object body) =>
+    public static StatsResponse Json<T>(int status, T body) =>
         new (status, StatsJson.Serialize(body));
 
     /// <summary>
@@ -34,15 +34,27 @@ public readonly record struct StatsResponse(int Status, byte[]? Body = null, str
 /// </summary>
 public static class StatsJson
 {
-    public static readonly JsonSerializerOptions OPTIONS = new ()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
-    public static byte[] Serialize(object body) =>
-        JsonSerializer.SerializeToUtf8Bytes(body, OPTIONS);
+    public static byte[] Serialize<T>(T body) =>
+        JsonSerializer.SerializeToUtf8Bytes(body, typeof(T), StatsJsonContext.Default);
 }
+
+/// <summary>
+///     Source-generated metadata for the stats shapes, as every other <c>System.Text.Json</c> call
+///     site in this repo uses. Reflection-based serialization fails silently under trimming — a
+///     property simply stops being written — and no test would catch it.
+/// </summary>
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(RealmsResponse))]
+[JsonSerializable(typeof(PeersResponse))]
+[JsonSerializable(typeof(PeerResponse))]
+[JsonSerializable(typeof(ErrorResponse))]
+[JsonSerializable(typeof(ParcelsResponse))]
+[JsonSerializable(typeof(IslandsResponse))]
+[JsonSerializable(typeof(StatusResponse))]
+[JsonSerializable(typeof(AboutResponse))]
+internal partial class StatsJsonContext : JsonSerializerContext;
 
 /// <summary>
 ///     The archipelago-stats peer shape, unchanged, plus the <c>realm</c> the all-realms routes
@@ -72,7 +84,7 @@ public sealed record PeersResponse(bool Ok, string? Realm, IReadOnlyList<PeerRes
 
 /// <summary>
 ///     <c>/peers/{id}</c>. <c>peer</c> is written even when null, against
-///     <see cref="StatsJson.OPTIONS" />' omission of nulls: the 404 body is
+///     <see cref="StatsJsonContext" />'s omission of nulls: the 404 body is
 ///     <c>{"ok":false,"peer":null}</c> per <c>openapi.yaml</c>.
 /// </summary>
 public sealed record PeerResponse(

@@ -6,7 +6,6 @@ using Pulse.Clusters;
 using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using System.Numerics;
 using Decentraland.Pulse;
 
@@ -105,14 +104,6 @@ public class ClusterTrackerBenchmarks
         var feedPublisher = new NoOpFeedPublisher();
         var timeProvider = new StopwatchTimeProvider();
 
-        // Presence off, as it is with no broker configured: this benchmark measures the clustering
-        // pass, and the feed's own cost belongs to its own benchmark.
-        var parcelChanges = new ParcelChangeTracker(
-            feedPublisher,
-            new ParcelEncoder(new OptionsWrapper<ParcelEncoderOptions>(new ParcelEncoderOptions())),
-            new OptionsWrapper<NatsOptions>(new NatsOptions { Url = string.Empty }),
-            peerCount);
-
         tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
@@ -121,7 +112,11 @@ public class ClusterTrackerBenchmarks
             identityBoard,
             clusterBoard,
             feedPublisher,
-            parcelChanges,
+
+            // Presence off, as it is with no broker configured: this benchmark measures the
+            // clustering pass, and the feed's own cost belongs to its own benchmark.
+            new ParcelEncoder(new OptionsWrapper<ParcelEncoderOptions>(new ParcelEncoderOptions())),
+            new OptionsWrapper<NatsOptions>(new NatsOptions { Url = string.Empty }),
             timeProvider,
             peerCount);
 

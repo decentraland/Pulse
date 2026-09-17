@@ -13,7 +13,6 @@ using Pulse.Metrics;
 using Pulse.Metrics.Console;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using Pulse.Stats;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
@@ -262,17 +261,6 @@ builder.Services.AddSingleton(sp =>
 {
     ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
 
-    return new ParcelChangeTracker(
-        sp.GetRequiredService<IClusterFeedPublisher>(),
-        sp.GetRequiredService<ParcelEncoder>(),
-        sp.GetRequiredService<IOptions<NatsOptions>>(),
-        transportOptions.MaxPeers);
-});
-
-builder.Services.AddSingleton(sp =>
-{
-    ENetTransportOptions transportOptions = sp.GetRequiredService<IOptions<ENetTransportOptions>>().Value;
-
     return new ClusterTracker(
         sp.GetRequiredService<ILogger<ClusterTracker>>(),
         sp.GetRequiredService<IOptions<ClusterOptions>>(),
@@ -281,7 +269,8 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<IdentityBoard>(),
         sp.GetRequiredService<ClusterBoard>(),
         sp.GetRequiredService<IClusterFeedPublisher>(),
-        sp.GetRequiredService<ParcelChangeTracker>(),
+        sp.GetRequiredService<ParcelEncoder>(),
+        sp.GetRequiredService<IOptions<NatsOptions>>(),
         sp.GetRequiredService<ITimeProvider>(),
         transportOptions.MaxPeers);
 });

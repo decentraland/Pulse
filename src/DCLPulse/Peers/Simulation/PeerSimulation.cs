@@ -1,9 +1,9 @@
 using Decentraland.Common;
 using Decentraland.Pulse;
+using Pulse.Clusters;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
-using Pulse.Presence;
 using Pulse.Transport;
 using static Pulse.Messaging.MessagePipe;
 
@@ -48,7 +48,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private readonly SnapshotBoard snapshotBoard;
     private readonly RealmSpatialGrids realmGrids;
     private readonly IdentityBoard identityBoard;
-    private readonly ParcelChangeTracker parcelChanges;
+    private readonly ClusterTracker clusterTracker;
     private readonly MessagePipe messagePipe;
     private readonly ITimeProvider timeProvider;
     private readonly ITransport transport;
@@ -93,7 +93,7 @@ public sealed class PeerSimulation : IPeerSimulation
         ProfileBoard profileBoard,
         IPeerIndexAllocator peerIndexAllocator,
         ILogger<PeerSimulation> logger,
-        ParcelChangeTracker parcelChanges,
+        ClusterTracker clusterTracker,
         bool selfMirrorEnabled = false,
         int selfMirrorTier = 0,
         bool resyncWithDelta = false,
@@ -110,7 +110,7 @@ public sealed class PeerSimulation : IPeerSimulation
         this.profileBoard = profileBoard;
         this.peerIndexAllocator = peerIndexAllocator;
         this.logger = logger;
-        this.parcelChanges = parcelChanges;
+        this.clusterTracker = clusterTracker;
         this.selfMirrorEnabled = selfMirrorEnabled;
         this.selfMirrorTier = new PeerViewSimulationTier((byte)selfMirrorTier);
         this.resyncWithDelta = resyncWithDelta;
@@ -905,7 +905,7 @@ public sealed class PeerSimulation : IPeerSimulation
             PulseMetrics.SceneListener.CONNECTED.Add(-1);
 
         // Before the boards are wiped, so the exit entry can still be built from what this peer was.
-        parcelChanges.OnPeerRemoved(peerId);
+        clusterTracker.OnPeerRemoved(peerId);
 
         snapshotBoard.ClearActive(peerId);
         realmGrids.Remove(peerId);

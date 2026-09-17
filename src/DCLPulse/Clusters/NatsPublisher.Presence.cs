@@ -1,7 +1,6 @@
 using Decentraland.Pulse;
 using NATS.Client.Core;
 using Pulse.Metrics;
-using Pulse.Presence;
 
 namespace Pulse.Clusters;
 
@@ -14,7 +13,7 @@ namespace Pulse.Clusters;
 ///     Three things can be pending: per-address changes, latest-wins and capped at
 ///     <see cref="NatsOptions.ChannelCapacity" /> addresses; a full snapshot, which never discards a
 ///     pending change (A2); and a snapshot <em>request</em>, answered by
-///     <see cref="ParcelChangeTracker" />, which holds the state a snapshot needs.
+///     <see cref="ClusterTracker" />, which holds the state a snapshot needs.
 /// </summary>
 public sealed partial class NatsPublisher
 {

@@ -7,7 +7,6 @@ using NATS.Client.Core;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;

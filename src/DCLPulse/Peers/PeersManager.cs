@@ -1,9 +1,9 @@
 using Decentraland.Pulse;
+using Pulse.Clusters;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
 using System.Diagnostics;
@@ -55,7 +55,7 @@ public sealed class PeersManager : BackgroundService
     private readonly IPeerIndexAllocator peerIndexAllocator;
     private readonly PreAuthAdmission preAuthAdmission;
     private readonly IpLimiter ipLimiter;
-    private readonly ParcelChangeTracker parcelChanges;
+    private readonly ClusterTracker clusterTracker;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -76,7 +76,7 @@ public sealed class PeersManager : BackgroundService
         IPeerIndexAllocator peerIndexAllocator,
         PreAuthAdmission preAuthAdmission,
         IpLimiter ipLimiter,
-        ParcelChangeTracker parcelChanges)
+        ClusterTracker clusterTracker)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -96,7 +96,7 @@ public sealed class PeersManager : BackgroundService
         this.peerIndexAllocator = peerIndexAllocator;
         this.preAuthAdmission = preAuthAdmission;
         this.ipLimiter = ipLimiter;
-        this.parcelChanges = parcelChanges;
+        this.clusterTracker = clusterTracker;
 
         workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
@@ -125,7 +125,7 @@ public sealed class PeersManager : BackgroundService
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, realmGrids, identityBoard,
                 messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard,
-                peerIndexAllocator, peerSimulationLogger, parcelChanges,
+                peerIndexAllocator, peerSimulationLogger, clusterTracker,
                 peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta,
                 peerOptions.DisconnectionCleanTimeoutMs, peerOptions.PendingAuthCleanTimeoutMs);
 

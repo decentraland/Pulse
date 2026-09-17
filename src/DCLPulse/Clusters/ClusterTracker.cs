@@ -3,7 +3,6 @@ using Pulse.InterestManagement;
 using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Numerics;
@@ -42,8 +41,15 @@ public sealed class ClusterTracker : BackgroundService
     private readonly IdentityBoard identityBoard;
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
-    private readonly ParcelChangeTracker parcelChanges;
+    private readonly ParcelEncoder parcelEncoder;
     private readonly ITimeProvider timeProvider;
+
+    // Whether engine.parcel_changes is derived at all. No broker means nothing to publish to.
+    private readonly bool presenceEnabled;
+
+    // Guards the presence columns of peerStates alone. The pass writes them on this thread and
+    // OnPeerRemoved on a peer worker; the clustering columns are this thread's only and take no lock.
+    private readonly Lock presenceLock = new ();
 
     // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
     // its own union-find state. Cleared between realms — the same cell exists in every realm, and
@@ -61,8 +67,9 @@ public sealed class ClusterTracker : BackgroundService
     // and holds one entry per previous cluster the component draws members from.
     private readonly Dictionary<string, int> overlapCounts = new ();
 
-    // State carried across passes, owned solely by this thread.
-    private readonly PeerClusterState[] peerStates;
+    // State carried across passes. The clustering columns are this thread's alone; the presence
+    // columns are shared with OnPeerRemoved under presenceLock.
+    private readonly PeerState[] peerStates;
     private readonly Dictionary<string, ClusterRecord> clusterRecords = new ();
 
     // Last assignment published for each wallet. Keyed by wallet rather than PeerIndex so an
@@ -71,6 +78,13 @@ public sealed class ClusterTracker : BackgroundService
 
     private long passNumber;
     private long nextClusterNumber;
+
+    // Peers holding a published presence, so a snapshot's list is sized once instead of grown.
+    private int liveCount;
+
+    // Order presence occupancies were acquired in, which breaks a tie between two slots of one
+    // wallet. ulong at one pass per second, so it cannot wrap.
+    private ulong occupancyStamp;
 
     // Last value published for each gauge. An up-down counter takes a delta, not an absolute.
     private int lastClusterCount;
@@ -85,7 +99,8 @@ public sealed class ClusterTracker : BackgroundService
         IdentityBoard identityBoard,
         ClusterBoard clusterBoard,
         IClusterFeedPublisher feedPublisher,
-        ParcelChangeTracker parcelChanges,
+        ParcelEncoder parcelEncoder,
+        IOptions<NatsOptions> natsOptions,
         ITimeProvider timeProvider,
         int maxPeers)
     {
@@ -96,11 +111,19 @@ public sealed class ClusterTracker : BackgroundService
         this.identityBoard = identityBoard;
         this.clusterBoard = clusterBoard;
         this.feedPublisher = feedPublisher;
-        this.parcelChanges = parcelChanges;
+        this.parcelEncoder = parcelEncoder;
         this.timeProvider = timeProvider;
 
-        peerStates = new PeerClusterState[maxPeers];
+        presenceEnabled = natsOptions.Value.IsConfigured;
+
+        peerStates = new PeerState[maxPeers];
     }
+
+    /// <summary>
+    ///     Whether <c>engine.parcel_changes</c> is derived. False leaves every presence entry point a
+    ///     no-op; clustering runs regardless.
+    /// </summary>
+    public bool PresenceEnabled => presenceEnabled;
 
     // A List indexer hands back a copy of a struct element, so in-place updates go through the
     // backing store instead. Properties rather than cached locals: a re-read cannot go stale when
@@ -176,19 +199,13 @@ public sealed class ClusterTracker : BackgroundService
 
         ClusterPass pass = BuildPass();
 
-        RememberComputedAssignments();
         clusterBoard.Publish(pass);
 
         // Topology before the per-peer events, so a snapshot declaring a cluster is published ahead
         // of the assignments that reference it.
         feedPublisher.PublishTopology(pass);
 
-        // Presence is derived from the same pass rather than from a walk of its own, so what
-        // engine.parcel_changes says and what the stats surface serves can never disagree by more
-        // than one pass.
-        parcelChanges.ObservePass(pass);
-
-        int reassignments = PublishAssignmentChanges();
+        int reassignments = PublishPeerChanges();
         ForgetVanishedPeers();
         ForgetExpiredSessions();
 
@@ -294,7 +311,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private void TryCollectMember(PeerIndex peer)
     {
-        ref PeerClusterState state = ref peerStates[peer.Value];
+        ref PeerState state = ref peerStates[peer.Value];
 
         if (state.LastSeenPass == passNumber) return;
         if (!snapshotBoard.TryRead(peer, out PeerSnapshot snapshot)) return;
@@ -610,6 +627,11 @@ public sealed class ClusterTracker : BackgroundService
                 member.Peer, member.Wallet, info.Id, info.Realm, member.Position, member.Parcel);
 
             clusterIdByPeer[member.Peer.Value] = info.Id;
+
+            // What this pass computed, which is what the next pass measures cluster-identity overlap
+            // against. Kept apart from PublishedClusterId: a fragment mid-debounce must still inherit
+            // its own ID rather than be minted a new one every pass.
+            peerStates[member.Peer.Value].PreviousPassClusterId = info.Id;
         }
 
         return new ClusterInfo(info.Id, info.Realm, info.MemberCount, centroid, MathF.Sqrt(radiusSquared));
@@ -626,37 +648,55 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Records what this pass computed, so the next pass can measure cluster-identity overlap
-    ///     against it. Kept separate from the published assignment: a fragment mid-debounce must still
-    ///     inherit its own ID rather than be minted a new one every pass.
+    ///     The pass's one per-peer publish walk: each member's parcel change and its cluster
+    ///     assignment, in that order. Returns how many assignments were published.
+    ///     <para />
+    ///     Both feeds come off the same walk of the same members, so what
+    ///     <c>engine.parcel_changes</c> says and what the stats surface serves cannot disagree by more
+    ///     than one pass. The presence half runs under <see cref="presenceLock" />, which is also what
+    ///     makes "read the slot, publish, write the slot" atomic against <see cref="OnPeerRemoved" />.
     /// </summary>
-    private void RememberComputedAssignments()
-    {
-        for (var component = 0; component < components.Count; component++)
-        {
-            string clusterId = components[component].Id;
-
-            foreach (PassMember member in MembersOf(component))
-                peerStates[member.Peer.Value].PreviousPassClusterId = clusterId;
-        }
-    }
-
-    /// <summary>
-    ///     Publishes every peer whose assignment changed, subject to the dwell debounce, and returns
-    ///     how many were published.
-    /// </summary>
-    private int PublishAssignmentChanges()
+    private int PublishPeerChanges()
     {
         var reassignments = 0;
+
+        // Asked before the walk, because a snapshot sends every live peer and the per-peer deltas
+        // would then be redundant. Slots are brought up to date either way.
+        var reason = default(PresenceSnapshotReason);
+        bool snapshot = presenceEnabled && feedPublisher.TryTakeParcelSnapshotRequest(out reason);
 
         for (var component = 0; component < components.Count; component++)
         {
             PassComponent info = components[component];
 
             foreach (PassMember member in MembersOf(component))
+            {
+                // Taken per member rather than around the whole walk: OnPeerRemoved runs on a peer
+                // worker inside the simulation tick, so it must not queue behind the assignment half
+                // as well. Uncontended acquisitions, at one pass per second.
+                if (presenceEnabled)
+                    lock (presenceLock)
+                        ObservePresence(member, info.Realm, publishChange: !snapshot);
+
                 if (TryPublishAssignment(member, info.Id, info.Realm))
                     reassignments++;
+            }
         }
+
+        if (!presenceEnabled) return reassignments;
+
+        // An outbox eviction is raised by the deltas just published, so its snapshot request does not
+        // exist until the walk above has run. Answering it here rather than next pass is what makes
+        // C1.4's "immediately after any outbox eviction" the next batch turn.
+        if (!snapshot && feedPublisher.TryTakeParcelSnapshotRequest(out PresenceSnapshotReason raisedByThisPass))
+        {
+            snapshot = true;
+            reason = raisedByThisPass;
+        }
+
+        if (snapshot)
+            lock (presenceLock)
+                feedPublisher.PublishParcelSnapshot(CollectLivePresence(), reason);
 
         return reassignments;
     }
@@ -668,7 +708,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private bool TryPublishAssignment(PassMember member, string clusterId, string realm)
     {
-        ref PeerClusterState state = ref peerStates[member.Peer.Value];
+        ref PeerState state = ref peerStates[member.Peer.Value];
 
         bool realmChanged = !string.Equals(state.PublishedRealm, realm, StringComparison.Ordinal);
 
@@ -739,7 +779,7 @@ public sealed class ClusterTracker : BackgroundService
     ///     Advances the peer's candidate streak and reports whether the new assignment has now
     ///     been agreed on by <see cref="ClusterOptions.DwellPasses" /> consecutive passes.
     /// </summary>
-    private bool HasDwelled(ref PeerClusterState state, string clusterId)
+    private bool HasDwelled(ref PeerState state, string clusterId)
     {
         if (string.Equals(state.CandidateClusterId, clusterId, StringComparison.Ordinal))
             state.CandidateStreak++;
@@ -753,6 +793,178 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
+    ///     Brings one member's presence columns up to date and, when <paramref name="publishChange" />
+    ///     is set, publishes an entry if its <c>(realm, parcel)</c> moved. A member with no presence
+    ///     yet has changed by definition: its previous state is "nowhere" (C1.1).
+    /// </summary>
+    private void ObservePresence(PassMember member, string realm, bool publishChange)
+    {
+        ref PeerState state = ref peerStates[member.Peer.Value];
+
+        parcelEncoder.Decode(member.Parcel, out int x, out int z);
+
+        var parcel = new ParcelCoord(x, z);
+
+        // A different wallet on this slot is a new presence wherever it stands — guarding the same
+        // aliasing class as PeerSimulation.DetectAndHandleAliasing. Reference equality is the fast
+        // path: IdentityBoard hands out one string instance per peer for as long as it lives.
+        bool sameWallet = ReferenceEquals(state.Wallet, member.Wallet)
+                       || string.Equals(state.Wallet, member.Wallet, StringComparison.OrdinalIgnoreCase);
+
+        if (state.Realm is not null
+            && sameWallet
+            && state.Parcel == parcel
+            && string.Equals(state.Realm, realm, StringComparison.Ordinal))
+            return;
+
+        // Read before state.Realm is written below, since that is what marks an empty slot.
+        bool acquired = state.Realm is null || !sameWallet;
+
+        if (state.Realm is null)
+            liveCount++;
+
+        state.Wallet = member.Wallet;
+
+        // Lowercased once per wallet rather than once per published entry.
+        if (!sameWallet)
+            state.Address = CanonicalName.Of(member.Wallet);
+
+        state.Realm = realm;
+        state.Parcel = parcel;
+
+        // On acquisition only, never on a later move, so the tie-break is recency of the *session*.
+        // A kicked connection keeps moving for a client round trip, so a stamp rewritten on every
+        // change would be the stale slot's whenever it moved last — and which moved last is decided
+        // by grid.GetOccupiedCells() order, which is spatial. Occupancy order is monotone in session
+        // age; placement order is not.
+        if (acquired)
+            state.OccupiedAt = ++occupancyStamp;
+
+        if (publishChange)
+            feedPublisher.PublishParcelChange(state.Address!, realm, parcel);
+    }
+
+    /// <summary>
+    ///     The single presence exit choke point (C1.2): one <c>parcel</c>-absent entry for a peer that
+    ///     had a published presence, nothing for one that never did. Called from a peer worker.
+    ///     <para />
+    ///     Wallet-scoped (A1) — the entry goes out only once no live peer is bound to the wallet. A
+    ///     duplicate-session kick rebinds the wallet to the incoming peer long before this runs, so
+    ///     publishing here would take a peer offline that is online on its newer connection; and with
+    ///     both in one batch the per-address coalescing keeps the exit and drops the placement.
+    ///     <para />
+    ///     Clearing the columns is mandatory, not tidy: <see cref="PeerIndex" /> is recycled, and
+    ///     leftover state would make the next wallet's first placement look unchanged.
+    /// </summary>
+    public void OnPeerRemoved(PeerIndex peer)
+    {
+        if (!presenceEnabled) return;
+
+        var index = (int)peer.Value;
+
+        if (index >= peerStates.Length) return;
+
+        lock (presenceLock)
+        {
+            ref PeerState state = ref peerStates[index];
+
+            if (state.Realm is not { } realm)
+            {
+                ClearPresence(ref state);
+
+                return;
+            }
+
+            string address = state.Address!;
+            string wallet = state.Wallet!;
+
+            // Cleared before the binding is read, so this slot cannot answer for itself.
+            ClearPresence(ref state);
+            liveCount--;
+
+            // Suppressed only when the replacement actually has a presence of its own. The binding
+            // alone is not enough: the legacy connect flow binds a wallet at AUTHENTICATED but places
+            // it only on its first TeleportRequest, so a reconnect that drops before that teleport
+            // would leave this exit suppressed and its own slot empty — no exit for the wallet at all
+            // until the next snapshot.
+            if (identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live)
+                && live != peer
+                && live.Value < peerStates.Length
+                && peerStates[live.Value].Realm is not null) return;
+
+            feedPublisher.PublishParcelChange(address, realm, parcel: null);
+        }
+    }
+
+    /// <summary>
+    ///     Clears the presence columns alone. The clustering columns belong to the pass thread and are
+    ///     retired by <see cref="ForgetVanishedPeers" />; writing the whole struct here would race it.
+    /// </summary>
+    private static void ClearPresence(ref PeerState state)
+    {
+        state.Wallet = null;
+        state.Address = null;
+        state.Realm = null;
+        state.Parcel = default(ParcelCoord);
+        state.OccupiedAt = 0;
+    }
+
+    /// <summary>
+    ///     Every wallet with a published presence — the whole of what a snapshot carries — reduced
+    ///     per address, not per slot (C1.3). Naming one wallet twice would leave a last-write-wins
+    ///     consumer holding whichever entry happened to sort last, and would stop the batch order
+    ///     being a function of its content, since two entries for one address tie under the
+    ///     publisher's address-only comparator.
+    /// </summary>
+    private List<PeerPresence> CollectLivePresence()
+    {
+        var presence = new List<PeerPresence>(liveCount);
+        var entryByAddress = new Dictionary<string, (int Entry, int Slot)>(liveCount, StringComparer.Ordinal);
+
+        for (var index = 0; index < peerStates.Length; index++)
+        {
+            ref PeerState state = ref peerStates[index];
+
+            if (state.Realm is not { } realm) continue;
+
+            string address = state.Address!;
+            var entry = new PeerPresence(address, realm, state.Parcel);
+
+            if (!entryByAddress.TryGetValue(address, out (int Entry, int Slot) held))
+            {
+                entryByAddress[address] = (presence.Count, index);
+                presence.Add(entry);
+
+                continue;
+            }
+
+            if (!Supersedes(in state, in peerStates[held.Slot])) continue;
+
+            // Replaced in place; the publisher sorts by address anyway.
+            presence[held.Entry] = entry;
+            entryByAddress[address] = (held.Entry, index);
+        }
+
+        return presence;
+    }
+
+    /// <summary>
+    ///     Which of two slots holding one wallet is that wallet's presence. The slot the latest pass
+    ///     saw wins: <see cref="TryCollectMember" /> collects only the wallet's live binding, so a
+    ///     kicked connection stops being observed once the handshake rebinds the wallet.
+    ///     <para />
+    ///     Both seen in one pass means a single traversal straddled that rebind — the weakly-consistent
+    ///     grid read reaching the kicked connection's cell before it and the incoming one's cell after.
+    ///     There the newer <b>occupancy</b> wins. Occupancy, not placement: the kicked connection is
+    ///     still on the wire and is often the one that moved most recently, so placement recency would
+    ///     name the parcel the player just left.
+    /// </summary>
+    private static bool Supersedes(in PeerState candidate, in PeerState held) =>
+        candidate.LastSeenPass != held.LastSeenPass
+            ? candidate.LastSeenPass > held.LastSeenPass
+            : candidate.OccupiedAt > held.OccupiedAt;
+
+    /// <summary>
     ///     Clears carried-over state for peers absent from this pass. Mandatory rather than tidy:
     ///     <see cref="PeerIndex" /> is a recycled ENet slot, so state left behind would be inherited
     ///     by the next wallet on that slot and make its first assignment look unchanged.
@@ -761,12 +973,21 @@ public sealed class ClusterTracker : BackgroundService
     {
         for (var peerSlot = 0; peerSlot < peerStates.Length; peerSlot++)
         {
-            ref PeerClusterState state = ref peerStates[peerSlot];
+            ref PeerState state = ref peerStates[peerSlot];
 
             // An unstamped slot is already clear — never collected, or forgotten by an earlier pass.
             if (state.LastSeenPass == passNumber || state.LastSeenPass == 0) continue;
 
-            state = default(PeerClusterState);
+            // Clustering columns only. The presence columns are shared with OnPeerRemoved, which is
+            // the one thing allowed to retire a presence entry (A1, C1.2); clearing the whole struct
+            // here would race it and drop an exit. Zeroing LastSeenPass is what makes a slot that has
+            // left the grid lose every Supersedes tie until then.
+            state.PreviousPassClusterId = null;
+            state.PublishedClusterId = null;
+            state.PublishedRealm = null;
+            state.CandidateClusterId = null;
+            state.CandidateStreak = 0;
+            state.LastSeenPass = 0;
         }
     }
 
@@ -861,7 +1082,12 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     What the tracker carries about one peer slot between passes.
+    ///     What the tracker carries about one peer slot between passes, for both feeds.
+    ///     <para />
+    ///     Columns group by owning thread, which is the whole thread-safety argument: the presence
+    ///     columns are written by the pass's publish walk <i>and</i> by <see cref="OnPeerRemoved" />
+    ///     on a peer worker, so both take <see cref="presenceLock" />; the clustering columns are the
+    ///     pass thread's alone and take none. Nothing may write the struct whole.
     ///     <para />
     ///     Two notions of "previous cluster", deliberately kept apart:
     ///     <see cref="PreviousPassClusterId" /> is what the last pass <i>computed</i>, which is what
@@ -870,9 +1096,24 @@ public sealed class ClusterTracker : BackgroundService
     ///     the debounce: a fragment mid-debounce would look unassigned to inheritance and be minted a
     ///     fresh ID every pass, so its candidate would never repeat and its streak never reach
     ///     <see cref="ClusterOptions.DwellPasses" />.
+    ///     <para />
+    ///     <see cref="Realm" /> and <see cref="PublishedRealm" /> are likewise distinct: the dwell
+    ///     debounce can hold an assignment back while a parcel change goes out, so the realm the two
+    ///     feeds last carried can differ.
     /// </summary>
-    private struct PeerClusterState
+    private struct PeerState
     {
+        // --- Presence columns. Under presenceLock. Realm doubles as the occupancy flag.
+        public string? Wallet;
+        public string? Address;
+        public string? Realm;
+        public ParcelCoord Parcel;
+
+        // The order this occupancy was acquired in — not the order its parcel was written in.
+        // See Supersedes.
+        public ulong OccupiedAt;
+
+        // --- Clustering columns. Pass thread only.
         public string? PreviousPassClusterId;
 
         // Cluster and realm as last published together — the feed carries both, so either one
@@ -883,7 +1124,8 @@ public sealed class ClusterTracker : BackgroundService
         public string? CandidateClusterId;
         public int CandidateStreak;
 
-        // Pass this slot was last collected in. Zero means never, or forgotten since.
+        // Pass this slot was last collected in. Zero means never, or forgotten since. Read by
+        // Supersedes as well as by the sweep.
         public long LastSeenPass;
     }
 

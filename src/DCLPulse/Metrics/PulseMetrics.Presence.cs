@@ -1,4 +1,4 @@
-using Pulse.Presence;
+using Pulse.Clusters;
 using System.Diagnostics.Metrics;
 
 namespace Pulse.Metrics;

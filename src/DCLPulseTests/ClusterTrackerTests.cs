@@ -1021,7 +1021,8 @@ public class ClusterTrackerTests
             identityBoard,
             clusterBoard,
             feedPublisher,
-            PresenceTestFactory.Disabled(),
+            PresenceTestFactory.Encoder(),
+            Options.Create(new NatsOptions { Url = string.Empty }),
             Substitute.For<ITimeProvider>(),
             MAX_PEERS);
     }

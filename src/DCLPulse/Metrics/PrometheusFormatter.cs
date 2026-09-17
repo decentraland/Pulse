@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Text;
 using Decentraland.Pulse;
+using Pulse.Clusters;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using Pulse.Transport;
 using Pulse.Transport.Geo;
 using Pulse.Transport.Hardening;

@@ -1,4 +1,4 @@
-namespace Pulse.Presence;
+namespace Pulse.Clusters;
 
 /// <summary>
 ///     Knobs for the <c>engine.parcel_changes</c> presence feed (iteration-2 C1). The NATS gating

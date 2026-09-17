@@ -1,4 +1,3 @@
-using Pulse.Presence;
 
 namespace Pulse.Clusters;
 

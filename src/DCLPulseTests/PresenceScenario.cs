@@ -10,7 +10,6 @@ using Pulse.Messaging;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using Pulse.Transport;
 using Pulse.Transport.Hardening;
 using System.Buffers;
@@ -22,7 +21,7 @@ namespace DCLPulseTests;
 
 /// <summary>
 ///     A live presence pipeline: real boards, real <see cref="ClusterTracker" />, real
-///     <see cref="ParcelChangeTracker" /> and the real <see cref="NatsPublisher" /> outbox and
+///     <see cref="ClusterTracker" /> and the real <see cref="NatsPublisher" /> outbox and
 ///     serializer, with only the broker and the clock replaced. Tests place, move, teleport and remove
 ///     peers, then read back the batches the wire would carry.
 /// </summary>
@@ -70,12 +69,10 @@ internal sealed class PresenceScenario
             NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
             natsOptions, presenceOptions, Clock, SnapshotBoard);
 
-        ParcelChanges = new ParcelChangeTracker(Publisher, ParcelEncoder, natsOptions, MAX_PEERS);
-
         Tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             Options.Create(new ClusterOptions { Enabled = true, PassIntervalMs = 1000, DwellPasses = 1, IdPrefix = "C" }),
-            Grids, SnapshotBoard, IdentityBoard, ClusterBoard, Publisher, ParcelChanges, Clock, MAX_PEERS);
+            Grids, SnapshotBoard, IdentityBoard, ClusterBoard, Publisher, ParcelEncoder, natsOptions, Clock, MAX_PEERS);
 
         SnapshotPublisher = new PeerSnapshotPublisher(SnapshotBoard, Grids, ParcelEncoder, Clock);
         Transport = Substitute.For<ITransport>();
@@ -103,7 +100,7 @@ internal sealed class PresenceScenario
         Simulation = new PeerSimulation(
             Substitute.For<IAreaOfInterest>(), SnapshotBoard, Grids, IdentityBoard, MessagePipe,
             SIMULATION_STEPS, Clock, Transport, ProfileBoard, PeerIndexAllocator,
-            NullLogger<PeerSimulation>.Instance, ParcelChanges,
+            NullLogger<PeerSimulation>.Instance, Tracker,
             disconnectionCleanTimeoutMs: DISCONNECTION_CLEAN_TIMEOUT_MS);
     }
 
@@ -120,8 +117,6 @@ internal sealed class PresenceScenario
     public ParcelEncoder ParcelEncoder { get; }
 
     public NatsPublisher Publisher { get; }
-
-    public ParcelChangeTracker ParcelChanges { get; }
 
     public ClusterTracker Tracker { get; }
 
@@ -257,7 +252,7 @@ internal sealed class PresenceScenario
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
             })),
             DisabledIpLimiter(),
-            ParcelChanges);
+            Tracker);
 
     /// <summary>Cap switched off: the limiter counts connections but refuses none.</summary>
     private static IpLimiter DisabledIpLimiter()

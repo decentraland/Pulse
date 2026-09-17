@@ -1,4 +1,4 @@
-namespace Pulse.Presence;
+namespace Pulse.Clusters;
 
 /// <summary>
 ///     A parcel coordinate, <c>(floor(x / ParcelSize), floor(z / ParcelSize))</c> — named x/y because

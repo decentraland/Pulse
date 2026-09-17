@@ -9,7 +9,6 @@ using Pulse.Messaging;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using Pulse.Transport;
 
 namespace DCLPulseTests;
@@ -146,6 +145,28 @@ public class PresenceGuaranteeTests
         scenario.RunPass();
 
         Assert.That(Entries(scenario.NextBatch(T0 + 6000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -" }));
+    }
+
+    /// <summary>
+    ///     A1 must not swallow the exit outright: the replacement is bound in <c>IdentityBoard</c> at
+    ///     AUTHENTICATED but placed only on its first teleport, so a reconnect that drops before that
+    ///     teleport has no presence of its own to carry the wallet.
+    /// </summary>
+    [Test]
+    public void WhenTheReplacementIsBoundButNeverPlaced_TheExitIsStillPublished()
+    {
+        PresenceScenario scenario = OpenedScenario();
+
+        // The incoming session authenticates onto P2, rebinding the wallet, but never teleports — so
+        // no pass ever collects it and it never reaches the feed.
+        scenario.Register(P2, Wallet(1));
+
+        scenario.Remove(P1);
+        scenario.Remove(P2);
+        scenario.RunPass();
+
+        Assert.That(Entries(scenario.NextBatch(T0 + 2000)!), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} -" }),
+            "a wallet left on no placed connection must be withdrawn, not stranded until the next snapshot");
     }
 
     /// <summary>A mid-session ban, driven through the real <see cref="BanEnforcer" />.</summary>
@@ -348,19 +369,6 @@ public class PresenceGuaranteeTests
     }
 
     /// <summary>
-    ///     The adverse half of that instant: the kicked client is still walking, because ENet's queued
-    ///     disconnect waits on its ack. So the tie-break is recency of the <em>session</em>, not of the
-    ///     placement — the kicked session always started first, but its last step can be the newest thing.
-    /// </summary>
-    [Test]
-    public void ASnapshotTakenWhileTheKickedSlotIsStillWalking_CarriesTheNewerSessionsSlot()
-    {
-        // Both traversal orders: one of them always stamps the kicked slot last.
-        AssertTheWalkingKickedSlotIsSuperseded(kickedObservedLast: true);
-        AssertTheWalkingKickedSlotIsSuperseded(kickedObservedLast: false);
-    }
-
-    /// <summary>
     ///     Batch order is a function of content — what lets the wire fixtures compare byte for byte —
     ///     but two entries for one wallet tie under the address-only comparator, whose sort is not stable.
     /// </summary>
@@ -377,60 +385,6 @@ public class PresenceGuaranteeTests
 
         Assert.That(IntervalSnapshotBytes(descending, T0 + 60_000), Is.EqualTo(first),
             "and so do two servers holding that state on different slots");
-    }
-
-    /// <summary>
-    ///     One wallet on two slots, both observed in one pass, the kicked connection a step ahead —
-    ///     built by hand, since <c>ClusterTracker.RunPass</c> now collects only the live binding.
-    /// </summary>
-    private static void AssertTheWalkingKickedSlotIsSuperseded(bool kickedObservedLast)
-    {
-        PresenceScenario scenario = OpenedScenario();
-
-        // The kick with the client still on the wire: no lifecycle event yet, so P1 keeps its cell.
-        scenario.Transport.Disconnect(P1, DisconnectReason.DUPLICATE_SESSION);
-
-        // The kicked client's last step moves P1 into P2's cell — parcels 1,1 and 5,5 share one cell.
-        scenario.Place(P2, Wallet(1), MAIN, 5, 5);
-        scenario.Move(P1, MAIN, 1, 1);
-
-        Assert.That(scenario.NextBatch(T0 + 60_000), Is.Null,
-            "the interval deadline passes on a turn with nothing to send");
-
-        // P2's occupancy starts in this pass; P1's started in the opening one.
-        ClusterPeerInfo kicked = TiePassMember(scenario, P1, 1, 1);
-        ClusterPeerInfo live = TiePassMember(scenario, P2, 5, 5);
-
-        scenario.ParcelChanges.ObservePass(
-            kickedObservedLast ? TiePass(live, kicked) : TiePass(kicked, live));
-
-        ParcelChangesBatch batch = scenario.NextBatchWithReason(T0 + 62_000).Batch!;
-
-        AssertOneEntryPerAddress(batch);
-
-        Assert.That(Entries(batch), Is.EqualTo(new[] { $"{Wallet(1)} {MAIN} 5,5" }),
-            "this wallet's presence is the session that has just handshaked, not the kicked "
-          + $"connection's last step (kicked observed last: {kickedObservedLast})");
-    }
-
-    /// <summary>One member of a hand-built pass, carrying the wallet both sessions authenticate as.</summary>
-    private static ClusterPeerInfo TiePassMember(
-        PresenceScenario scenario, PeerIndex peer, int parcelX, int parcelY) =>
-        new (peer, Wallet(1), "C1", MAIN, PresenceScenario.CentreOf(parcelX, parcelY),
-            scenario.ParcelEncoder.Encode(parcelX, parcelY));
-
-    /// <summary>A pass carrying the given members in the order the tracker observes them in.</summary>
-    private static ClusterPass TiePass(params ClusterPeerInfo[] members)
-    {
-        var clusterIdByPeer = new string?[PresenceScenario.MAX_PEERS];
-
-        foreach (ClusterPeerInfo member in members)
-            clusterIdByPeer[(int)member.Peer.Value] = member.ClusterId;
-
-        return new ClusterPass(
-            [new ClusterInfo("C1", MAIN, members.Length, PresenceScenario.CentreOf(5, 5), 0f)],
-            members,
-            clusterIdByPeer);
     }
 
     /// <summary>
@@ -729,17 +683,18 @@ public class PresenceGuaranteeTests
 
     /// <summary>The existing NATS gating governs the feed: no config change, nothing published.</summary>
     [Test]
-    public void WithNoBrokerConfigured_TheTrackerPublishesNothing()
+    public void WithNoBrokerConfigured_ThePresenceFeedPublishesNothing()
     {
         IClusterFeedPublisher feed = Substitute.For<IClusterFeedPublisher>();
-        ParcelChangeTracker tracker = TrackerWith(feed, natsUrl: string.Empty);
+        ClusterTracker tracker = PresenceTestFactory.Disabled(feed);
 
-        Assert.That(tracker.Enabled, Is.False);
+        Assert.That(tracker.PresenceEnabled, Is.False);
 
-        tracker.ObservePass(OnePeerPass());
+        tracker.RunPass();
         tracker.OnPeerRemoved(P1);
 
-        Assert.That(feed.ReceivedCalls(), Is.Empty);
+        feed.DidNotReceiveWithAnyArgs().PublishParcelChange(default!, default!, default);
+        feed.DidNotReceiveWithAnyArgs().PublishParcelSnapshot(default!, default);
     }
 
     // ── Helpers ───────────────────────────────────────────────────
@@ -814,17 +769,4 @@ public class PresenceGuaranteeTests
 
         return disconnected.ToArray();
     }
-
-    private static ParcelChangeTracker TrackerWith(IClusterFeedPublisher feed, string natsUrl) =>
-        new (
-            feed,
-            PresenceTestFactory.Encoder(),
-            Options.Create(new NatsOptions { Url = natsUrl }),
-            PresenceScenario.MAX_PEERS);
-
-    private static ClusterPass OnePeerPass() =>
-        new (
-            [],
-            [new ClusterPeerInfo(P1, Wallet(1), "C1", MAIN, System.Numerics.Vector3.Zero, 0)],
-            new string?[PresenceScenario.MAX_PEERS]);
 }

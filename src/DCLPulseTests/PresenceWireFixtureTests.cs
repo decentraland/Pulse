@@ -1,13 +1,12 @@
 using Decentraland.Pulse;
 using Pulse;
 using Pulse.Peers;
-using Pulse.Presence;
 
 namespace DCLPulseTests;
 
 /// <summary>
 ///     Byte-for-byte checks against the iteration-2 contract pack's <c>parcel_changes/*.bin</c>. Every
-///     batch is assembled by the real <see cref="Pulse.Presence.ParcelChangeTracker" /> and written by
+///     batch is assembled by the real <see cref="Pulse.Clusters.ClusterTracker" /> and written by
 ///     the serializer the publisher hands to NATS, so what they pin is the bytes a deployed Pulse puts
 ///     on <c>engine.parcel_changes</c>.
 ///     <para />

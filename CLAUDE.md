@@ -356,14 +356,14 @@ Pulse is the platform's source of online-player information. Two surfaces carry 
 derived from the same `ClusterTracker` pass, so what the feed says and what HTTP serves cannot
 disagree by more than one pass interval.
 
-**`engine.parcel_changes`** (`src/DCLPulse/Presence/`, `Clusters/NatsPublisher.Presence.cs`) —
+**`engine.parcel_changes`** (`Clusters/ClusterTracker.cs`, `Clusters/NatsPublisher.Presence.cs`) —
 `decentraland.pulse.ParcelChangesBatch`: which wallet is on which parcel of which realm, batched
 every `Presence:BatchIntervalMs`, with a full `snapshot=true` batch on start, on reconnect, every
 `Presence:SnapshotIntervalMs`, and after an outbox eviction (coalesced). Invariants to preserve when
 touching it:
 
 - **Exits come from one place.** `PeerSimulation.CleanupDisconnectedPeer` calls
-  `ParcelChangeTracker.OnPeerRemoved`, and every way a peer can leave is a transport disconnect that
+  `ClusterTracker.OnPeerRemoved`, and every way a peer can leave is a transport disconnect that
   ends there exactly once. Do **not** also derive exits from "present last pass, missing in this
   one" — that double-emits, and it races a pass still in flight when the peer disconnected.
 - **`seq` is stamped per assembled batch and never reused.** A publish that throws leaves a real gap,

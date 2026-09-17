@@ -12,7 +12,6 @@ using Pulse.Metrics;
 using Pulse;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using Pulse.Presence;
 using System.Buffers;
 using System.Diagnostics.Metrics;
 using System.Numerics;

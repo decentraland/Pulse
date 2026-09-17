@@ -304,6 +304,16 @@ NRT is `enable`d in every project. Type nullable params/returns/fields as `T?`. 
 - A comment states only what the annotated code itself does or guarantees — **never what a caller or another layer will do with the result.** External behavior can change without this code changing, silently turning the comment into a lie.
 - Sentence case, end with a period. No commented-out code. No `/* */` block comments.
 
+**Budget.** Comments earn their lines, and the default budget is small:
+
+- A `<summary>` is **1–3 lines**; an inline `//` is **1–2**. Past that, the code wants a name, not a paragraph.
+- **Say it once.** A fact belongs at one site — the field, the method, or the type doc. Repeating it across neighbours just creates a second copy to go stale.
+- **Don't argue a hazard that cannot happen.** Explaining why a race is impossible reads as evidence the race is live. State the invariant that rules it out, in one line, and stop.
+- **Don't narrate the change.** Why a line moved, what it replaced, which review found it — that is the commit message's job, not the file's.
+- Prefer **deleting** a comment to shortening it. If deleting it loses no fact the code cannot state, it was noise.
+
+The test: delete the comment and ask what a reader no longer knows. "Nothing" means it should not have been written.
+
 ### Member ordering
 
 Within a type: enums/delegates → fields → properties → events → methods → nested types. Within each group, order by visibility public → internal → protected → private. Fields: `const`/`static readonly` → `static` → `readonly` → public → private. Methods: constructor → `Dispose` → public API → private helpers, each private helper placed **after** the method that calls it.

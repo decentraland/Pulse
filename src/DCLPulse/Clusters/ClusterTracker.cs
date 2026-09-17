@@ -51,14 +51,8 @@ public sealed class ClusterTracker : BackgroundService
     // queue grow for the life of the process.
     private readonly bool passRuns;
 
-    // Departure handoff, one flag per peer. A PeerSimulation call tree may not block (see CLAUDE.md),
-    // and retiring a presence needs both this tracker's columns and the publisher's outbox, each
-    // owned by another thread — so a worker raises the flag and the next pass does the work.
-    // Preallocated, so the handoff costs no allocation and no queue, and bounded by construction
-    // since a peer holds one index.
-    //
-    // This array is the only state of this class another thread ever writes. Every column of
-    // peerStates is therefore single-threaded, which is what removes the lock entirely.
+    // Departure handoff: a worker raises a flag, the next pass retires the peer. The only state of
+    // this class another thread writes, which is what leaves peerStates single-threaded.
     private readonly bool[] departed;
 
     // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
@@ -874,18 +868,14 @@ public sealed class ClusterTracker : BackgroundService
 
         if (index >= departed.Length) return;
 
-        // Raised before PeerSimulation releases the index to the allocator, which is what lets the
-        // drain trust the slot: nothing can reissue this index, be placed, and overwrite the columns
-        // before a pass has consumed the flag, because placement happens later in a pass than the
-        // drain does.
+        // Raised before PeerSimulation releases the index, so the drain still finds this session's
+        // columns: a reissued index is only placed later in a pass than the drain runs.
         Volatile.Write(ref departed[index], true);
     }
 
     /// <summary>
-    ///     Retires every peer a worker has handed over since the last pass. Runs first, so an exit is
-    ///     published ahead of this pass's own placements and ahead of any snapshot that would
-    ///     otherwise contradict it — a snapshot collected after the clear cannot list the departed
-    ///     wallet, and the publisher stages a pending exit ahead of the snapshot (A2).
+    ///     Retires every peer a worker handed over since the last pass. Runs first, so an exit
+    ///     precedes this pass's placements and cannot be contradicted by its snapshot.
     /// </summary>
     private void DrainDepartures()
     {
@@ -922,11 +912,9 @@ public sealed class ClusterTracker : BackgroundService
         ClearPresence(ref state);
         liveCount--;
 
-        // Suppressed only when the replacement actually has a presence of its own. The binding alone
-        // is not enough: the legacy connect flow binds a wallet at AUTHENTICATED but places it only on
-        // its first TeleportRequest, so a reconnect that drops before that teleport would leave this
-        // exit suppressed and its own slot empty — no exit for the wallet at all until the next
-        // snapshot.
+        // Suppressed only when the replacement is placed, not merely bound (A1): the legacy connect
+        // flow binds at AUTHENTICATED and places on the first teleport, so a binding alone would
+        // swallow the exit of a reconnect that drops in between.
         if (identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live)
             && live != peer
             && live.Value < peerStates.Length
@@ -1017,10 +1005,8 @@ public sealed class ClusterTracker : BackgroundService
             // An unstamped slot is already clear — never collected, or forgotten by an earlier pass.
             if (state.LastSeenPass == passNumber || state.LastSeenPass == 0) continue;
 
-            // Clustering columns only. Retiring a presence is RetirePresence's alone (A1, C1.2) —
-            // clearing one here would drop the exit for a peer that is merely absent from a pass,
-            // which is not the same thing as gone. Zeroing LastSeenPass is what makes a slot that has
-            // left the grid lose every Supersedes tie until then.
+            // Clustering columns only: absent from a pass is not gone, and retiring a presence is
+            // RetirePresence's alone (C1.2). Zeroing LastSeenPass loses the slot every Supersedes tie.
             state.PreviousPassClusterId = null;
             state.PublishedClusterId = null;
             state.PublishedRealm = null;

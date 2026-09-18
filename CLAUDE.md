@@ -400,7 +400,7 @@ Pulse is the platform's source of online-player information. Two surfaces carry 
 derived from the same `ClusterTracker` pass, so what the feed says and what HTTP serves cannot
 disagree by more than one pass interval.
 
-**`engine.parcel_changes`** (`Clusters/ClusterTracker.cs`, `Clusters/NatsPublisher.Presence.cs`) —
+**`engine.parcel_changes`** (`Clusters/ClusterTracker.Presence.cs`, `Clusters/NatsPublisher.Presence.cs`) —
 `decentraland.pulse.ParcelChangesBatch`: which wallet is on which parcel of which realm, batched
 every `Presence:BatchIntervalMs`, with a full `snapshot=true` batch on start, on reconnect, every
 `Presence:SnapshotIntervalMs`, and after an outbox eviction (coalesced). Invariants to preserve when

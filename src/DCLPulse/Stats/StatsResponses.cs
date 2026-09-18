@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -7,22 +8,26 @@ namespace Pulse.Stats;
 ///     What a stats route answered: a status, an optional JSON body and, for the legacy paths, the
 ///     <c>Location</c> a 308 points at. A null <see cref="Body" /> is an empty body, not JSON null.
 /// </summary>
-public readonly record struct StatsResponse(int Status, byte[]? Body = null, string? Location = null)
+public readonly record struct StatsResponse(
+    HttpStatusCode Status,
+    byte[]? Body = null,
+    string? Location = null)
 {
     public static StatsResponse NotFound() =>
-        new (404);
+        new (HttpStatusCode.NotFound);
 
     public static StatsResponse Ok<T>(T body) =>
-        new (200, StatsJson.Serialize(body));
+        new (HttpStatusCode.OK, StatsJson.Serialize(body));
 
-    public static StatsResponse Json<T>(int status, T body) =>
+    public static StatsResponse Json<T>(HttpStatusCode status, T body) =>
         new (status, StatsJson.Serialize(body));
 
     /// <summary>
-    ///     308, not 301: preserves the method, so no intermediary rewrites a legacy request to GET.
+    ///     308, not <see cref="HttpStatusCode.MovedPermanently" />: preserves the method, so no
+    ///     intermediary rewrites a legacy request to GET.
     /// </summary>
-    public static StatsResponse MovedPermanently(string location) =>
-        new (308, Location: location);
+    public static StatsResponse PermanentRedirect(string location) =>
+        new (HttpStatusCode.PermanentRedirect, Location: location);
 }
 
 /// <summary>

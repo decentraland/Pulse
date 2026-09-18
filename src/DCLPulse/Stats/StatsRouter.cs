@@ -1,6 +1,7 @@
 using Pulse.Clusters;
 using Pulse.FeatureFlags;
 using System.Globalization;
+using System.Net;
 using Pulse.InterestManagement;
 using Pulse.Peers.Simulation;
 
@@ -51,7 +52,7 @@ public sealed class StatsRouter(
 
         return segments switch
         {
-            ["health"] => new StatsResponse(200),
+            ["health"] => new StatsResponse(HttpStatusCode.OK),
             ["about"] => About(),
             ["status"] => Status(),
 
@@ -127,7 +128,8 @@ public sealed class StatsRouter(
     private StatsResponse PeersByIds(IReadOnlyList<string> ids)
     {
         if (ids.Count > MAX_IDS)
-            return StatsResponse.Json(400, new ErrorResponse(Ok: false, $"too many ids (max {MAX_IDS})"));
+            return StatsResponse.Json(
+                HttpStatusCode.BadRequest, new ErrorResponse(Ok: false, $"too many ids (max {MAX_IDS})"));
 
         return StatsResponse.Ok(new PeersResponse(Ok: true, Realm: null, Read().PeersMatching(ids)));
     }
@@ -144,7 +146,7 @@ public sealed class StatsRouter(
         PeerResult? peer = Read().Peer(id);
 
         return peer is null
-            ? StatsResponse.Json(404, new PeerResponse(Ok: false, Peer: null))
+            ? StatsResponse.Json(HttpStatusCode.NotFound, new PeerResponse(Ok: false, Peer: null))
             : StatsResponse.Ok(new PeerResponse(Ok: true, peer));
     }
 
@@ -172,7 +174,7 @@ public sealed class StatsRouter(
     {
         var location = $"/realms/{DEFAULT_REALM}/{string.Join('/', segments)}";
 
-        return StatsResponse.MovedPermanently(
+        return StatsResponse.PermanentRedirect(
             query.Raw.Length == 0 ? location : $"{location}?{query.Raw}");
     }
 

@@ -1,6 +1,7 @@
 using Pulse;
 using Pulse.Clusters;
 using Pulse.Stats;
+using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -48,7 +49,7 @@ public class StatsGoldenTests
 
         StatsResponse response = Request(RequestPathOf(fixture));
 
-        Assert.That(response.Status, Is.EqualTo(fixture["status"]!.GetValue<int>()), golden);
+        Assert.That(response.Status, Is.EqualTo(StatusOf(fixture)), golden);
 
         JsonGolden.AssertMatches(fixture["body"], BodyOf(response), golden);
     }
@@ -59,7 +60,7 @@ public class StatsGoldenTests
     {
         StatsResponse response = Request($"/peers/{StatsFixtureWorld.OFFLINE_WALLET}");
 
-        Assert.That(response.Status, Is.EqualTo(404));
+        Assert.That(response.Status, Is.EqualTo(HttpStatusCode.NotFound));
         Assert.That(Encoding.UTF8.GetString(response.Body!), Is.EqualTo("{\"ok\":false,\"peer\":null}"));
     }
 
@@ -129,7 +130,7 @@ public class StatsGoldenTests
     {
         StatsResponse response = Request(path);
 
-        Assert.That(response.Status, Is.EqualTo(404), path);
+        Assert.That(response.Status, Is.EqualTo(HttpStatusCode.NotFound), path);
         Assert.That(response.Body, Is.Null, path);
     }
 
@@ -137,15 +138,15 @@ public class StatsGoldenTests
     ///     The other side of that: exactly what <c>redirects.json</c> lists — four redirects, the
     ///     query-parameter forms of <c>/comms/peers</c>, and <c>/comms/peers/{id}</c> (A5).
     /// </summary>
-    [TestCase("/comms/peers", 308)]
-    [TestCase("/comms/parcels", 308)]
-    [TestCase("/comms/islands", 308)]
-    [TestCase("/comms/islands/C1", 308)]
-    [TestCase("/comms/peers?id=0x0000000000000000000000000000000000000001", 200)]
-    [TestCase("/comms/peers?all=true", 200)]
-    [TestCase("/comms/peers/0x0000000000000000000000000000000000000003", 200)]
-    [TestCase("/comms/peers/0x0000000000000000000000000000000000000009", 404)]
-    public void CommsPrefix_StillAnswersTheLegacyPaths(string path, int status)
+    [TestCase("/comms/peers", HttpStatusCode.PermanentRedirect)]
+    [TestCase("/comms/parcels", HttpStatusCode.PermanentRedirect)]
+    [TestCase("/comms/islands", HttpStatusCode.PermanentRedirect)]
+    [TestCase("/comms/islands/C1", HttpStatusCode.PermanentRedirect)]
+    [TestCase("/comms/peers?id=0x0000000000000000000000000000000000000001", HttpStatusCode.OK)]
+    [TestCase("/comms/peers?all=true", HttpStatusCode.OK)]
+    [TestCase("/comms/peers/0x0000000000000000000000000000000000000003", HttpStatusCode.OK)]
+    [TestCase("/comms/peers/0x0000000000000000000000000000000000000009", HttpStatusCode.NotFound)]
+    public void CommsPrefix_StillAnswersTheLegacyPaths(string path, HttpStatusCode status)
     {
         Assert.That(Request(path).Status, Is.EqualTo(status), path);
     }
@@ -155,11 +156,11 @@ public class StatsGoldenTests
     ///     unprefixed path rather than a restated golden, so the two cannot diverge on the peer
     ///     shape, the <c>realm</c> field or the 404 body.
     /// </summary>
-    [TestCase("0x0000000000000000000000000000000000000001", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInGenesisCity")]
-    [TestCase("0x0000000000000000000000000000000000000003", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInAWorld")]
-    [TestCase("0x0000000000000000000000000000000000000009", 404, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAWalletThatIsOffline")]
-    [TestCase("0X0000000000000000000000000000000000000003", 200, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAWalletInAnotherCasing")]
-    public void CommsPeersSingle_IsServedExactlyLikePeersSingle(string wallet, int expected)
+    [TestCase("0x0000000000000000000000000000000000000001", HttpStatusCode.OK, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInGenesisCity")]
+    [TestCase("0x0000000000000000000000000000000000000003", HttpStatusCode.OK, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAPeerInAWorld")]
+    [TestCase("0x0000000000000000000000000000000000000009", HttpStatusCode.NotFound, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAWalletThatIsOffline")]
+    [TestCase("0X0000000000000000000000000000000000000003", HttpStatusCode.OK, TestName = "CommsPeersSingle_MatchesPeersSingle_ForAWalletInAnotherCasing")]
+    public void CommsPeersSingle_IsServedExactlyLikePeersSingle(string wallet, HttpStatusCode expected)
     {
         StatsResponse direct = Request($"/peers/{wallet}");
         StatsResponse aliased = Request($"/comms/peers/{wallet}");
@@ -207,7 +208,7 @@ public class StatsGoldenTests
 
         StatsResponse response = Request("/about");
 
-        Assert.That(response.Status, Is.EqualTo(200));
+        Assert.That(response.Status, Is.EqualTo(HttpStatusCode.OK));
 
         JsonGolden.AssertMatches(fixture["body"], BodyOf(response), "about.json", "featureFlagOverrides");
     }
@@ -223,10 +224,10 @@ public class StatsGoldenTests
 
         StatsResponse refused = Request(PathWithIds(StatsRouter.MAX_IDS + 1));
 
-        Assert.That(refused.Status, Is.EqualTo(fixture["status"]!.GetValue<int>()));
+        Assert.That(refused.Status, Is.EqualTo(StatusOf(fixture)));
         JsonGolden.AssertMatches(fixture["body"], BodyOf(refused), "peers-by-id-too-many.json");
 
-        Assert.That(Request(PathWithIds(StatsRouter.MAX_IDS)).Status, Is.EqualTo(200),
+        Assert.That(Request(PathWithIds(StatsRouter.MAX_IDS)).Status, Is.EqualTo(HttpStatusCode.OK),
             "the cap is inclusive — a request of exactly MAX_IDS is legal");
     }
 
@@ -241,13 +242,13 @@ public class StatsGoldenTests
         foreach (JsonNode? entry in cases)
         {
             string path = entry!["path"]!.GetValue<string>();
-            int status = entry["status"]!.GetValue<int>();
+            HttpStatusCode status = StatusOf(entry);
 
             // /metrics is the one route this surface does not own: HttpService answers it behind a
             // bearer token, so the router has to decline rather than serve it unauthenticated.
             if (path == "/metrics")
             {
-                Assert.That(Request(path).Status, Is.EqualTo(404),
+                Assert.That(Request(path).Status, Is.EqualTo(HttpStatusCode.NotFound),
                     "/metrics must not be served by the unauthenticated surface");
 
                 continue;
@@ -287,7 +288,7 @@ public class StatsGoldenTests
 
         if (!string.Equals(RequestPathOf(fixture), unprefixed, StringComparison.Ordinal)) return;
 
-        Assert.That(response.Status, Is.EqualTo(fixture["status"]!.GetValue<int>()), path);
+        Assert.That(response.Status, Is.EqualTo(StatusOf(fixture)), path);
 
         JsonGolden.AssertMatches(fixture["body"], BodyOf(response), $"{file} via {path}");
     }
@@ -311,7 +312,7 @@ public class StatsGoldenTests
     {
         StatsResponse response = Request(path);
 
-        Assert.That(response.Status, Is.EqualTo(200));
+        Assert.That(response.Status, Is.EqualTo(HttpStatusCode.OK));
 
         JsonNode body = BodyOf(response)!;
 
@@ -329,9 +330,9 @@ public class StatsGoldenTests
     [Test]
     public void IslandFromAnotherRealm_IsNotFound()
     {
-        Assert.That(Request("/realms/main/islands/C3").Status, Is.EqualTo(404));
-        Assert.That(Request("/realms/cozyfarm.dcl.eth/islands/C3").Status, Is.EqualTo(200));
-        Assert.That(Request("/realms/main/islands/C99").Status, Is.EqualTo(404));
+        Assert.That(Request("/realms/main/islands/C3").Status, Is.EqualTo(HttpStatusCode.NotFound));
+        Assert.That(Request("/realms/cozyfarm.dcl.eth/islands/C3").Status, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(Request("/realms/main/islands/C99").Status, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
     [TestCase("/")]
@@ -342,7 +343,7 @@ public class StatsGoldenTests
     {
         StatsResponse response = Request(path);
 
-        Assert.That(response.Status, Is.EqualTo(404));
+        Assert.That(response.Status, Is.EqualTo(HttpStatusCode.NotFound));
         Assert.That(response.Body, Is.Null);
     }
 
@@ -364,6 +365,10 @@ public class StatsGoldenTests
 
         return request[(request.IndexOf(' ') + 1)..];
     }
+
+    /// <summary>A fixture's <c>status</c>, which the contract pack writes as a bare number.</summary>
+    private static HttpStatusCode StatusOf(JsonNode fixture) =>
+        (HttpStatusCode)fixture["status"]!.GetValue<int>();
 
     private static JsonNode? BodyOf(StatsResponse response) =>
         response.Body is { } body ? JsonNode.Parse(Encoding.UTF8.GetString(body)) : null;

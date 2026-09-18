@@ -62,11 +62,11 @@ public sealed class HttpService(
     {
         if (!AuthorizeMetrics(ctx.Request))
         {
-            ctx.Response.StatusCode = 401;
+            ctx.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
             return;
         }
 
-        ctx.Response.StatusCode = 200;
+        ctx.Response.StatusCode = (int)HttpStatusCode.OK;
         ctx.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
 
         await using var writer = new StreamWriter(ctx.Response.OutputStream);
@@ -81,7 +81,7 @@ public sealed class HttpService(
         StatsResponse response = statsRouter.Handle(
             ctx.Request.Url?.AbsolutePath ?? "/", StatsQuery.Parse(ctx.Request.Url?.Query));
 
-        ctx.Response.StatusCode = response.Status;
+        ctx.Response.StatusCode = (int)response.Status;
 
         if (response.Location is { } location)
             ctx.Response.Headers["Location"] = location;

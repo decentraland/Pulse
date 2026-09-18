@@ -60,6 +60,11 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     // Named "island", not "cluster", on purpose: engine.islands is archipelago's topology subject
     // carrying archipelago's IslandStatusMessage, and Pulse re-publishes that shape verbatim. The
     // island vocabulary survives only where it is archipelago's contract.
+    // Subject suffixes for the per-peer feed. A refresh carries the same payload as a change; the
+    // suffix is the only thing distinguishing a periodic re-emit from a real assignment event.
+    private const string CHANGE_SUFFIX = "cluster_change";
+    private const string REFRESH_SUFFIX = "cluster_refresh";
+
     private const string ISLANDS_SUBJECT = "engine.islands";
 
     private const string DISCOVERY_SUBJECT = "engine.discovery";
@@ -250,7 +255,19 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         }
     }
 
-    public void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session)
+    public void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session) =>
+        PublishPeerAssignment(CHANGE_SUFFIX, wallet, clusterId, realm, session);
+
+    public void PublishClusterRefresh(string wallet, string clusterId, string realm, ClusterSession session) =>
+        PublishPeerAssignment(REFRESH_SUFFIX, wallet, clusterId, realm, session);
+
+    /// <summary>
+    ///     Shared body of both per-peer publishes. The subject suffix is the only difference between
+    ///     them: it is what lets a consumer tell a periodic refresh from a real assignment event, and
+    ///     it keeps the two coalescing independently, so a refresh can never displace a pending change
+    ///     for the same peer.
+    /// </summary>
+    private void PublishPeerAssignment(string suffix, string wallet, string clusterId, string realm, ClusterSession session)
     {
         if (!feedEnabled) return;
 
@@ -271,7 +288,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
             // chain carried. The subject is also the coalescing key, so per-subject latest-wins is
             // exactly per-peer latest-wins.
-            var subject = $"peer.{wallet.ToLowerInvariant()}.cluster_change";
+            var subject = $"peer.{wallet.ToLowerInvariant()}.{suffix}";
 
             PeerClusterChange change = rented;
             rented = null;
@@ -283,7 +300,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             if (rented is { } unqueued)
                 ReturnChange(unqueued);
 
-            logger.LogWarning(e, "Failed to publish cluster change for {ClusterId}; dropping", clusterId);
+            logger.LogWarning(e, "Failed to publish {Suffix} for {ClusterId}; dropping", suffix, clusterId);
         }
     }
 

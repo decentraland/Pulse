@@ -14,6 +14,14 @@ public interface IClusterFeedPublisher
     void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session);
 
     /// <summary>
+    ///     A peer's assignment re-emitted unchanged by the periodic sweep. Carries the same payload as
+    ///     <see cref="PublishClusterChange" /> on a separate subject, so a consumer can tell a refresh
+    ///     from a real assignment event: a refresh is safe to ignore when the consumer already holds
+    ///     the assignment, whereas a change always warrants acting on.
+    /// </summary>
+    void PublishClusterRefresh(string wallet, string clusterId, string realm, ClusterSession session);
+
+    /// <summary>
     ///     The full cluster topology for a completed pass. Callers must serialize their calls to this
     ///     method — it is not safe to invoke from two threads at once.
     /// </summary>

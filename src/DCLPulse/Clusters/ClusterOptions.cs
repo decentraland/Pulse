@@ -29,6 +29,18 @@ public sealed class ClusterOptions
     public string IdPrefix { get; set; } = "C";
 
     /// <summary>
+    ///     Passes after which a peer's unchanged assignment is re-emitted on
+    ///     <c>peer.{wallet}.cluster_refresh</c>, so a consumer that lost the original event recovers
+    ///     without waiting for the peer's cluster to change. Zero disables the sweep, which is the
+    ///     behaviour before it existed: the feed is then purely edge-triggered and every dropped
+    ///     event is permanent.
+    ///     <para />
+    ///     Re-emits are spread by construction rather than batched — peers publish at different
+    ///     times, so their refresh deadlines fall on different passes.
+    /// </summary>
+    public int RepublishIntervalPasses { get; set; }
+
+    /// <summary>
     ///     Passes a departed wallet's last published assignment is retained. A new session arriving for
     ///     the wallet inside this window has its first publish name the retained assignment's session
     ///     and cluster as displaced, so the consumer can remove that participant from the room it still

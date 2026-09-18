@@ -353,6 +353,8 @@ public class ClusterTrackerBenchmarks
     {
         public void PublishClusterChange(string wallet, string clusterId, string realm, ClusterSession session) { }
 
+        public void PublishClusterRefresh(string wallet, string clusterId, string realm, ClusterSession session) { }
+
         public void PublishTopology(ClusterPass pass) { }
     }
 }

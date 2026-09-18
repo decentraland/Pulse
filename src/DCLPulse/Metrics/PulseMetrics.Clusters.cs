@@ -34,6 +34,14 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.clusters.reassignments");
 
         /// <summary>
+        ///     Settled assignments re-emitted by the periodic sweep on
+        ///     <c>peer.{wallet}.cluster_refresh</c>. Climbs steadily once the sweep is enabled and is
+        ///     zero when it is off, so it doubles as the signal that the sweep is running at all.
+        /// </summary>
+        public static readonly Counter<long> REPUBLISHES =
+            METER.CreateCounter<long>("pulse.clusters.republishes");
+
+        /// <summary>
         ///     Publishes whose session differs from the one the wallet's retained assignment was
         ///     published by — a second device took the wallet over. One per takeover; a same-session
         ///     reconnect is not one.

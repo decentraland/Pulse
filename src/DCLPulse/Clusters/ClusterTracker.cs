@@ -644,9 +644,44 @@ public sealed class ClusterTracker : BackgroundService
             foreach (PassMember member in MembersOf(component))
                 if (TryPublishAssignment(member, info.Id, info.Realm))
                     reassignments++;
+                else
+                    TryRepublishAssignment(member, info.Id, info.Realm);
         }
 
         return reassignments;
+    }
+
+    /// <summary>
+    ///     Re-emits a peer's settled assignment once it has gone
+    ///     <see cref="ClusterOptions.RepublishIntervalPasses" /> passes without being put on the feed,
+    ///     so a consumer that lost the original event recovers without waiting for the peer to move.
+    ///     Delivery is at-most-once and the tracker commits its published state before the hand-off,
+    ///     so without this an evicted, failed or shutdown-discarded event is never re-derived.
+    ///     <para />
+    ///     Only a settled assignment is repeated: a peer still inside the debounce has nothing
+    ///     published yet, and one whose published assignment differs from the pass's is about to get a
+    ///     real change anyway. The refresh therefore never competes with a change for the same peer.
+    /// </summary>
+    private void TryRepublishAssignment(PassMember member, string clusterId, string realm)
+    {
+        if (options.RepublishIntervalPasses <= 0) return;
+
+        ref PeerClusterState state = ref peerStates[member.Peer.Value];
+
+        if (state.PublishedClusterId is null
+            || !string.Equals(state.PublishedClusterId, clusterId, StringComparison.Ordinal)
+            || !string.Equals(state.PublishedRealm, realm, StringComparison.Ordinal))
+            return;
+
+        if (passNumber - state.LastPublishedPass < options.RepublishIntervalPasses) return;
+
+        state.LastPublishedPass = passNumber;
+
+        // SessionFor names no displacement here: a settled peer's retained ledger entry holds its own
+        // session, so the refresh carries the session and nothing else.
+        feedPublisher.PublishClusterRefresh(member.Wallet, clusterId, realm, SessionFor(member));
+
+        PulseMetrics.Clusters.REPUBLISHES.Add(1);
     }
 
     /// <summary>
@@ -680,6 +715,7 @@ public sealed class ClusterTracker : BackgroundService
 
         state.PublishedClusterId = clusterId;
         state.PublishedRealm = realm;
+        state.LastPublishedPass = passNumber;
         state.CandidateClusterId = null;
         state.CandidateStreak = 0;
 
@@ -873,6 +909,10 @@ public sealed class ClusterTracker : BackgroundService
 
         // Pass this slot was last collected in. Zero means never, or forgotten since.
         public long LastSeenPass;
+
+        // Pass this slot's assignment was last put on the feed, by a change or a refresh. Drives
+        // the re-publish sweep; meaningless while PublishedClusterId is null.
+        public long LastPublishedPass;
     }
 
     /// <summary>

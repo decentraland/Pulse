@@ -34,7 +34,8 @@ public sealed partial class ClusterTracker
 
     /// <summary>
     ///     The single presence exit choke point (C1.2): one <c>parcel</c>-absent entry for a peer that
-    ///     had a published presence, nothing for one that never did. Called from a peer worker.
+    ///     had a published presence, nothing for one that never did. Called from a peer worker, so it
+    ///     is lock-free — it raises a flag and returns.
     ///     <para />
     ///     Wallet-scoped (A1) — the entry goes out only once no live peer is bound to the wallet. A
     ///     duplicate-session kick rebinds the wallet to the incoming peer long before this runs, so

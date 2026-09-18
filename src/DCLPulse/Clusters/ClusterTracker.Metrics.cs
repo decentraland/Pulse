@@ -5,8 +5,7 @@ using System.Diagnostics.Metrics;
 namespace Pulse.Clusters;
 
 /// <summary>
-///     What one pass reports to <see cref="PulseMetrics.Clusters" />: its cost and outcome, plus the
-///     cluster-size distribution read off the components it built.
+///     What one pass reports to <see cref="PulseMetrics.Clusters" />: its cost and outcome.
 /// </summary>
 public sealed partial class ClusterTracker
 {

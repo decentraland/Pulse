@@ -1,0 +1,23 @@
+{
+  "request": "GET /realms/main/parcels",
+  "status": 200,
+  "body": {
+    "realm": "main",
+    "parcels": [
+      {
+        "peersCount": 2,
+        "parcel": {
+          "x": -1,
+          "y": 0
+        }
+      },
+      {
+        "peersCount": 2,
+        "parcel": {
+          "x": 147,
+          "y": -3
+        }
+      }
+    ]
+  }
+}

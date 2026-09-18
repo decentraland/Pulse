@@ -17,7 +17,7 @@ Two debugging paths are supported: **local** (docker-compose) and **remote** (EC
 | Port | Protocol | Purpose |
 |---|---|---|
 | 7777 | UDP | ENet game traffic |
-| 5000 | TCP | HTTP `/health` + `/metrics` (Prometheus) |
+| 5000 | TCP | HTTP — the stats surface (`/realms`, `/peers`, `/status`, `/about`, `/health`; see [openapi.yaml](openapi.yaml)) plus `/metrics` (Prometheus, bearer token) |
 | 2222 | TCP | SSH for Rider remote debugger (debug images only) |
 
 ## Remote debugging (Fargate dev)

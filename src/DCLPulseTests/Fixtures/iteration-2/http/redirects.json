@@ -1,0 +1,75 @@
+{
+  "rule": "Legacy unscoped paths (and their /comms/ copies) answer 308 with Location under /realms/main/…, preserving the query string. Exceptions handled directly (all realms): /peers and /comms/peers with an `id` or `all` query parameter (peers-by-id.json / peers-all.json), and /peers/:id and /comms/peers/:id (peers-single.json).",
+  "cases": [
+    {
+      "path": "/peers",
+      "status": 308,
+      "location": "/realms/main/peers"
+    },
+    {
+      "path": "/parcels",
+      "status": 308,
+      "location": "/realms/main/parcels"
+    },
+    {
+      "path": "/islands",
+      "status": 308,
+      "location": "/realms/main/islands"
+    },
+    {
+      "path": "/islands/C1",
+      "status": 308,
+      "location": "/realms/main/islands/C1"
+    },
+    {
+      "path": "/comms/peers",
+      "status": 308,
+      "location": "/realms/main/peers"
+    },
+    {
+      "path": "/comms/parcels",
+      "status": 308,
+      "location": "/realms/main/parcels"
+    },
+    {
+      "path": "/comms/islands",
+      "status": 308,
+      "location": "/realms/main/islands"
+    },
+    {
+      "path": "/comms/islands/C1",
+      "status": 308,
+      "location": "/realms/main/islands/C1"
+    },
+    {
+      "path": "/peers?foo=bar",
+      "status": 308,
+      "location": "/realms/main/peers?foo=bar"
+    },
+    {
+      "path": "/comms/peers?id=0x0000000000000000000000000000000000000001",
+      "status": 200,
+      "golden": "peers-by-id.json (same handler as /peers?id=)"
+    },
+    {
+      "path": "/comms/peers/0x0000000000000000000000000000000000000003",
+      "status": 200,
+      "golden": "peers-single.json (same handler as /peers/:id — stats served this alias; keep it live)"
+    },
+    {
+      "path": "/comms/peers/0x0000000000000000000000000000000000000009",
+      "status": 404,
+      "golden": "peers-single-404.json"
+    },
+    {
+      "path": "/peers?all=true",
+      "status": 200,
+      "golden": "peers-all.json"
+    },
+    {
+      "path": "/metrics",
+      "status": 401,
+      "note": "unchanged: bearer-token protected; every other route above is unauthenticated like /about"
+    }
+  ]
+}

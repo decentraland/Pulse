@@ -1,5 +1,6 @@
 using Pulse;
 using Pulse.FeatureFlags;
+using System.Net;
 using System.Text.Json;
 
 namespace DCLPulseTests.FeatureFlags;
@@ -95,7 +96,7 @@ public class FeatureFlagsClientTests
     [Test]
     public void FetchAsync_ErrorStatus_ThrowsHttpRequestException()
     {
-        using var endpoint = new StubFlagsEndpoint("{}", statusCode: 503);
+        using var endpoint = new StubFlagsEndpoint("{}", statusCode: HttpStatusCode.ServiceUnavailable);
         using FeatureFlagsClient client = endpoint.Client();
 
         Assert.That(

@@ -25,7 +25,8 @@ public partial class PeerSimulationTests
         var sim = new PeerSimulation(
             areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<IPeerIndexAllocator>(), simulationLogger);
+            profileBoard, Substitute.For<IPeerIndexAllocator>(), simulationLogger,
+            PresenceTestFactory.Disabled());
 
         // EmoteCompleter needs the subject peer to be authenticated.
         peers[subject] = new PeerState(PeerConnectionState.AUTHENTICATED);
@@ -76,7 +77,8 @@ public partial class PeerSimulationTests
         var sim = new PeerSimulation(
             areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, Substitute.For<IPeerIndexAllocator>(), simulationLogger);
+            profileBoard, Substitute.For<IPeerIndexAllocator>(), simulationLogger,
+            PresenceTestFactory.Disabled());
 
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
 

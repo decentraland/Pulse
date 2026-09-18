@@ -53,7 +53,8 @@ public class DrainPeerLifeCycleEventsTests
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
             })),
-            DisabledIpLimiter());
+            DisabledIpLimiter(),
+            PresenceTestFactory.Disabled());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();

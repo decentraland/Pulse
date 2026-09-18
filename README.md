@@ -98,6 +98,53 @@ Two knobs control concurrent-peer capacity:
 
 Rule of thumb: `MaxConcurrentConnections ≈ MaxPeers - ceil(peakDisconnectsPerSecond × Peers.DisconnectionCleanTimeoutMs / 1000)`.
 
+## HTTP surface
+
+Port 5000 by default (`HttpService:Port`). Everything except `/metrics` is unauthenticated — this
+surface says who is standing where, which every client in a realm learns from the comms feed anyway.
+
+| Route | What |
+|---|---|
+| `GET /realms` | every realm with at least one peer, plus its peer and cluster counts |
+| `GET /realms/{realm}/peers` | peers in one realm — wallet, parcel, world position, `lastPing` |
+| `GET /realms/{realm}/parcels` | occupied parcels with peer counts, busiest first |
+| `GET /realms/{realm}/islands`, `…/islands/{id}` | the clustering pass's groups, in archipelago's island shape |
+| `GET /peers?id=0x…&id=0x…`, `GET /peers?all=true`, `GET /peers/{id}` | all-realms wallet lookups (also under `/comms/`) |
+| `GET /status` | version, this server's clock, per-realm peer counts |
+| `GET /about`, `GET /health` | commit hash + user count · liveness |
+| `GET /metrics` | Prometheus, bearer token (`WKC_METRICS_BEARER_TOKEN`) |
+
+Realm segments match case-insensitively and responses carry the canonical lowercase name; a realm
+nobody is in is an empty realm (200, empty list), never a 404. The unscoped archipelago-stats paths
+(`/peers`, `/parcels`, `/islands`, `/islands/:id`, and their `/comms/`-prefixed copies) answer
+`308 Location: /realms/main/…`, preserving the query string — except the two all-realms lookups,
+which are answered where they stand: `/peers` with an `id` or `all` parameter, and `/peers/:id`.
+Both of those are served under `/comms/` too — `/comms/peers/:id` is the same handler as
+`/peers/:id`, down to the `{"ok":false,"peer":null}` 404 body, because archipelago-stats answered
+that alias with a live 200. The prefix is accepted on those five paths only; `/comms/` anything
+else is a 404.
+
+Full reference, including shapes and the normative ordering: [docs/openapi.yaml](docs/openapi.yaml).
+
+## NATS output
+
+Nothing is published unless `Nats:Url` is set; with no broker configured Pulse runs stats-only.
+
+| Subject | Message | When |
+|---|---|---|
+| `engine.parcel_changes` | `decentraland.pulse.ParcelChangesBatch` | every `Presence:BatchIntervalMs` (2 s), plus a full snapshot on start and on reconnect, every `Presence:SnapshotIntervalMs` (60 s), and after an outbox eviction |
+| `peer.{addr}.cluster_change` | `decentraland.pulse.PeerClusterChange` | per published cluster assignment change |
+| `engine.islands` | `kernel.comms.v3.IslandStatusMessage` | per clustering pass |
+| `engine.discovery` | `kernel.comms.v3.ServiceDiscoveryMessage` | timer, default 10 s |
+
+`engine.parcel_changes` is the platform's presence feed — the guarantees it holds, the consumer rule
+for `seq` gaps and snapshots, and its configuration and metrics are in
+[docs/presence-feed.md](docs/presence-feed.md). Every batch is stamped with `Nats:ServerName`, which
+**must be unique per replica**: consumers replace their whole presence state per `server_name`. It
+defaults to `pulse-<hostname>`, so a deployment on default Kubernetes networking gets that for
+free — but the default is unique per *host*, so a deployment with `hostNetwork: true`, a fixed
+`spec.hostname`, or several Pulse processes per machine has to set it explicitly.
+
 ## Metrics & Dashboard
 
 Pulse includes a real-time terminal dashboard for monitoring transport throughput, queue backpressure, and per-message-type rates during development. Enable it with `"Dashboard": { "Enabled": true }` in `appsettings.json`.

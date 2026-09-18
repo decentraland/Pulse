@@ -16,6 +16,10 @@ namespace Pulse.Messaging.Hardening;
 ///     <see cref="DisconnectReason" /> and the method returns <c>false</c>.
 ///     <para />
 ///     Invoked on the owning worker thread; stateless beyond injected dependencies.
+///     <para />
+///     One deliberate mutation: every realm off the wire is rewritten in place to its canonical
+///     lowercase form (<see cref="CanonicalName" />) as it is validated, which is what makes one
+///     realm one partition however the client spelled it (iteration-2 C1.5).
 /// </summary>
 public sealed class FieldValidator(
     IOptions<FieldValidatorOptions> options,
@@ -102,6 +106,9 @@ public sealed class FieldValidator(
         if (string.IsNullOrEmpty(initial.Realm))
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
+        initial.Realm = CanonicalName.Of(initial.Realm);
+
+        // Before the length check: lowercasing can lengthen a string, and the cap bounds what is kept.
         if (maxRealmLength > 0 && initial.Realm.Length > maxRealmLength)
             return Reject(from, state, DisconnectReason.INVALID_HANDSHAKE_FIELD);
 
@@ -112,6 +119,8 @@ public sealed class FieldValidator(
     {
         if (string.IsNullOrEmpty(request.Realm))
             return Reject(from, state, DisconnectReason.INVALID_TELEPORT_FIELD);
+
+        request.Realm = CanonicalName.Of(request.Realm);
 
         if (maxRealmLength > 0 && request.Realm.Length > maxRealmLength)
             return Reject(from, state, DisconnectReason.INVALID_TELEPORT_FIELD);
@@ -176,6 +185,10 @@ public sealed class FieldValidator(
         {
             if (string.IsNullOrEmpty(realmAoi.Realm))
                 return Reject(from, state, reason);
+
+            // The announced realm is probed against RealmSpatialGrids, whose keys are the lowercase
+            // names players are placed under, so "CozyFarm.dcl.eth" would otherwise observe nobody.
+            realmAoi.Realm = CanonicalName.Of(realmAoi.Realm);
 
             if (maxRealmLength > 0 && realmAoi.Realm.Length > maxRealmLength)
                 return Reject(from, state, reason);

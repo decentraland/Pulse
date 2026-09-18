@@ -139,6 +139,25 @@ public class HandshakeHandlerTests
             "Seed must carry the client-asserted realm so AoI can place the peer immediately on reconnect.");
     }
 
+    /// <summary>
+    ///     The second realm ingest point (the first is <c>TeleportRequest</c>): a seed realm is
+    ///     canonicalized to lowercase before it reaches the snapshot ring and the spatial grid, so
+    ///     one realm is one partition however the client spelled it (iteration-2 C1.5).
+    /// </summary>
+    [Test]
+    public void Handle_MixedCaseRealmInInitialState_SeedsTheLowercaseRealm()
+    {
+        PlayerInitialState initial = CreateInitialState(parcelIndex: 0, realm: "CozyFarm.dcl");
+
+        handler.Handle(peers, peer, BuildHandshake(initial));
+
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+        Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+        Assert.That(snapshot.Realm, Is.EqualTo("cozyfarm.dcl"));
+        Assert.That(realmGrids.PeersAt("cozyfarm.dcl", snapshot.GlobalPosition), Does.Contain(peer));
+        Assert.That(realmGrids.PeersAt("CozyFarm.dcl", snapshot.GlobalPosition), Is.Null);
+    }
+
     [Test]
     public void Handle_EmptyRealmInInitialState_RejectsHandshake()
     {
@@ -272,6 +291,23 @@ public class HandshakeHandlerTests
         // A third handshake with W must still detect N as the duplicate session and evict it.
         handler.Handle(peers, peerT, BuildHandshake(initialState: null));
         transport.Received(1).Disconnect(peerN, DisconnectReason.DUPLICATE_SESSION);
+    }
+
+    /// <summary>
+    ///     The auth boundary is the one place checksum casing is stripped, and everything downstream
+    ///     leans on it: realm and address are compared Ordinal and go on the wire lowercase (C1.5).
+    /// </summary>
+    [Test]
+    public void Handle_ChecksummedWallet_IsStoredLowercase()
+    {
+        const string CHECKSUMMED = "0xAbC0000000000000000000000000000000000001";
+
+        handler.Handle(peers, peer, BuildHandshake(initialState: null, wallet: CHECKSUMMED));
+
+        Assert.That(peers[peer].ConnectionState, Is.EqualTo(PeerConnectionState.AUTHENTICATED));
+
+        // Ordinal, not IgnoreCase: the point is the stored form, not that it matches case-insensitively.
+        Assert.That(identityBoard.GetWalletIdByPeerIndex(peer), Is.EqualTo(WALLET));
     }
 
     [Test]

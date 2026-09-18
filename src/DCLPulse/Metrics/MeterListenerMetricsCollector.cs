@@ -111,6 +111,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long clusterPasses;
     private long clusterPassDurationUs;
     private long clusterReassignments;
+    private long clusterRepublishes;
     private long clusterTakeovers;
     private long natsPublished;
     private long natsPublishFailed;
@@ -223,6 +224,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalPasses = Interlocked.Read(ref clusterPasses),
                 TotalPassDurationUs = Interlocked.Read(ref clusterPassDurationUs),
                 TotalReassignments = Interlocked.Read(ref clusterReassignments),
+                TotalRepublishes = Interlocked.Read(ref clusterRepublishes),
                 TotalTakeovers = Interlocked.Read(ref clusterTakeovers),
                 TotalNatsPublished = Interlocked.Read(ref natsPublished),
                 TotalNatsPublishFailed = Interlocked.Read(ref natsPublishFailed),
@@ -340,6 +342,10 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
             case "pulse.clusters.reassignments":
                 Interlocked.Add(ref clusterReassignments, value);
                 break;
+            case "pulse.clusters.republishes":
+                Interlocked.Add(ref clusterRepublishes, value);
+                break;
+
             case "pulse.clusters.takeovers":
                 Interlocked.Add(ref clusterTakeovers, value);
                 break;

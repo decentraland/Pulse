@@ -177,10 +177,24 @@ public sealed class ClusterTracker : BackgroundService
         feedPublisher.PublishTopology(pass);
 
         int reassignments = PublishAssignmentChanges();
+        PublishRecoveryAssignments();
         ForgetVanishedPeers();
         ForgetExpiredSessions();
 
         RecordPassMetrics(startTicks, pass.Clusters.Count, reassignments);
+    }
+
+    private void PublishRecoveryAssignments()
+    {
+        var assignments = new Dictionary<string, ClusterAssignment>(members.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (PassMember member in members)
+        {
+            ref PeerClusterState state = ref peerStates[member.Peer.Value];
+            if (state.PublishedClusterId is { } clusterId && state.PublishedRealm is { } realm)
+                assignments[member.Wallet] = new ClusterAssignment(clusterId, realm, member.Session);
+        }
+
+        clusterBoard.PublishAssignments(assignments);
     }
 
     private void RecordPassMetrics(long startTicks, int clusterCount, int reassignments)

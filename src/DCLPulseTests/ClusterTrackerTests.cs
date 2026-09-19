@@ -998,6 +998,65 @@ public class ClusterTrackerTests
         Assert.That(afterTakeover.Clusters.TotalTakeovers - before.Clusters.TotalTakeovers, Is.EqualTo(1));
     }
 
+    [Test]
+    public void RecoveryAssignments_StayAvailableWithoutRepublishingChanges()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        for (var pass = 0; pass < 3601; pass++) tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments[WALLET], Is.EqualTo(new ClusterAssignment("C1", REALM, SESSION_A)));
+        feedPublisher.DidNotReceive().PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
+    }
+
+    [Test]
+    public void RecoveryAssignments_ExcludeDepartedSessionsDespiteTakeoverRetention()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> previous = clusterBoard.Assignments;
+        RemovePeer(new PeerIndex(0));
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Is.Empty);
+        Assert.That(previous[WALLET].Session, Is.EqualTo(SESSION_A), "published snapshots are immutable");
+    }
+
+    [Test]
+    public void RecoveryAssignments_ExposeOnlyPostDebounceRoom()
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        string oldRoom = clusterBoard.Assignments["0xwallet2"].ClusterId;
+        MovePeer(new PeerIndex(2), new Vector3(500, 0, 500));
+        tracker.RunPass();
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(oldRoom));
+        tracker.RunPass();
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(oldRoom));
+        tracker.RunPass();
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(2))));
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.Not.EqualTo(oldRoom));
+    }
+
+    [Test]
+    public void RecoveryAssignments_ExcludeOutgoingSessionStillInGrid()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        SetupPeer(new PeerIndex(1), new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Has.Count.EqualTo(1));
+        Assert.That(clusterBoard.Assignments[WALLET].Session, Is.EqualTo(SESSION_B));
+        Assert.That(clusterBoard.Assignments[WALLET].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(1))));
+    }
+
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300)
     {
         // Options.Create rather than a substitute: IOptions<T> has a real, trivial implementation, and

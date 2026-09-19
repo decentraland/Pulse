@@ -35,6 +35,9 @@ public sealed class NatsOptions
     /// </summary>
     public int DiscoveryIntervalMs { get; set; } = 10_000;
 
+    /// <summary>Cadence of session-addressed recovery hints; non-positive values disable periodic hints.</summary>
+    public int AssignmentRefreshIntervalMs { get; set; } = 30_000;
+
     /// <summary>
     ///     Maximum number of distinct peers with an undelivered assignment. Past the bound the
     ///     longest-admitted peer is evicted, which is the only thing

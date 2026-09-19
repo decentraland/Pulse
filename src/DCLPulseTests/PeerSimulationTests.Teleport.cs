@@ -46,6 +46,7 @@ public partial class PeerSimulationTests
     [Test]
     public void Teleport_CarriesRealm()
     {
+        snapshotBoard.Publish(observer, TestSnapshots.Make(seq: 1, realm: "crossgate"));
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 1, realm: "crossgate"));
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);

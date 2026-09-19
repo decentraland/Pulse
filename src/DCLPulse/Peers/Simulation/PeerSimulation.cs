@@ -43,10 +43,6 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     internal readonly Dictionary<PeerIndex, Dictionary<PeerIndex, PeerToPeerView>> observerViews = new ();
 
-    // Visibility identities belong to the observer's realm. Clients discard them when
-    // changing realms even if the same subject is immediately visible at the destination.
-    private readonly Dictionary<PeerIndex, ulong> observerRealmGenerations = new ();
-
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
     private readonly RealmSpatialGrids realmGrids;
@@ -180,7 +176,6 @@ public sealed class PeerSimulation : IPeerSimulation
     public void RemoveObserver(PeerIndex observerId)
     {
         observerViews.Remove(observerId);
-        observerRealmGenerations.Remove(observerId);
     }
 
     // ── Per-observer simulation paths ───────────────────────────────
@@ -203,25 +198,23 @@ public sealed class PeerSimulation : IPeerSimulation
 
         AddSelfMirror(observerId, in observerSnapshot);
 
-        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false);
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false, observerSnapshot.Realm);
     }
 
     private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState, ulong realmGeneration)
     {
-        if (observerRealmGenerations.TryGetValue(observerId, out ulong previousGeneration)
-            && previousGeneration != realmGeneration
+        if (observerState.LastObservedRealmGeneration != realmGeneration
             && observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
             // Retire old identities before reseeding any destination peers, including a
             // return to the same realm after multiple transitions between simulation ticks.
             foreach (PeerIndex subjectId in views.Keys)
-                SendPlayerLeft(observerId, subjectId);
+                SendPlayerLeft(observerId, subjectId, "observer realm changed");
 
             views.Clear();
-            observerState.ResyncRequests?.Clear();
         }
 
-        observerRealmGenerations[observerId] = realmGeneration;
+        observerState.LastObservedRealmGeneration = realmGeneration;
     }
 
     /// <summary>
@@ -247,7 +240,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     requests (AoI enforcement — see <see cref="Messaging.ResyncRequestHandler" />), and
     ///     periodically sweep views whose subjects left the interest set.
     /// </summary>
-    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly)
+    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly, string? observerRealm = null)
     {
         if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
@@ -257,7 +250,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
-        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly);
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly, observerRealm);
 
         observerState.ResyncRequests?.Clear();
 
@@ -339,7 +332,8 @@ public sealed class PeerSimulation : IPeerSimulation
         Dictionary<PeerIndex, PeerToPeerView> views,
         Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter,
-        bool positionalOnly)
+        bool positionalOnly,
+        string? observerRealm)
     {
         for (var i = 0; i < collector.Count; i++)
         {
@@ -388,6 +382,9 @@ public sealed class PeerSimulation : IPeerSimulation
             if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot latestSnapshot))
                 continue;
 
+            if (!positionalOnly && RejectSubjectOutsideObserverRealm(observerId, entry.Subject, views, latestSnapshot.Realm, observerRealm))
+                continue;
+
             if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, view, latestSnapshot))
                 isNew = true;
 
@@ -411,22 +408,38 @@ public sealed class PeerSimulation : IPeerSimulation
         }
     }
 
+    private bool RejectSubjectOutsideObserverRealm(PeerIndex observerId, PeerIndex subjectId,
+        Dictionary<PeerIndex, PeerToPeerView> views, string? subjectRealm, string? observerRealm)
+    {
+        if (string.Equals(subjectRealm, observerRealm, StringComparison.Ordinal))
+            return false;
+
+        // A subject can change realm on another worker after interest collection. Retire
+        // an existing view once; never announce an out-of-realm snapshot as a new subject.
+        if (views.Remove(subjectId))
+            SendPlayerLeft(observerId, subjectId, "subject outside observer realm");
+
+        return true;
+    }
+
     private bool RetireChangedSubjectRealm(PeerIndex observerId, PeerIndex subjectId,
         PeerToPeerView view, PeerSnapshot latestSnapshot)
     {
         if (view.LastSentSnapshot.RealmGeneration == latestSnapshot.RealmGeneration)
             return false;
 
-        SendPlayerLeft(observerId, subjectId);
+        SendPlayerLeft(observerId, subjectId, "subject realm changed");
         return true;
     }
 
-    private void SendPlayerLeft(PeerIndex observerId, PeerIndex subjectId)
+    private void SendPlayerLeft(PeerIndex observerId, PeerIndex subjectId, string reason)
     {
         messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
         {
             PlayerLeft = new PlayerLeft { SubjectId = subjectId },
         }, PacketMode.RELIABLE));
+
+        logger.LogInformation("Sending PlayerLeft for subject {Subject} to observer {Observer} ({Reason})", subjectId, observerId, reason);
     }
 
     /// <summary>
@@ -450,10 +463,7 @@ public sealed class PeerSimulation : IPeerSimulation
         if (string.Equals(view.LastSentWalletId, currentWallet, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
-        {
-            PlayerLeft = new PlayerLeft { SubjectId = subjectId },
-        }, PacketMode.RELIABLE));
+        SendPlayerLeft(observerId, subjectId, "peer index aliased");
 
         logger.LogWarning(
             "PeerIndex {Subject} aliased (view held '{OldWallet}', board now '{NewWallet}') — observer {Observer} notified",
@@ -977,12 +987,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         foreach (PeerIndex id in sweepBuffer)
         {
-            messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
-            {
-                PlayerLeft = new PlayerLeft { SubjectId = id },
-            }, PacketMode.RELIABLE));
-
-            logger.LogInformation("Sending PlayerLeft for subject {Subject} to observer {Observer} (stale view swept)", id, observerId);
+            SendPlayerLeft(observerId, id, "stale view swept");
 
             views.Remove(id);
         }

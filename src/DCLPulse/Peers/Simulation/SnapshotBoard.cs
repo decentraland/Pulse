@@ -60,9 +60,7 @@ public sealed class SnapshotBoard
     ///     inherits the previous snapshot's realm so AoI lookups read the latest ring slot and
     ///     never see a null realm after the peer has been placed in one once.
     ///     <para />
-    ///     Returns the snapshot as stored, with both ledger columns resolved. Callers that need the
-    ///     inherited values — placing the peer in its realm's spatial grid, for one — read them from
-    ///     the result instead of paying for a second read of the slot they just wrote.
+    ///     Returns the stored snapshot with its emote, realm and realm generation resolved.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PeerSnapshot Publish(PeerIndex id, in PeerSnapshot snapshot)
@@ -136,7 +134,10 @@ public sealed class SnapshotBoard
     private ulong ResolveRealmGeneration(int index, string? realm)
     {
         uint lastSeq = lastSeqs[index];
-        PeerSnapshot previous = lastSeq == uint.MaxValue ? default : rings[index][lastSeq % ringCapacity];
+        if (lastSeq == uint.MaxValue)
+            return realm == null ? 0ul : 1ul;
+
+        ref readonly PeerSnapshot previous = ref rings[index][lastSeq % ringCapacity];
         return realm != null && !string.Equals(previous.Realm, realm, StringComparison.Ordinal)
             ? unchecked(previous.RealmGeneration + 1)
             : previous.RealmGeneration;

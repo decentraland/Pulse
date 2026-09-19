@@ -156,6 +156,7 @@ public partial class PeerSimulationTests
         }));
         Assert.That(messages[1].Message.PlayerJoined.Realm, Is.EqualTo("new"));
     }
+
     [TestCase(false, 0)]
     [TestCase(true, 0)]
     [TestCase(false, RING_CAPACITY * 2)]
@@ -294,5 +295,4 @@ public partial class PeerSimulationTests
             }
         }
     }
-
 }

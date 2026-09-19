@@ -74,6 +74,7 @@ public sealed class SnapshotBoard
         {
             Emote = snapshot.Emote ?? InheritEmoteState(index),
             Realm = snapshot.Realm ?? InheritRealm(index),
+            RealmGeneration = ResolveRealmGeneration(index, snapshot.Realm),
         };
 
         // Increment to odd (write in progress)
@@ -125,6 +126,20 @@ public sealed class SnapshotBoard
             return null;
 
         return rings[index][lastSeq % ringCapacity].Realm;
+    }
+
+    /// <summary>
+    ///     Advances the lifecycle only for an explicit change of realm. The generation is
+    ///     derived from the prior ledger, never from the incoming snapshot's field, and is
+    ///     preserved even after every snapshot containing the transition has been overwritten.
+    /// </summary>
+    private ulong ResolveRealmGeneration(int index, string? realm)
+    {
+        uint lastSeq = lastSeqs[index];
+        PeerSnapshot previous = lastSeq == uint.MaxValue ? default : rings[index][lastSeq % ringCapacity];
+        return realm != null && !string.Equals(previous.Realm, realm, StringComparison.Ordinal)
+            ? unchecked(previous.RealmGeneration + 1)
+            : previous.RealmGeneration;
     }
 
     /// <summary>

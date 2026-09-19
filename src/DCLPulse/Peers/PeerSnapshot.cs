@@ -97,5 +97,9 @@ public record struct PeerSnapshot(
     // Realm — non-null means this snapshot explicitly sets the realm (TeleportHandler). Null on
     // non-teleport publishes; the SnapshotBoard inherits the prior snapshot's realm so the latest
     // ring slot is always self-sufficient for AoI partitioning.
-    string? Realm = null
+    string? Realm = null,
+
+    // Server-only realm lifecycle generation, assigned by SnapshotBoard.Publish. Carried on
+    // every snapshot so multiple realm transitions survive ring wrap and return-to-origin.
+    ulong RealmGeneration = 0
 );

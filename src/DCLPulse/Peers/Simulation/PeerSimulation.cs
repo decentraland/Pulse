@@ -45,7 +45,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
     // Visibility identities belong to the observer's realm. Clients discard them when
     // changing realms even if the same subject is immediately visible at the destination.
-    private readonly Dictionary<PeerIndex, string?> observerRealms = new ();
+    private readonly Dictionary<PeerIndex, ulong> observerRealmGenerations = new ();
 
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
@@ -180,7 +180,7 @@ public sealed class PeerSimulation : IPeerSimulation
     public void RemoveObserver(PeerIndex observerId)
     {
         observerViews.Remove(observerId);
-        observerRealms.Remove(observerId);
+        observerRealmGenerations.Remove(observerId);
     }
 
     // ── Per-observer simulation paths ───────────────────────────────
@@ -196,20 +196,7 @@ public sealed class PeerSimulation : IPeerSimulation
         if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
             return;
 
-        if (observerRealms.TryGetValue(observerId, out string? previousRealm)
-            && !string.Equals(previousRealm, observerSnapshot.Realm, StringComparison.Ordinal)
-            && observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
-        {
-            // Retire old identities before reseeding any destination peers. Do not wait
-            // for stale-view eviction: co-teleporting peers can remain visible forever.
-            foreach (PeerIndex subjectId in views.Keys)
-                SendPlayerLeft(observerId, subjectId);
-
-            views.Clear();
-            observerState.ResyncRequests?.Clear();
-        }
-
-        observerRealms[observerId] = observerSnapshot.Realm;
+        ResetObserverRealmViews(observerId, observerState, observerSnapshot.RealmGeneration);
 
         collector.Clear();
         areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
@@ -217,6 +204,24 @@ public sealed class PeerSimulation : IPeerSimulation
         AddSelfMirror(observerId, in observerSnapshot);
 
         ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false);
+    }
+
+    private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState, ulong realmGeneration)
+    {
+        if (observerRealmGenerations.TryGetValue(observerId, out ulong previousGeneration)
+            && previousGeneration != realmGeneration
+            && observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
+        {
+            // Retire old identities before reseeding any destination peers, including a
+            // return to the same realm after multiple transitions between simulation ticks.
+            foreach (PeerIndex subjectId in views.Keys)
+                SendPlayerLeft(observerId, subjectId);
+
+            views.Clear();
+            observerState.ResyncRequests?.Clear();
+        }
+
+        observerRealmGenerations[observerId] = realmGeneration;
     }
 
     /// <summary>
@@ -383,12 +388,8 @@ public sealed class PeerSimulation : IPeerSimulation
             if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot latestSnapshot))
                 continue;
 
-            if (!isNew && !string.Equals(view.LastSentSnapshot.Realm, latestSnapshot.Realm, StringComparison.Ordinal))
-            {
-                // Also reseed multi-realm listeners when a retained subject changes realm.
-                SendPlayerLeft(observerId, entry.Subject);
+            if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, view, latestSnapshot))
                 isNew = true;
-            }
 
             if (isNew)
             {
@@ -408,6 +409,16 @@ public sealed class PeerSimulation : IPeerSimulation
             view.LastSeenTick = tickCounter;
             views[entry.Subject] = view;
         }
+    }
+
+    private bool RetireChangedSubjectRealm(PeerIndex observerId, PeerIndex subjectId,
+        PeerToPeerView view, PeerSnapshot latestSnapshot)
+    {
+        if (view.LastSentSnapshot.RealmGeneration == latestSnapshot.RealmGeneration)
+            return false;
+
+        SendPlayerLeft(observerId, subjectId);
+        return true;
     }
 
     private void SendPlayerLeft(PeerIndex observerId, PeerIndex subjectId)

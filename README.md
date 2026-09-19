@@ -158,6 +158,9 @@ The test client stays a client — it holds no broker connection and never publi
 
 See [docs/e2e-livekit.md](docs/e2e-livekit.md) for prerequisites, the bridge modes, and how to read a failure.
 
+See [cluster assignment recovery](docs/cluster-assignment-recovery.md) for the NATS lookup and
+periodic recovery contract, deployment order, and broker-test setup.
+
 ### What the bot does
 
 On startup each bot authenticates via MetaForge, connects over ENet, completes the handshake, announces its profile, then enters a 30 fps simulation loop.

@@ -68,12 +68,26 @@ public sealed class ClusterPass(
 public sealed class ClusterBoard
 {
     private ClusterPass current = ClusterPass.EMPTY;
+    private IReadOnlyDictionary<string, ClusterAssignment> assignments = new Dictionary<string, ClusterAssignment>();
 
     public ClusterPass Current =>
         Volatile.Read(ref current);
+
+    /// <summary>Active, post-debounce assignments from the last completed tracker pass.</summary>
+    public IReadOnlyDictionary<string, ClusterAssignment> Assignments =>
+        Volatile.Read(ref assignments);
+
+    /// <summary>Atomically replaces the assignment snapshot; the supplied map must never be mutated again.</summary>
+    internal void PublishAssignments(IReadOnlyDictionary<string, ClusterAssignment> snapshot)
+    {
+        Volatile.Write(ref assignments, snapshot);
+    }
 
     public void Publish(ClusterPass pass)
     {
         Volatile.Write(ref current, pass);
     }
 }
+
+/// <summary>An active session's published assignment, independent of the retained takeover ledger.</summary>
+public readonly record struct ClusterAssignment(string ClusterId, string Realm, string Session);

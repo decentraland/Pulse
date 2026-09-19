@@ -16,7 +16,7 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Sole owner of Pulse's NATS connection and the only component that talks to the broker.
-///     Publish-only and fail-soft: producers hand messages to a coalescing outbox and never block, so
+///     Fail-soft: producers hand messages to a coalescing outbox and never block, so
 ///     a slow, stalled or absent broker can delay the feed but never a tracker pass.
 ///     <para />
 ///     The outbox keeps the two feeds apart because they supersede differently.
@@ -87,6 +87,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     private readonly NatsOptions options;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly ClusterBoard clusterBoard;
     private readonly bool feedEnabled;
 
     // Outbox. Every access runs under outboxLock, and all three callers mutate: the tracker thread
@@ -145,12 +146,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         ILogger<NatsPublisher> logger,
         ILoggerFactory loggerFactory,
         IOptions<NatsOptions> options,
-        SnapshotBoard snapshotBoard)
+        SnapshotBoard snapshotBoard,
+        ClusterBoard clusterBoard)
     {
         this.logger = logger;
         this.loggerFactory = loggerFactory;
         this.options = options.Value;
         this.snapshotBoard = snapshotBoard;
+        this.clusterBoard = clusterBoard;
 
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
@@ -392,6 +395,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             {
                 superseded = true;
 
+                // A room change for the replacement session must not erase a takeover that
+                // has not left the outbox yet. Never carry cleanup across another takeover.
+                if (change.Session == previous.Session && change.DisplacedSession.Length == 0)
+                {
+                    change.DisplacedSession = previous.DisplacedSession;
+                    change.DisplacedClusterId = previous.DisplacedClusterId;
+                }
+
                 // Replaced and returned in one step, so the free list cannot hold an instance the
                 // outbox still names.
                 pendingChangeBySubject[subject] = change;
@@ -552,7 +563,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Owns one connection and the two loops that use it, for as long as they stay healthy.
+    ///     Owns one connection and its publishing and assignment-response loops while healthy.
     ///     Returns only on shutdown; any other exit propagates to the supervision loop, which rebuilds.
     /// </summary>
     private async Task RunConnectionAsync(Channel<byte> signal, bool heartbeatEnabled, CancellationToken stoppingToken)
@@ -573,7 +584,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             // unlimited retries (MaxReconnectRetry -1) with 2–5 s backoff plus jitter.
             //
             // The one default worth overriding: the client normally gives up permanently once the
-            // server returns the same auth error twice. For a publish-only feed that would turn a
+            // server returns the same auth error twice. For this background feed that would turn a
             // rotated credential into a silently dead feed recoverable only by restarting Pulse, so
             // it keeps retrying instead and surfaces the state through dcl_pulse_nats_connected.
             IgnoreAuthErrorAbort = true,
@@ -593,6 +604,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             await Task.WhenAll(
                 DrainAsync(connection, signal, loops),
+                RespondToAssignmentRequestsAsync(connection, loops),
+                PublishAssignmentRefreshesAsync(connection, loops),
                 heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask);
         }
         finally
@@ -604,6 +617,93 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             // Pairs the gauge before the next iteration builds a fresh connection, so a rebuild
             // cannot leave dcl_pulse_nats_connected stuck at 1.
             MarkDisconnected();
+        }
+    }
+
+    /// <summary>Returns an existing assignment only for the requested active session; empty requests support legacy peers.</summary>
+    internal PeerClusterChange ResolveAssignment(string subject, ReadOnlySpan<byte> data)
+    {
+        string[] parts = subject.Split('.');
+        if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "cluster_assignment"
+            || !IsAddress(parts[1]) || (data.Length != 0 && data.Length != 42))
+            return new PeerClusterChange();
+
+        string session = Encoding.UTF8.GetString(data);
+        if (session.Length != 0 && !IsAddress(session)) return new PeerClusterChange();
+        if (!clusterBoard.Assignments.TryGetValue(parts[1], out ClusterAssignment assignment)
+            || (session.Length != 0 && !string.Equals(session, assignment.Session, StringComparison.OrdinalIgnoreCase)))
+            return new PeerClusterChange();
+
+        return AssignmentMessage(assignment);
+    }
+
+    private static bool IsAddress(string value)
+    {
+        if (value.Length != 42 || !value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (char c in value.AsSpan(2))
+            if (!char.IsAsciiHexDigit(c)) return false;
+        return true;
+    }
+
+    private static PeerClusterChange AssignmentMessage(ClusterAssignment assignment) => new ()
+    {
+        ClusterId = assignment.ClusterId,
+        Realm = assignment.Realm,
+        Session = assignment.Session.ToLowerInvariant(),
+    };
+
+    private async Task RespondToAssignmentRequestsAsync(NatsConnection connection, CancellationTokenSource loops)
+    {
+        while (!loops.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (NatsMsg<byte[]> request in connection.SubscribeAsync<byte[]>(
+                                   "peer.*.cluster_assignment", cancellationToken: loops.Token))
+                {
+                    if (string.IsNullOrEmpty(request.ReplyTo)) continue;
+                    try
+                    {
+                        PeerClusterChange response = ResolveAssignment(request.Subject, request.Data);
+                        await request.ReplyAsync(response, serializer: SERIALIZER, cancellationToken: loops.Token);
+                    }
+                    catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+                    catch (Exception e) { logger.LogWarning(e, "Failed to answer cluster assignment request"); }
+                }
+            }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+            catch (Exception e) { logger.LogWarning(e, "Cluster assignment responder interrupted; retrying"); }
+
+            try { await Task.Delay(PIPELINE_REBUILD_BACKOFF, loops.Token); }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+        }
+    }
+
+    private async Task PublishAssignmentRefreshesAsync(NatsConnection connection, CancellationTokenSource loops)
+    {
+        if (options.AssignmentRefreshIntervalMs <= 0) return;
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(options.AssignmentRefreshIntervalMs));
+            while (await timer.WaitForNextTickAsync(loops.Token))
+            {
+                foreach ((string wallet, ClusterAssignment assignment) in clusterBoard.Assignments)
+                {
+                    try
+                    {
+                        await connection.PublishAsync($"peer.{wallet.ToLowerInvariant()}.cluster_snapshot",
+                            AssignmentMessage(assignment), serializer: SERIALIZER, cancellationToken: loops.Token);
+                    }
+                    catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+                    catch (Exception e) { logger.LogWarning(e, "Failed to publish cluster recovery hint"); }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (loops.IsCancellationRequested) { }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Cluster recovery hint loop stopped unexpectedly");
+            await loops.CancelAsync();
         }
     }
 

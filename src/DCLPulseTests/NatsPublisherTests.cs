@@ -925,6 +925,35 @@ public class NatsPublisherTests
         Assert.That(dropped.Total, Is.Zero);
     }
 
+    [Test]
+    public async Task FailedRecoveryHint_CountsAsPublishFailedAndNotAsDropped()
+    {
+        var assignments = new ClusterBoard();
+        assignments.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        {
+            ["0x1111111111111111111111111111111111111111"] = new("C1", REALM, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        });
+        using var publishFailed = new NatsCounterProbe(PulseMetrics.Nats.PUBLISH_FAILED);
+        using NatsPublisher publisher = CreatePublisher(url: UNREACHABLE_BROKER_URL,
+            discoveryIntervalMs: 0, assignmentRefreshIntervalMs: 1, assignments: assignments);
+        await publisher.StartAsync(CancellationToken.None);
+        try
+        {
+            WaitFor(() => publisher.PublishFailedCount > 0, "the recovery hint never recorded a failed publish");
+        }
+        finally
+        {
+            await publisher.StopAsync(CancellationToken.None);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(publisher.PublishedCount, Is.Zero);
+            Assert.That(publisher.DroppedCount, Is.Zero, "hints do not enter the bounded outbox");
+            Assert.That(publishFailed.Total, Is.EqualTo(publisher.PublishFailedCount));
+        });
+    }
+
     [TestCase("nats://broker.example:4222", "broker.example:4222")]
     [TestCase("nats://broker.example", "broker.example")]
     [TestCase("nats://fakeuser:fakepassword@broker.example:4222", "broker.example:4222")]
@@ -964,7 +993,9 @@ public class NatsPublisherTests
         string url,
         int channelCapacity = 1024,
         int discoveryIntervalMs = 10_000,
-        ILogger<NatsPublisher>? logger = null)
+        ILogger<NatsPublisher>? logger = null,
+        int assignmentRefreshIntervalMs = 30_000,
+        ClusterBoard? assignments = null)
     {
         var options = Substitute.For<IOptions<NatsOptions>>();
 
@@ -974,6 +1005,7 @@ public class NatsPublisherTests
             ServerName = "pulse-test",
             DiscoveryIntervalMs = discoveryIntervalMs,
             ChannelCapacity = channelCapacity,
+            AssignmentRefreshIntervalMs = assignmentRefreshIntervalMs,
         });
 
         return new NatsPublisher(
@@ -981,7 +1013,7 @@ public class NatsPublisherTests
             NullLoggerFactory.Instance,
             options,
             snapshotBoard,
-            new ClusterBoard());
+            assignments ?? new ClusterBoard());
     }
 
     /// <summary>

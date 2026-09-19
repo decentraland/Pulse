@@ -9,6 +9,41 @@ public class IdentityBoardTests
 {
     private const int MAX_PEERS = 256;
 
+    [Test]
+    public void Registration_ChangesEvenWhenTheSameSessionReusesTheSlot()
+    {
+        var board = new IdentityBoard(MAX_PEERS);
+        var peer = new PeerIndex(7);
+        board.Set(peer, "wallet", "session");
+        long before = board.GetRegistration(peer);
+        board.Remove(peer);
+        board.Set(peer, "wallet", "session");
+
+        Assert.That(board.GetRegistration(peer), Is.GreaterThan(before));
+        Assert.That(board.GetRegistration(new PeerIndex(8)), Is.Zero, "other slots are unchanged");
+    }
+
+    [Test]
+    public void IdentitySnapshot_RemainsConsistentWhenSlotIsRegisteredAgain()
+    {
+        var board = new IdentityBoard(MAX_PEERS);
+        var peer = new PeerIndex(7);
+        board.Set(peer, "first-wallet", "first-session");
+        IdentityRegistration before = board.GetIdentity(peer) ?? throw new InvalidOperationException("Expected registered identity");
+        board.Remove(peer);
+        board.Set(peer, "second-wallet", "second-session");
+        IdentityRegistration after = board.GetIdentity(peer) ?? throw new InvalidOperationException("Expected registered identity");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(before.Wallet, Is.EqualTo("first-wallet"));
+            Assert.That(before.Session, Is.EqualTo("first-session"));
+            Assert.That(after.Wallet, Is.EqualTo("second-wallet"));
+            Assert.That(after.Session, Is.EqualTo("second-session"));
+            Assert.That(after.Registration, Is.GreaterThan(before.Registration));
+        });
+    }
+
     // ── Contract tests ──────────────────────────────────────────────────
     //
     // These tests pin the wallet ↔ PeerIndex mapping contract that the upcoming

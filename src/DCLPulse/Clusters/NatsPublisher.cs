@@ -178,7 +178,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         Interlocked.Read(ref publishedCount);
 
     /// <summary>
-    ///     Publishes that threw, counted for the outbox drain and the heartbeat alike. Every one of
+    ///     Publishes that threw, including outbox, heartbeat, recovery replies and hints. Every one of
     ///     them is raised client-side — a timeout, a connect failure, an oversized payload, a subject
     ///     the client rejects — because core NATS never acknowledges a PUB, so a broker refusing one
     ///     cannot fail the call: that surfaces through <see cref="OnServerError" /> and a silent gap at
@@ -665,10 +665,19 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                     try
                     {
                         PeerClusterChange response = ResolveAssignment(request.Subject, request.Data);
+                        // Multiple Pulse processes can overlap during a deployment. An instance
+                        // that does not own this session must not race its owner with an empty
+                        // first response. No owner means the caller's bounded request times out.
+                        if (response.ClusterId.Length == 0) continue;
                         await request.ReplyAsync(response, serializer: SERIALIZER, cancellationToken: loops.Token);
+                        CountPublished();
                     }
                     catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
-                    catch (Exception e) { logger.LogWarning(e, "Failed to answer cluster assignment request"); }
+                    catch (Exception e)
+                    {
+                        CountPublishFailed();
+                        logger.LogWarning(e, "Failed to answer cluster assignment request");
+                    }
                 }
             }
             catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
@@ -693,9 +702,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                     {
                         await connection.PublishAsync($"peer.{wallet.ToLowerInvariant()}.cluster_snapshot",
                             AssignmentMessage(assignment), serializer: SERIALIZER, cancellationToken: loops.Token);
+                        CountPublished();
                     }
                     catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
-                    catch (Exception e) { logger.LogWarning(e, "Failed to publish cluster recovery hint"); }
+                    catch (Exception e)
+                    {
+                        CountPublishFailed();
+                        logger.LogWarning(e, "Failed to publish cluster recovery hint");
+                    }
                 }
             }
         }

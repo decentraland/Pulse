@@ -6,6 +6,9 @@ using Pulse.Clusters;
 using Pulse.Peers.Simulation;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Sockets;
 
 namespace DCLPulseTests;
 
@@ -48,13 +51,14 @@ public class ClusterAssignmentRecoveryIntegrationTests
         {
             Url = brokerUrl,
             Name = "recovery-test-client-" + wallet,
-            RequestTimeout = TimeSpan.FromSeconds(2),
+            RequestTimeout = TimeSpan.FromMilliseconds(500),
         });
         await client.ConnectAsync();
         await publisher.StartAsync(deadline.Token);
 
         // StartAsync schedules the service; wait for the responder itself, not merely a TCP
-        // connection. Only startup's no-responders condition is retried, bounded by the deadline.
+        // connection. Another process may already have the wildcard subscription while this
+        // owner is still starting, so both no-responders and silent misses are retried.
         while (true)
         {
             try
@@ -63,6 +67,10 @@ public class ClusterAssignmentRecoveryIntegrationTests
                 break;
             }
             catch (NatsNoRespondersException)
+            {
+                await Task.Delay(10, deadline.Token);
+            }
+            catch (NatsNoReplyException) when (!deadline.IsCancellationRequested)
             {
                 await Task.Delay(10, deadline.Token);
             }
@@ -101,11 +109,9 @@ public class ClusterAssignmentRecoveryIntegrationTests
     }
 
     [Test]
-    public async Task Request_DifferentSession_ReturnsEmptyProtobuf()
+    public void Request_DifferentSession_TimesOutWithoutReplyingForAnotherOwner()
     {
-        NatsMsg<byte[]> reply = await RequestBytesAsync(OTHER_SESSION);
-
-        Assert.That(reply.Data ?? [], Is.Empty);
+        Assert.ThrowsAsync<NatsNoReplyException>(async () => await RequestBytesAsync(OTHER_SESSION));
     }
 
     [Test]
@@ -123,14 +129,131 @@ public class ClusterAssignmentRecoveryIntegrationTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task Request_WithAnotherPublisher_OnlyMatchingOwnerResponds(bool otherHasDifferentSession)
+    {
+        string probeWallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        var otherBoard = new ClusterBoard();
+        var assignments = new Dictionary<string, ClusterAssignment>
+        {
+            [probeWallet] = new("probe", "realm-probe", SESSION),
+        };
+        if (otherHasDifferentSession)
+            assignments[wallet] = new("wrong-room", "other-realm", OTHER_SESSION);
+        otherBoard.PublishAssignments(assignments);
+        using NatsPublisher other = CreateAdditionalPublisher(otherBoard);
+        await other.StartAsync(deadline.Token);
+        try
+        {
+            // The first publisher has no probe assignment. Receiving this reply proves that
+            // both subscriptions are active without a startup timing assumption.
+            await WaitForAssignmentAsync(probeWallet);
+
+            for (var attempt = 0; attempt < 100; attempt++)
+            {
+                PeerClusterChange response = await RequestAssignmentAsync(SESSION);
+                Assert.That(response.ClusterId, Is.EqualTo("C1"));
+                Assert.That(response.Session, Is.EqualTo(SESSION));
+            }
+        }
+        finally
+        {
+            await other.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
     [Test]
-    public async Task Request_AfterPeerDeparture_ReturnsEmptyRatherThanRetainedAssignment()
+    public async Task Reply_WhenPayloadCannotBePublished_RecordsFailureAndKeepsResponding()
+    {
+        string probeWallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        var otherBoard = new ClusterBoard();
+        void SetRealm(string realm) => otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        {
+            [probeWallet] = new("probe", realm, SESSION),
+        });
+        SetRealm("small");
+        using NatsPublisher other = CreateAdditionalPublisher(otherBoard);
+        await other.StartAsync(deadline.Token);
+        try
+        {
+            await WaitForAssignmentAsync(probeWallet);
+            Assert.That(() => other.PublishedCount, Is.GreaterThan(0).After(1000, 10));
+            long publishedBeforeFailure = other.PublishedCount;
+            // The test broker uses the default 1 MiB max_payload. Serialization succeeds,
+            // but the real client rejects this response before it reaches the broker.
+            SetRealm(new string('r', 2 * 1024 * 1024));
+            Assert.ThrowsAsync<NatsNoReplyException>(async () => await client.RequestAsync<byte[], byte[]>(
+                $"peer.{probeWallet}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION), cancellationToken: deadline.Token));
+            Assert.That(other.PublishFailedCount, Is.EqualTo(1));
+            Assert.That(other.PublishedCount, Is.EqualTo(publishedBeforeFailure));
+            Assert.That(other.DroppedCount, Is.Zero);
+
+            SetRealm("recovered");
+            PeerClusterChange response = await WaitForAssignmentAsync(probeWallet);
+            Assert.That(response.Realm, Is.EqualTo("recovered"));
+            Assert.That(() => other.PublishedCount, Is.GreaterThan(publishedBeforeFailure).After(1000, 10));
+        }
+        finally
+        {
+            await other.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task ConnectionLoss_ResumesAuthorityAndCurrentHintsWithoutMovement()
+    {
+        string probeWallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        var otherBoard = new ClusterBoard();
+        void SetRoom(string room) => otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        {
+            [probeWallet] = new(room, "realm", SESSION),
+        });
+        SetRoom("before");
+        await using var proxy = new BrokerProxy(new Uri(Environment.GetEnvironmentVariable("NATS_TEST_URL") ?? throw new InvalidOperationException("Expected test broker URL")));
+        using var other = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
+            Options.Create(new NatsOptions
+            {
+                Url = proxy.Url,
+                DiscoveryIntervalMs = 0,
+                AssignmentRefreshIntervalMs = 50,
+            }), new SnapshotBoard(10, 4), otherBoard);
+        await using INatsSub<byte[]> hints = await client.SubscribeCoreAsync<byte[]>(
+            $"peer.{probeWallet}.cluster_snapshot", cancellationToken: deadline.Token);
+        await client.PingAsync(deadline.Token);
+        await other.StartAsync(deadline.Token);
+        try
+        {
+            Assert.That((await WaitForAssignmentAsync(probeWallet)).ClusterId, Is.EqualTo("before"));
+            proxy.Disconnect();
+            while (other.ReconnectCount == 0)
+                await Task.Delay(10, deadline.Token);
+
+            // This value cannot exist in any hint queued before the outage; observing it
+            // below proves the periodic loop is still publishing after reconnection.
+            SetRoom("after");
+            Assert.That((await WaitForAssignmentAsync(probeWallet)).ClusterId, Is.EqualTo("after"));
+            while (true)
+            {
+                PeerClusterChange hint = PeerClusterChange.Parser.ParseFrom(
+                    (await hints.Msgs.ReadAsync(deadline.Token)).Data ?? []);
+                if (hint.ClusterId != "after") continue;
+                Assert.That(hint.Session, Is.EqualTo(SESSION));
+                break;
+            }
+        }
+        finally
+        {
+            await other.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public void Request_AfterPeerDeparture_TimesOutRatherThanReturningRetainedAssignment()
     {
         board.PublishAssignments(new Dictionary<string, ClusterAssignment>());
 
-        NatsMsg<byte[]> reply = await RequestBytesAsync(SESSION);
-
-        Assert.That(reply.Data ?? [], Is.Empty);
+        Assert.ThrowsAsync<NatsNoReplyException>(async () => await RequestBytesAsync(SESSION));
     }
 
     [Test]
@@ -179,6 +302,32 @@ public class ClusterAssignmentRecoveryIntegrationTests
         });
     }
 
+    private NatsPublisher CreateAdditionalPublisher(ClusterBoard assignments) =>
+        new(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
+            Options.Create(new NatsOptions
+            {
+                Url = Environment.GetEnvironmentVariable("NATS_TEST_URL") ?? string.Empty,
+                DiscoveryIntervalMs = 0,
+                AssignmentRefreshIntervalMs = 0,
+            }), new SnapshotBoard(10, 4), assignments);
+
+    private async Task<PeerClusterChange> WaitForAssignmentAsync(string targetWallet)
+    {
+        while (!deadline.IsCancellationRequested)
+        {
+            try
+            {
+                NatsMsg<byte[]> reply = await client.RequestAsync<byte[], byte[]>(
+                    $"peer.{targetWallet}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION), cancellationToken: deadline.Token);
+                return PeerClusterChange.Parser.ParseFrom(reply.Data ?? []);
+            }
+            catch (NatsNoReplyException) when (!deadline.IsCancellationRequested) { }
+            catch (NatsNoRespondersException) when (!deadline.IsCancellationRequested) { }
+        }
+
+        throw new TimeoutException("Additional assignment responder did not become ready");
+    }
+
     private ValueTask<NatsMsg<byte[]>> RequestBytesAsync(string session) =>
         client.RequestAsync<byte[], byte[]>(
             $"peer.{wallet}.cluster_assignment", Encoding.UTF8.GetBytes(session), cancellationToken: deadline.Token);
@@ -187,5 +336,78 @@ public class ClusterAssignmentRecoveryIntegrationTests
     {
         NatsMsg<byte[]> reply = await RequestBytesAsync(session);
         return PeerClusterChange.Parser.ParseFrom(reply.Data ?? []);
+    }
+
+    /// <summary>Severs only this test publisher's real broker connection; never restarts the shared broker.</summary>
+    private sealed class BrokerProxy : IAsyncDisposable
+    {
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource stopped = new();
+        private readonly ConcurrentBag<TcpClient> sockets = [];
+        private readonly List<Task> forwards = [];
+        private readonly Task accepting;
+        private readonly Uri broker;
+
+        public BrokerProxy(Uri broker)
+        {
+            this.broker = broker;
+            listener.Start();
+            Url = $"nats://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}";
+            accepting = AcceptAsync();
+        }
+
+        public string Url { get; }
+
+        public void Disconnect()
+        {
+            foreach (TcpClient socket in sockets) socket.Dispose();
+        }
+
+        private async Task AcceptAsync()
+        {
+            try
+            {
+                while (!stopped.IsCancellationRequested)
+                {
+                    TcpClient downstream = await listener.AcceptTcpClientAsync(stopped.Token);
+                    sockets.Add(downstream);
+                    forwards.Add(ForwardAsync(downstream));
+                }
+            }
+            catch (OperationCanceledException) when (stopped.IsCancellationRequested) { }
+        }
+
+        private async Task ForwardAsync(TcpClient downstream)
+        {
+            using (downstream)
+            using (var upstream = new TcpClient())
+            {
+                sockets.Add(upstream);
+                try
+                {
+                    await upstream.ConnectAsync(broker.Host, broker.Port, stopped.Token);
+                    Task outbound = downstream.GetStream().CopyToAsync(upstream.GetStream(), stopped.Token);
+                    Task inbound = upstream.GetStream().CopyToAsync(downstream.GetStream(), stopped.Token);
+                    await Task.WhenAny(outbound, inbound);
+                    downstream.Dispose();
+                    upstream.Dispose();
+                    await Task.WhenAll(outbound, inbound);
+                }
+                catch (IOException) { }
+                catch (SocketException) { }
+                catch (ObjectDisposedException) { }
+                catch (OperationCanceledException) when (stopped.IsCancellationRequested) { }
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await stopped.CancelAsync();
+            await accepting;
+            listener.Stop();
+            Disconnect();
+            await Task.WhenAll(forwards);
+            stopped.Dispose();
+        }
     }
 }

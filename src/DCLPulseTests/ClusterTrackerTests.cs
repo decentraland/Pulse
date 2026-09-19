@@ -1012,6 +1012,55 @@ public class ClusterTrackerTests
         feedPublisher.DidNotReceive().PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
     }
 
+    [TestCase("other-wallet", SESSION_B)]
+    [TestCase(WALLET, SESSION_B)]
+    [TestCase(WALLET, SESSION_A)]
+    public void RecoveryAssignments_ReusedSlotBetweenPassesStartsFresh(string replacementWallet, string replacementSession)
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        SetupPeer(new PeerIndex(1), Vector3.Zero);
+        SetupPeer(new PeerIndex(2), Vector3.Zero);
+        tracker.RunPass();
+        string oldRoom = clusterBoard.Assignments[WALLET].ClusterId;
+        feedPublisher.ClearReceivedCalls();
+
+        // Disconnect and slot reuse can both happen between two 1 Hz tracker passes.
+        RemovePeer(new PeerIndex(0));
+        SetupPeer(new PeerIndex(0), new Vector3(500, 0, 500), wallet: replacementWallet, session: replacementSession);
+        tracker.RunPass();
+
+        string newRoom = ClusterIdOf(new PeerIndex(0));
+        Assert.Multiple(() =>
+        {
+            Assert.That(newRoom, Is.Not.EqualTo(oldRoom));
+            Assert.That(clusterBoard.Assignments[replacementWallet], Is.EqualTo(new ClusterAssignment(newRoom, REALM, replacementSession)));
+        });
+        feedPublisher.Received(1).PublishClusterChange(replacementWallet, newRoom, REALM,
+            Arg.Is<ClusterSession>(session => session.Session == replacementSession
+                && session.DisplacedSession == (replacementWallet == WALLET && replacementSession != SESSION_A ? SESSION_A : null)));
+    }
+
+    [Test]
+    public void RecoveryAssignments_AreVisibleBeforeFirstChangeIsPublished()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        int observedChanges = 0;
+        feedPublisher.When(component => component.PublishClusterChange(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>())).Do(call =>
+        {
+            Assert.That(clusterBoard.Assignments, Has.Count.EqualTo(3), "the whole snapshot is ready before any event");
+            Assert.That(clusterBoard.Assignments[call.ArgAt<string>(0)], Is.EqualTo(
+                new ClusterAssignment(call.ArgAt<string>(1), call.ArgAt<string>(2), call.ArgAt<ClusterSession>(3).Session)));
+            observedChanges++;
+        });
+
+        tracker.RunPass();
+
+        Assert.That(observedChanges, Is.EqualTo(3));
+    }
+
     [Test]
     public void RecoveryAssignments_ExcludeDepartedSessionsDespiteTakeoverRetention()
     {

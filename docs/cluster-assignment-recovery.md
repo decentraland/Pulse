@@ -9,10 +9,14 @@ be lost on restart. Pulse now exposes its current assignment independently of th
 * Request `peer.{lowercase-wallet}.cluster_assignment` with the raw UTF-8 ephemeral session
   address as the body. The reply is the existing protobuf `PeerClusterChange`, with cluster,
   realm and session populated. Unknown/departed wallets, malformed requests and mismatched
-  sessions receive an empty protobuf. An empty request body supports legacy connectors.
+  sessions receive no reply; callers must enforce a bounded timeout. An instance replies only when it
+  owns the requested session, so an empty or warming instance cannot mask the
+  owner during an overlapping deployment. An empty request body supports legacy connectors.
 * Every 30 seconds, `peer.{lowercase-wallet}.cluster_snapshot` carries the same protobuf as
   a recovery hint. Consumers must query the current assignment before acting on a hint;
-  a hint delayed by broker backpressure may describe an older assignment.
+  a hint delayed by broker backpressure may describe an older assignment. Consumers must
+  also query before applying `cluster_change`, validating its session and using the current
+  room while retaining the matching event's displaced-session cleanup.
 * Neither reply nor hint repeats displaced-session cleanup. The original `cluster_change`
   event retains takeover semantics. Coalescing subsequent moves for the same replacement
   session preserves any displaced identity still pending in the outbox.
@@ -22,6 +26,9 @@ post-debounce room actually published, rather than the candidate topology. Depar
 are excluded even while the tracker retains their takeover ledger. Reads are safe against
 the next pass replacing the entire map. This is not an instantaneous session registry: a
 departure or takeover becomes visible on the next completed pass.
+The complete assignment map is published before change events for that pass. Reused peer
+slots are reset using an atomically read identity registration, including reconnects with
+the same wallet and ephemeral session that happen between tracker passes.
 
 `Nats__AssignmentRefreshIntervalMs` changes the hint interval. A non-positive value disables
 hints but leaves request/reply available. Both require the existing NATS and cluster tracker
@@ -31,8 +38,9 @@ configuration. No token is minted by Pulse.
 
 Deploy this Pulse change before the companion gatekeeper recovery change. The new subjects
 are additive and older gatekeepers ignore them. Gatekeeper then queries on every connect
-and every recovery hint, checks the active session and LiveKit membership, and mints only
-when the wallet is absent from its assigned room. An unavailable authority fails closed;
+and before every change event or recovery hint. Recovery checks the active session and
+LiveKit membership, and mints only when the wallet is absent from its assigned room.
+An unavailable authority fails closed;
 the next hint retries. Deploy the connector dropped-frame recovery afterward.
 
 This does not add an assignment producer for clients that never connect to Pulse, nor does
@@ -46,6 +54,9 @@ distinguish it from a healthy participant and will not evict it.
 ## Tests
 
 Tracker regressions cover stationary peers beyond the former one-hour mirror lifetime,
-departure, replacement sessions, immutable snapshots and debounce. Resolver tests cover
+departure, immediate slot reuse, replacement sessions, immutable snapshots, event ordering and debounce. Resolver tests cover
 session isolation, malformed requests, legacy requests and session replacement. Broker
-integration tests run with `NATS_TEST_URL` set; CI supplies a local NATS service.
+integration tests run with `NATS_TEST_URL` set; CI supplies a local NATS service. They cover
+multiple responders, publisher connection loss and resubscription, repeated unchanged hints,
+and a failed reply followed by recovery. Reply and hint publish successes/failures contribute
+to the existing NATS counters; intentional silence on a non-owned session is not a failure.

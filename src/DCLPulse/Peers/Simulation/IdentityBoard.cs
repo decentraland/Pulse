@@ -10,14 +10,13 @@ namespace Pulse.Peers.Simulation;
 ///     Thread safety: .NET guarantees atomic reference reads/writes. A single
 ///     <see cref="Volatile.Write{T}" /> at registration and <see cref="Volatile.Read{T}" />
 ///     at lookup is sufficient — no seqlock needed because the value never mutates after write.
-///     The wallet and session slots are written by two separate volatile writes, so a reader could
-///     observe the wallet before the session; this is safe because a peer is not placed in any grid
-///     until its handshake has returned, so the tracker never reads a half-written pair.
+///     Wallet, session and registration are published together as one immutable reference. A
+///     tracker reading a weakly consistent grid can never combine two registrations of a slot.
 /// </summary>
 public sealed class IdentityBoard(int maxPeers)
 {
-    private readonly string?[] walletsByPeerIds = new string?[maxPeers];
-    private readonly string?[] sessionsByPeerIds = new string?[maxPeers];
+    private readonly IdentityRegistration?[] identitiesByPeerIds = new IdentityRegistration?[maxPeers];
+    private long nextRegistration;
     private readonly ConcurrentDictionary<string, PeerIndex> peerIdsByWallets = new (StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -32,16 +31,26 @@ public sealed class IdentityBoard(int maxPeers)
     /// </summary>
     public void Set(PeerIndex id, string walletId, string session)
     {
-        Volatile.Write(ref walletsByPeerIds[(int)id.Value], walletId);
-        Volatile.Write(ref sessionsByPeerIds[(int)id.Value], session);
+        var identity = new IdentityRegistration(walletId, session, Interlocked.Increment(ref nextRegistration));
+        Volatile.Write(ref identitiesByPeerIds[(int)id.Value], identity);
         peerIdsByWallets[walletId] = id;
     }
 
     public string? GetWalletIdByPeerIndex(PeerIndex id) =>
-        Volatile.Read(ref walletsByPeerIds[(int)id.Value]);
+        GetIdentity(id)?.Wallet;
 
     public string? GetSessionByPeerIndex(PeerIndex id) =>
-        Volatile.Read(ref sessionsByPeerIds[(int)id.Value]);
+        GetIdentity(id)?.Session;
+
+    /// <summary>
+    ///     Changes on every registration, including a same-wallet, same-session reconnect.
+    ///     A slow reader can therefore detect slot reuse even when it never observes an empty slot.
+    /// </summary>
+    public long GetRegistration(PeerIndex id) =>
+        GetIdentity(id)?.Registration ?? 0;
+
+    public IdentityRegistration? GetIdentity(PeerIndex id) =>
+        Volatile.Read(ref identitiesByPeerIds[(int)id.Value]);
 
     public bool TryGetPeerIndexByWallet(string walletId, out PeerIndex peerIndex) =>
         peerIdsByWallets.TryGetValue(walletId, out peerIndex);
@@ -56,7 +65,8 @@ public sealed class IdentityBoard(int maxPeers)
         if (walletId != null)
             peerIdsByWallets.TryRemove(new KeyValuePair<string, PeerIndex>(walletId, id));
 
-        Volatile.Write(ref walletsByPeerIds[(int)id.Value], null);
-        Volatile.Write(ref sessionsByPeerIds[(int)id.Value], null);
+        Volatile.Write(ref identitiesByPeerIds[(int)id.Value], null);
     }
 }
+
+public sealed record IdentityRegistration(string Wallet, string Session, long Registration);

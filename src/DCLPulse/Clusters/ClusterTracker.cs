@@ -19,7 +19,7 @@ namespace Pulse.Clusters;
 ///     A pass runs weighted union-find with path halving over occupied grid cells using 8-neighbor
 ///     adjacency, one realm's grid at a time. A cluster cannot span realms because the cells it is
 ///     built from cannot: realm isolation is the grid's, so partitioning costs no realm comparison
-///     here. (<see cref="TryPublishAssignment" /> still compares the published realm — that is change
+///     here. (<see cref="TryCollectAssignment" /> still compares the published realm — that is change
 ///     detection for the feed, not partitioning.) Cost is O(N + C) in peers and occupied cells — no
 ///     peer-pair tests. Working buffers are fields, cleared rather than reallocated between passes.
 /// </summary>
@@ -50,6 +50,7 @@ public sealed class ClusterTracker : BackgroundService
 
     // Per-pass members, ordered so every node's members are one contiguous slice.
     private readonly List<PassMember> members = [];
+    private readonly List<PendingAssignment> pendingAssignments = [];
 
     // Per-pass components, each a chain of the nodes that union-find merged into it.
     private readonly List<PassComponent> components = [];
@@ -176,12 +177,13 @@ public sealed class ClusterTracker : BackgroundService
         // of the assignments that reference it.
         feedPublisher.PublishTopology(pass);
 
-        int reassignments = PublishAssignmentChanges();
+        CollectAssignmentChanges();
         PublishRecoveryAssignments();
+        PublishAssignmentChanges();
         ForgetVanishedPeers();
         ForgetExpiredSessions();
 
-        RecordPassMetrics(startTicks, pass.Clusters.Count, reassignments);
+        RecordPassMetrics(startTicks, pass.Clusters.Count, pendingAssignments.Count);
     }
 
     private void PublishRecoveryAssignments()
@@ -299,16 +301,22 @@ public sealed class ClusterTracker : BackgroundService
         ref PeerClusterState state = ref peerStates[peer.Value];
 
         if (state.LastSeenPass == passNumber) return;
+        IdentityRegistration? identity = identityBoard.GetIdentity(peer);
+        if (identity is null) return;
         if (!snapshotBoard.TryRead(peer, out PeerSnapshot snapshot)) return;
-
-        string? wallet = identityBoard.GetWalletIdByPeerIndex(peer);
-
-        if (wallet is null) return;
+        string wallet = identity.Wallet;
 
         // Only the wallet's current live binding is collected; a peer holding a stale one is skipped.
         // Outside that case the reverse lookup resolves back to this same peer, so the check is a
         // no-op — one dictionary read per occupant, on the tracker's own 1 Hz thread.
         if (!identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex live) || live != peer) return;
+        // Slot reuse during these reads must not attach the previous occupant's position to
+        // a new registration. Retry on the next pass instead of publishing a mixed snapshot.
+        if (!ReferenceEquals(identityBoard.GetIdentity(peer), identity)) return;
+
+        long registration = identity.Registration;
+        if (state.Registration != registration)
+            state = new PeerClusterState { Registration = registration };
 
         state.LastSeenPass = passNumber;
 
@@ -319,7 +327,7 @@ public sealed class ClusterTracker : BackgroundService
         if (!Unsafe.IsNullRef(ref seen))
             seen.LastSeenPass = passNumber;
 
-        members.Add(new PassMember(peer, wallet, identityBoard.GetSessionByPeerIndex(peer) ?? wallet,
+        members.Add(new PassMember(peer, wallet, identity.Session,
             snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport));
     }
 
@@ -644,31 +652,34 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Publishes every peer whose assignment changed, subject to the dwell debounce, and returns
-    ///     how many were published.
+    ///     Collects every changed assignment after debounce. The complete authoritative snapshot
+    ///     must become visible before any corresponding event can reach a consumer.
     /// </summary>
-    private int PublishAssignmentChanges()
+    private void CollectAssignmentChanges()
     {
-        var reassignments = 0;
+        pendingAssignments.Clear();
 
         for (var component = 0; component < components.Count; component++)
         {
             PassComponent info = components[component];
 
             foreach (PassMember member in MembersOf(component))
-                if (TryPublishAssignment(member, info.Id, info.Realm))
-                    reassignments++;
+                TryCollectAssignment(member, info.Id, info.Realm);
         }
+    }
 
-        return reassignments;
+    private void PublishAssignmentChanges()
+    {
+        foreach (PendingAssignment assignment in pendingAssignments)
+            feedPublisher.PublishClusterChange(assignment.Wallet, assignment.ClusterId, assignment.Realm, assignment.Session);
     }
 
     /// <summary>
-    ///     Emits a feed event for one peer if its assignment — cluster and realm together — differs
+    ///     Collects a feed event for one peer if its assignment — cluster and realm together — differs
     ///     from the last one published, and either the change is exempt from the debounce or the peer
-    ///     has dwelled long enough. Returns whether it published.
+    ///     has dwelled long enough. Returns whether it collected a change.
     /// </summary>
-    private bool TryPublishAssignment(PassMember member, string clusterId, string realm)
+    private bool TryCollectAssignment(PassMember member, string clusterId, string realm)
     {
         ref PeerClusterState state = ref peerStates[member.Peer.Value];
 
@@ -708,7 +719,7 @@ public sealed class ClusterTracker : BackgroundService
             LastSeenPass = passNumber,
         };
 
-        feedPublisher.PublishClusterChange(member.Wallet, clusterId, realm, session);
+        pendingAssignments.Add(new PendingAssignment(member.Wallet, clusterId, realm, session));
 
         if (session.DisplacedSession is not null)
             PulseMetrics.Clusters.TAKEOVERS.Add(1);
@@ -875,6 +886,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private struct PeerClusterState
     {
+        public long Registration;
         public string? PreviousPassClusterId;
 
         // Cluster and realm as last published together — the feed carries both, so either one
@@ -888,6 +900,8 @@ public sealed class ClusterTracker : BackgroundService
         // Pass this slot was last collected in. Zero means never, or forgotten since.
         public long LastSeenPass;
     }
+
+    private readonly record struct PendingAssignment(string Wallet, string ClusterId, string Realm, ClusterSession Session);
 
     /// <summary>
     ///     A wallet's last published assignment and the session that published it, retained across the

@@ -43,6 +43,10 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     internal readonly Dictionary<PeerIndex, Dictionary<PeerIndex, PeerToPeerView>> observerViews = new ();
 
+    // Visibility identities belong to the observer's realm. Clients discard them when
+    // changing realms even if the same subject is immediately visible at the destination.
+    private readonly Dictionary<PeerIndex, string?> observerRealms = new ();
+
     private readonly IAreaOfInterest areaOfInterest;
     private readonly SnapshotBoard snapshotBoard;
     private readonly RealmSpatialGrids realmGrids;
@@ -176,6 +180,7 @@ public sealed class PeerSimulation : IPeerSimulation
     public void RemoveObserver(PeerIndex observerId)
     {
         observerViews.Remove(observerId);
+        observerRealms.Remove(observerId);
     }
 
     // ── Per-observer simulation paths ───────────────────────────────
@@ -190,6 +195,21 @@ public sealed class PeerSimulation : IPeerSimulation
     {
         if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
             return;
+
+        if (observerRealms.TryGetValue(observerId, out string? previousRealm)
+            && !string.Equals(previousRealm, observerSnapshot.Realm, StringComparison.Ordinal)
+            && observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
+        {
+            // Retire old identities before reseeding any destination peers. Do not wait
+            // for stale-view eviction: co-teleporting peers can remain visible forever.
+            foreach (PeerIndex subjectId in views.Keys)
+                SendPlayerLeft(observerId, subjectId);
+
+            views.Clear();
+            observerState.ResyncRequests?.Clear();
+        }
+
+        observerRealms[observerId] = observerSnapshot.Realm;
 
         collector.Clear();
         areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
@@ -363,6 +383,13 @@ public sealed class PeerSimulation : IPeerSimulation
             if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot latestSnapshot))
                 continue;
 
+            if (!isNew && !string.Equals(view.LastSentSnapshot.Realm, latestSnapshot.Realm, StringComparison.Ordinal))
+            {
+                // Also reseed multi-realm listeners when a retained subject changes realm.
+                SendPlayerLeft(observerId, entry.Subject);
+                isNew = true;
+            }
+
             if (isNew)
             {
                 view = HandleNewSubject(observerId, entry.Subject, latestSnapshot, isSelfMirror, resyncRequests, positionalOnly);
@@ -381,6 +408,14 @@ public sealed class PeerSimulation : IPeerSimulation
             view.LastSeenTick = tickCounter;
             views[entry.Subject] = view;
         }
+    }
+
+    private void SendPlayerLeft(PeerIndex observerId, PeerIndex subjectId)
+    {
+        messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
+        {
+            PlayerLeft = new PlayerLeft { SubjectId = subjectId },
+        }, PacketMode.RELIABLE));
     }
 
     /// <summary>
@@ -898,7 +933,7 @@ public sealed class PeerSimulation : IPeerSimulation
         realmGrids.Remove(peerId);
         identityBoard.Remove(peerId);
         profileBoard.Remove(peerId);
-        observerViews.Remove(peerId);
+        RemoveObserver(peerId);
         peersToBeRemoved.Add(peerId);
 
         // Return the PeerIndex to the allocator last, after every per-peer board is wiped.

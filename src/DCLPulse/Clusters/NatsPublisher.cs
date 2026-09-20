@@ -64,6 +64,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     private const string DISCOVERY_SUBJECT = "engine.discovery";
 
+    // A reply goes only to a request inbox, the subject family NATS clients name under this prefix
+    // by default. A reply anywhere else would be a schema-valid message published under a subject the
+    // requester chose, so requests naming one are ignored.
+    private const string REQUEST_INBOX_PREFIX = "_INBOX.";
+
+    // Width of the fixed window MaxAssignmentRequestsPerSecond is counted over.
+    private const long REQUEST_WINDOW_MS = 1000;
+
     /// <summary>
     ///     Wait before rebuilding a faulted pipeline. Not a reconnect delay — the client handles
     ///     broker loss itself — only a guard against a reproducing fault spinning the loop.
@@ -141,6 +149,11 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     // edge emits its CONNECTED delta exactly once.
     private int connected;
     private int everConnected;
+
+    // Request budget, touched by the responder loop alone.
+    private long requestWindowStartMs;
+    private int requestsInWindow;
+    private int requestsDroppedInWindow;
 
     public NatsPublisher(
         ILogger<NatsPublisher> logger,
@@ -397,7 +410,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
                 // A room change for the replacement session must not erase a takeover that
                 // has not left the outbox yet. Never carry cleanup across another takeover.
-                if (change.Session == previous.Session && change.DisplacedSession.Length == 0)
+                if (string.Equals(change.Session, previous.Session, StringComparison.OrdinalIgnoreCase)
+                    && change.DisplacedSession.Length == 0)
                 {
                     change.DisplacedSession = previous.DisplacedSession;
                     change.DisplacedClusterId = previous.DisplacedClusterId;
@@ -525,6 +539,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         if (!heartbeatEnabled)
             logger.LogWarning("NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)");
 
+        if (options.AssignmentRefreshIntervalMs <= 0)
+            logger.LogWarning("NATS assignment recovery hints disabled (Nats:AssignmentRefreshIntervalMs is not positive)");
+
+        if (options.MaxAssignmentRequestsPerSecond <= 0)
+            logger.LogWarning("NATS assignment request budget disabled (Nats:MaxAssignmentRequestsPerSecond is not positive)");
+
         // A non-positive capacity makes the eviction test pass on every admission, so each new
         // assignment throws out the one before it and the feed delivers almost nothing. It still
         // "works", which is what makes it worth saying out loud at startup rather than leaving to be
@@ -620,21 +640,64 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         }
     }
 
-    /// <summary>Returns an existing assignment only for the requested active session; empty requests support legacy peers.</summary>
+    /// <summary>
+    ///     Resolves a <c>peer.{wallet}.cluster_assignment</c> request whose body is the requester's
+    ///     42-byte ephemeral session. Returns an empty message for a malformed subject or body, an
+    ///     unknown wallet, or a session other than the one that published the assignment — there is
+    ///     no session-less mode.
+    /// </summary>
     internal PeerClusterChange ResolveAssignment(string subject, ReadOnlySpan<byte> data)
     {
         string[] parts = subject.Split('.');
         if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "cluster_assignment"
-            || !IsAddress(parts[1]) || (data.Length != 0 && data.Length != 42))
+            || !IsAddress(parts[1]) || data.Length != 42)
             return new PeerClusterChange();
 
         string session = Encoding.UTF8.GetString(data);
-        if (session.Length != 0 && !IsAddress(session)) return new PeerClusterChange();
-        if (!clusterBoard.Assignments.TryGetValue(parts[1], out ClusterAssignment assignment)
-            || (session.Length != 0 && !string.Equals(session, assignment.Session, StringComparison.OrdinalIgnoreCase)))
+        if (!IsAddress(session)) return new PeerClusterChange();
+
+        // The assignment map is keyed by the lower-cased wallet; the subject may carry any casing.
+        if (!clusterBoard.Assignments.TryGetValue(parts[1].ToLowerInvariant(), out ClusterAssignment assignment)
+            || !string.Equals(session, assignment.Session, StringComparison.OrdinalIgnoreCase))
             return new PeerClusterChange();
 
         return AssignmentMessage(assignment);
+    }
+
+    internal static bool IsRequestInbox(string? replyTo) =>
+        replyTo is not null && replyTo.StartsWith(REQUEST_INBOX_PREFIX, StringComparison.Ordinal);
+
+    /// <summary>
+    ///     Admits at most <see cref="NatsOptions.MaxAssignmentRequestsPerSecond" /> requests per fixed
+    ///     one-second window and refuses the rest before they are resolved. Requests are counted rather
+    ///     than replies, so a flood this instance would answer with silence is bounded too. Refusals are
+    ///     logged once, when the next window opens; a non-positive limit admits everything.
+    /// </summary>
+    internal bool TryAdmitAssignmentRequest(long nowMs)
+    {
+        int limit = options.MaxAssignmentRequestsPerSecond;
+        if (limit <= 0) return true;
+
+        if (nowMs - requestWindowStartMs >= REQUEST_WINDOW_MS)
+        {
+            if (requestsDroppedInWindow > 0)
+                logger.LogWarning(
+                    "Dropped {Dropped} cluster assignment requests over the {Limit}/s budget (Nats:MaxAssignmentRequestsPerSecond)",
+                    requestsDroppedInWindow, limit);
+
+            requestWindowStartMs = nowMs;
+            requestsInWindow = 0;
+            requestsDroppedInWindow = 0;
+        }
+
+        if (requestsInWindow >= limit)
+        {
+            requestsDroppedInWindow++;
+            return false;
+        }
+
+        requestsInWindow++;
+        return true;
     }
 
     private static bool IsAddress(string value)
@@ -661,13 +724,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 await foreach (NatsMsg<byte[]> request in connection.SubscribeAsync<byte[]>(
                                    "peer.*.cluster_assignment", cancellationToken: loops.Token))
                 {
-                    if (string.IsNullOrEmpty(request.ReplyTo)) continue;
+                    if (!IsRequestInbox(request.ReplyTo)) continue;
+                    if (!TryAdmitAssignmentRequest(Environment.TickCount64)) continue;
                     try
                     {
                         PeerClusterChange response = ResolveAssignment(request.Subject, request.Data);
-                        // Multiple Pulse processes can overlap during a deployment. An instance
-                        // that does not own this session must not race its owner with an empty
-                        // first response. No owner means the caller's bounded request times out.
+                        // Multiple Pulse processes can overlap during a deployment. An instance that
+                        // does not own this session sends nothing, so it cannot race the owner with
+                        // an empty first response.
                         if (response.ClusterId.Length == 0) continue;
                         await request.ReplyAsync(response, serializer: SERIALIZER, cancellationToken: loops.Token);
                         CountPublished();
@@ -688,6 +752,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         }
     }
 
+    /// <summary>
+    ///     Publishes every current assignment on <c>peer.{wallet}.cluster_snapshot</c> once per
+    ///     <see cref="NatsOptions.AssignmentRefreshIntervalMs" />, with the same fields as the change
+    ///     event that first announced it. The session it carries is the ephemeral address the request
+    ///     path is keyed by — the value every <c>cluster_change</c> already carries, not a credential.
+    /// </summary>
     private async Task PublishAssignmentRefreshesAsync(NatsConnection connection, CancellationTokenSource loops)
     {
         if (options.AssignmentRefreshIntervalMs <= 0) return;
@@ -696,11 +766,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(options.AssignmentRefreshIntervalMs));
             while (await timer.WaitForNextTickAsync(loops.Token))
             {
+                // Keys are lower-cased wallets, so the subject needs no normalisation here.
                 foreach ((string wallet, ClusterAssignment assignment) in clusterBoard.Assignments)
                 {
                     try
                     {
-                        await connection.PublishAsync($"peer.{wallet.ToLowerInvariant()}.cluster_snapshot",
+                        await connection.PublishAsync($"peer.{wallet}.cluster_snapshot",
                             AssignmentMessage(assignment), serializer: SERIALIZER, cancellationToken: loops.Token);
                         CountPublished();
                     }

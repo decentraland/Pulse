@@ -461,6 +461,21 @@ public class NatsPublisherTests
     }
 
     [Test]
+    public void PendingTakeover_FollowedBySameSessionInAnotherCasing_StillPreservesDisplacedIdentity()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+        publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("0xNEW", "old", "C1"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("0xnew", null, null));
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.ClusterId, Is.EqualTo("C3"));
+            Assert.That(queued.DisplacedSession, Is.EqualTo("old"));
+            Assert.That(queued.DisplacedClusterId, Is.EqualTo("C1"));
+        });
+    }
+
+    [Test]
     public void PendingTakeover_FollowedByDifferentSession_DoesNotInheritCleanup()
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
@@ -469,6 +484,53 @@ public class NatsPublisherTests
         PeerClusterChange queued = DequeueSingleChange(publisher);
         Assert.That(queued.DisplacedSession, Is.EqualTo("second"));
         Assert.That(queued.DisplacedClusterId, Is.EqualTo("C2"));
+    }
+
+    [Test]
+    public void RequestBudget_RefusesRequestsOverTheLimitUntilTheNextWindowOpens()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 2);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_000), Is.True);
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_100), Is.True);
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_200), Is.False);
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_999), Is.False, "the window is a full second wide");
+            Assert.That(publisher.TryAdmitAssignmentRequest(11_000), Is.True, "a new window opens one second after the first admitted request");
+            Assert.That(publisher.TryAdmitAssignmentRequest(11_001), Is.True);
+            Assert.That(publisher.TryAdmitAssignmentRequest(11_002), Is.False);
+        });
+    }
+
+    [Test]
+    public void RequestBudget_NonPositiveLimit_AdmitsEverything()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 0);
+
+        Assert.That(Enumerable.Range(0, 100_000).All(_ => publisher.TryAdmitAssignmentRequest(5_000)), Is.True);
+    }
+
+    [Test]
+    public void RequestBudget_LogsTheRefusedCountOnceWhenTheNextWindowOpens()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, logger: logger, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAdmitAssignmentRequest(10_000);
+        publisher.TryAdmitAssignmentRequest(10_001);
+        publisher.TryAdmitAssignmentRequest(10_002);
+        Assert.That(HasLogged(logger, "cluster assignment requests"), Is.False, "nothing is logged while the window is still open");
+
+        publisher.TryAdmitAssignmentRequest(11_000);
+        publisher.TryAdmitAssignmentRequest(12_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(HasLogged(logger, "Dropped 2 cluster assignment requests over the 1/s budget"), Is.True);
+            Assert.That(LoggedLevel(logger, "Dropped 2 cluster assignment requests"), Is.EqualTo(LogLevel.Warning));
+            Assert.That(logger.ReceivedCalls().Count(), Is.EqualTo(1), "a window with no refusals logs nothing");
+        });
     }
 
     [Test]
@@ -995,7 +1057,8 @@ public class NatsPublisherTests
         int discoveryIntervalMs = 10_000,
         ILogger<NatsPublisher>? logger = null,
         int assignmentRefreshIntervalMs = 30_000,
-        ClusterBoard? assignments = null)
+        ClusterBoard? assignments = null,
+        int maxAssignmentRequestsPerSecond = 5_000)
     {
         var options = Substitute.For<IOptions<NatsOptions>>();
 
@@ -1006,6 +1069,7 @@ public class NatsPublisherTests
             DiscoveryIntervalMs = discoveryIntervalMs,
             ChannelCapacity = channelCapacity,
             AssignmentRefreshIntervalMs = assignmentRefreshIntervalMs,
+            MaxAssignmentRequestsPerSecond = maxAssignmentRequestsPerSecond,
         });
 
         return new NatsPublisher(

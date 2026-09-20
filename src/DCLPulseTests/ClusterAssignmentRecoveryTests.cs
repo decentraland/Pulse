@@ -19,7 +19,7 @@ public class ClusterAssignmentRecoveryTests
     public void SetUp()
     {
         board = new ClusterBoard();
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>(StringComparer.OrdinalIgnoreCase)
+        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
         {
             [WALLET] = new ("C1", "realm-a", SESSION),
         });
@@ -32,7 +32,6 @@ public class ClusterAssignmentRecoveryTests
 
     [TestCase(SESSION)]
     [TestCase("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
-    [TestCase("")]
     public void Lookup_ActiveSession_ReturnsCurrentAssignment(string session)
     {
         var response = publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session));
@@ -46,10 +45,18 @@ public class ClusterAssignmentRecoveryTests
         });
     }
 
+    [Test]
+    public void Lookup_ChecksumCasedWalletInTheSubject_ResolvesTheLowerCasedKey()
+    {
+        var response = publisher.ResolveAssignment($"peer.{WALLET.ToUpperInvariant()}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION));
+        Assert.That(response.ClusterId, Is.EqualTo("C1"));
+    }
+
+    [TestCase("")]
     [TestCase(OTHER_SESSION)]
     [TestCase("garbage")]
     [TestCase("0xgggggggggggggggggggggggggggggggggggggggg")]
-    public void Lookup_WrongOrMalformedSession_ReturnsEmpty(string session)
+    public void Lookup_MissingWrongOrMalformedSession_ReturnsEmpty(string session)
     {
         var response = publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session));
         Assert.That(response.CalculateSize(), Is.Zero);
@@ -84,5 +91,17 @@ public class ClusterAssignmentRecoveryTests
             Assert.That(publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION)).CalculateSize(), Is.Zero);
             Assert.That(publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(OTHER_SESSION)).ClusterId, Is.EqualTo("C2"));
         });
+    }
+
+    [TestCase("_INBOX.rXsK2Lm9Qw.1", true)]
+    [TestCase("_INBOX.", true)]
+    [TestCase("_inbox.rXsK2Lm9Qw.1", false)]
+    [TestCase("peer.0x2222222222222222222222222222222222222222.cluster_change", false)]
+    [TestCase("engine.islands", false)]
+    [TestCase("", false)]
+    [TestCase(null, false)]
+    public void IsRequestInbox_AcceptsOnlyTheClientInboxPrefix(string? replyTo, bool expected)
+    {
+        Assert.That(NatsPublisher.IsRequestInbox(replyTo), Is.EqualTo(expected));
     }
 }

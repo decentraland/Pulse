@@ -305,6 +305,8 @@ The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — th
 | `Cluster tracker disabled (Clusters:PassIntervalMs is not positive)` | Same, from a bad cadence rather than the flag |
 | `NATS feed disabled (Nats:Url not set)` | Shadow mode — the tracker runs, nothing is published. Expected on a deployment that has not been given a broker yet, and the rollback state |
 | `NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)` | Assignments and topology still publish; the service is not advertised on `engine.discovery` |
+| `NATS assignment recovery hints disabled (Nats:AssignmentRefreshIntervalMs is not positive)` | No `peer.{addr}.cluster_snapshot` hints; request/reply recovery still answers |
+| `NATS assignment request budget disabled (Nats:MaxAssignmentRequestsPerSecond is not positive)` | Every `cluster_assignment` request is handled; a request flood is bounded by nothing but the broker |
 | `NATS outbox capacity is not positive (Nats:ChannelCapacity is …)` | The feed runs but each assignment evicts the previous one, so almost everything is lost. Watch `dcl_pulse_nats_dropped_total` |
 
 All of these are recorded once per pass on the tracker's own thread — none of them touch the per-tick or per-packet path.
@@ -392,12 +394,14 @@ The outbox keeps the two feeds apart because they supersede differently. `engine
 
 - **Superseded** — replaced before delivery by a newer message on the same subject. Expected whenever the broker lags a pass; harmless, because the replacement carries strictly fresher state. No lever.
 - **Dropped** — evicted from the outbox, and nothing else: more than `Nats:ChannelCapacity` distinct peers held an undelivered assignment at once, so the longest-admitted one was pushed out (admission order, not wait time — a supersede keeps a peer's original place in line). Actionable: a lost `cluster_change` leaves that peer addressed by a stale cluster until its *next* reassignment, which may never come if the peer stops moving. The lever is the capacity.
+- **Published** — counts the same four paths as *Publish Failed*: outbox drain, discovery heartbeat, assignment replies and periodic recovery hints. Its rate therefore steps up when the recovery feed ships — one hint per active peer per `Nats:AssignmentRefreshIntervalMs` plus reply traffic — so a rate baseline set before that deploy needs re-basing, not investigating.
 - **Publish Failed** — the publish call threw, on the outbox drain, discovery heartbeat, assignment reply or periodic recovery hint. Every one of these is raised **client-side** — a timeout, a connect failure, an oversized payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a broker that refuses a publish cannot fail the call (see the rejected-publish note below). The lever is the broker or the path to it. Raising `Nats:ChannelCapacity` in response is actively harmful: a larger outbox only lengthens the stale backlog the recovered connection has to drain before it delivers anything current.
 
 | Signal | Meaning |
 |---|---|
 | `connected` 1, published rising, dropped and publish-failed zero | Healthy — superseded may be non-zero and is fine |
 | `connected` 0 with a broker URL set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
+| `Dropped N cluster assignment requests over the L/s budget` (Warning, at most once per second) | The responder is shedding a request flood. Legitimate lookups in that second timed out and retry on the next hint; the lever is `Nats:MaxAssignmentRequestsPerSecond` or broker permissions on `peer.*` |
 | `connected` 0 with no broker URL | Stats-only mode, by configuration — not a fault |
 | Superseded rising, dropped zero | Broker slower than the pass rate; freshness degrades but nothing is lost |
 | **Dropped rising** | More than `Nats:ChannelCapacity` peers pending at once. Raise the capacity toward `Transport.MaxPeers` — some peer is in the wrong room. Nothing about the broker is implied |

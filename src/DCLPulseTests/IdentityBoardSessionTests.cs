@@ -19,7 +19,7 @@ public class IdentityBoardSessionTests
     {
         board.Set(new PeerIndex(1), "0xwallet", "0xsession");
 
-        Assert.That(board.GetSessionByPeerIndex(new PeerIndex(1)), Is.EqualTo("0xsession"));
+        Assert.That(board.GetIdentity(new PeerIndex(1))?.Session, Is.EqualTo("0xsession"));
         Assert.That(board.GetWalletIdByPeerIndex(new PeerIndex(1)), Is.EqualTo("0xwallet"));
     }
 
@@ -28,7 +28,7 @@ public class IdentityBoardSessionTests
     {
         board.Set(new PeerIndex(1), "0xwallet");
 
-        Assert.That(board.GetSessionByPeerIndex(new PeerIndex(1)), Is.EqualTo("0xwallet"));
+        Assert.That(board.GetIdentity(new PeerIndex(1))?.Session, Is.EqualTo("0xwallet"));
     }
 
     [Test]
@@ -38,7 +38,7 @@ public class IdentityBoardSessionTests
 
         board.Remove(new PeerIndex(1));
 
-        Assert.That(board.GetSessionByPeerIndex(new PeerIndex(1)), Is.Null);
+        Assert.That(board.GetIdentity(new PeerIndex(1))?.Session, Is.Null);
         Assert.That(board.GetWalletIdByPeerIndex(new PeerIndex(1)), Is.Null);
     }
 
@@ -48,8 +48,8 @@ public class IdentityBoardSessionTests
         board.Set(new PeerIndex(1), "0xwallet", "0xsession-a");
         board.Set(new PeerIndex(2), "0xwallet", "0xsession-b");
 
-        Assert.That(board.GetSessionByPeerIndex(new PeerIndex(1)), Is.EqualTo("0xsession-a"));
-        Assert.That(board.GetSessionByPeerIndex(new PeerIndex(2)), Is.EqualTo("0xsession-b"));
+        Assert.That(board.GetIdentity(new PeerIndex(1))?.Session, Is.EqualTo("0xsession-a"));
+        Assert.That(board.GetIdentity(new PeerIndex(2))?.Session, Is.EqualTo("0xsession-b"));
         Assert.That(board.TryGetPeerIndexByWallet("0xwallet", out PeerIndex live), Is.True);
         Assert.That(live, Is.EqualTo(new PeerIndex(2)));
     }

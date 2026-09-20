@@ -19,7 +19,7 @@ namespace Pulse.Clusters;
 ///     A pass runs weighted union-find with path halving over occupied grid cells using 8-neighbor
 ///     adjacency, one realm's grid at a time. A cluster cannot span realms because the cells it is
 ///     built from cannot: realm isolation is the grid's, so partitioning costs no realm comparison
-///     here. (<see cref="TryCollectAssignment" /> still compares the published realm — that is change
+///     here. (<see cref="CollectAssignmentChange" /> still compares the published realm — that is change
 ///     detection for the feed, not partitioning.) Cost is O(N + C) in peers and occupied cells — no
 ///     peer-pair tests. Working buffers are fields, cleared rather than reallocated between passes.
 /// </summary>
@@ -186,14 +186,18 @@ public sealed class ClusterTracker : BackgroundService
         RecordPassMetrics(startTicks, pass.Clusters.Count, pendingAssignments.Count);
     }
 
+    /// <summary>
+    ///     Replaces the board's assignment map with this pass's published assignments, keyed by the
+    ///     lower-cased wallet — the casing both the request subject and the hint subject carry.
+    /// </summary>
     private void PublishRecoveryAssignments()
     {
-        var assignments = new Dictionary<string, ClusterAssignment>(members.Count, StringComparer.OrdinalIgnoreCase);
+        var assignments = new Dictionary<string, ClusterAssignment>(members.Count, StringComparer.Ordinal);
         foreach (PassMember member in members)
         {
             ref PeerClusterState state = ref peerStates[member.Peer.Value];
             if (state.PublishedClusterId is { } clusterId && state.PublishedRealm is { } realm)
-                assignments[member.Wallet] = new ClusterAssignment(clusterId, realm, member.Session);
+                assignments[member.Wallet.ToLowerInvariant()] = new ClusterAssignment(clusterId, realm, member.Session);
         }
 
         clusterBoard.PublishAssignments(assignments);
@@ -295,6 +299,9 @@ public sealed class ClusterTracker : BackgroundService
     ///     A peer already collected this pass is skipped too: the grid read is weakly consistent, so a peer
     ///     that changes cell — or realm — mid-enumeration can surface twice, and every later step assumes
     ///     a peer appears at most once. The grid it was found in first decides the realm it clusters in.
+    ///     The registration fence below guards the identity and snapshot reads only: a slot reused
+    ///     between the grid read and this call can still be attributed to the previous occupant's cell
+    ///     and realm for this one pass, and the next pass reads the grid entry the new occupant wrote.
     /// </summary>
     private void TryCollectMember(PeerIndex peer)
     {
@@ -664,7 +671,7 @@ public sealed class ClusterTracker : BackgroundService
             PassComponent info = components[component];
 
             foreach (PassMember member in MembersOf(component))
-                TryCollectAssignment(member, info.Id, info.Realm);
+                CollectAssignmentChange(member, info.Id, info.Realm);
         }
     }
 
@@ -677,9 +684,9 @@ public sealed class ClusterTracker : BackgroundService
     /// <summary>
     ///     Collects a feed event for one peer if its assignment — cluster and realm together — differs
     ///     from the last one published, and either the change is exempt from the debounce or the peer
-    ///     has dwelled long enough. Returns whether it collected a change.
+    ///     has dwelled long enough.
     /// </summary>
-    private bool TryCollectAssignment(PassMember member, string clusterId, string realm)
+    private void CollectAssignmentChange(PassMember member, string clusterId, string realm)
     {
         ref PeerClusterState state = ref peerStates[member.Peer.Value];
 
@@ -690,7 +697,7 @@ public sealed class ClusterTracker : BackgroundService
             state.CandidateClusterId = null;
             state.CandidateStreak = 0;
 
-            return false;
+            return;
         }
 
         // The debounce is bypassed on first assignment, teleport, realm change and deletion of the
@@ -701,7 +708,7 @@ public sealed class ClusterTracker : BackgroundService
                          || realmChanged
                          || !IsClusterLive(state.PublishedClusterId);
 
-        if (!immediate && !HasDwelled(ref state, clusterId)) return false;
+        if (!immediate && !HasDwelled(ref state, clusterId)) return;
 
         state.PublishedClusterId = clusterId;
         state.PublishedRealm = realm;
@@ -723,8 +730,6 @@ public sealed class ClusterTracker : BackgroundService
 
         if (session.DisplacedSession is not null)
             PulseMetrics.Clusters.TAKEOVERS.Add(1);
-
-        return true;
     }
 
     /// <summary>

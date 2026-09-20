@@ -16,8 +16,8 @@ namespace Pulse.Peers.Simulation;
 public sealed class IdentityBoard(int maxPeers)
 {
     private readonly IdentityRegistration?[] identitiesByPeerIds = new IdentityRegistration?[maxPeers];
-    private long nextRegistration;
     private readonly ConcurrentDictionary<string, PeerIndex> peerIdsByWallets = new (StringComparer.OrdinalIgnoreCase);
+    private long nextRegistration;
 
     /// <summary>
     ///     Registers a wallet whose auth chain carried no delegation, so the session key is the wallet.
@@ -39,16 +39,12 @@ public sealed class IdentityBoard(int maxPeers)
     public string? GetWalletIdByPeerIndex(PeerIndex id) =>
         GetIdentity(id)?.Wallet;
 
-    public string? GetSessionByPeerIndex(PeerIndex id) =>
-        GetIdentity(id)?.Session;
-
     /// <summary>
-    ///     Changes on every registration, including a same-wallet, same-session reconnect.
-    ///     A slow reader can therefore detect slot reuse even when it never observes an empty slot.
+    ///     The slot's wallet, session and registration as one immutable reference, or null for an
+    ///     unregistered slot. The registration changes on every <see cref="Set" />, including a
+    ///     same-wallet, same-session reconnect, so a slow reader can detect slot reuse even when it
+    ///     never observes an empty slot.
     /// </summary>
-    public long GetRegistration(PeerIndex id) =>
-        GetIdentity(id)?.Registration ?? 0;
-
     public IdentityRegistration? GetIdentity(PeerIndex id) =>
         Volatile.Read(ref identitiesByPeerIds[(int)id.Value]);
 

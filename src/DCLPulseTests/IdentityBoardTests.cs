@@ -15,12 +15,12 @@ public class IdentityBoardTests
         var board = new IdentityBoard(MAX_PEERS);
         var peer = new PeerIndex(7);
         board.Set(peer, "wallet", "session");
-        long before = board.GetRegistration(peer);
+        long before = board.GetIdentity(peer)?.Registration ?? throw new InvalidOperationException("Expected registered identity");
         board.Remove(peer);
         board.Set(peer, "wallet", "session");
 
-        Assert.That(board.GetRegistration(peer), Is.GreaterThan(before));
-        Assert.That(board.GetRegistration(new PeerIndex(8)), Is.Zero, "other slots are unchanged");
+        Assert.That(board.GetIdentity(peer)?.Registration, Is.GreaterThan(before));
+        Assert.That(board.GetIdentity(new PeerIndex(8)), Is.Null, "other slots are unchanged");
     }
 
     [Test]

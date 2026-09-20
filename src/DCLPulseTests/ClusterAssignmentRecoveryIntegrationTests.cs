@@ -22,19 +22,26 @@ public class ClusterAssignmentRecoveryIntegrationTests
 {
     private const string SESSION = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string OTHER_SESSION = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    private NatsPublisher publisher = null!;
-    private NatsConnection client = null!;
-    private ClusterBoard board = null!;
-    private CancellationTokenSource deadline = null!;
+    private string brokerUrl = string.Empty;
     private string wallet = string.Empty;
+    private NatsPublisher publisher;
+    private NatsConnection client;
+    private ClusterBoard board;
+    private CancellationTokenSource deadline;
+
+    [OneTimeSetUp]
+    public void RequireBroker()
+    {
+        // Decided once for the fixture, so no per-test SetUp ever exits early and TearDown never
+        // meets a half-built fixture.
+        brokerUrl = Environment.GetEnvironmentVariable("NATS_TEST_URL") ?? string.Empty;
+        if (brokerUrl.Trim().Length == 0)
+            Assert.Ignore("Set NATS_TEST_URL to run the real-broker recovery integration tests.");
+    }
 
     [SetUp]
     public async Task SetUp()
     {
-        string? brokerUrl = Environment.GetEnvironmentVariable("NATS_TEST_URL");
-        if (string.IsNullOrWhiteSpace(brokerUrl))
-            Assert.Ignore("Set NATS_TEST_URL to run the real-broker recovery integration tests.");
-
         deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         wallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
         board = new ClusterBoard();
@@ -82,14 +89,13 @@ public class ClusterAssignmentRecoveryIntegrationTests
     {
         try
         {
-            if (publisher != null)
-                await publisher.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            await publisher.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {
-            publisher?.Dispose();
-            if (client != null) await client.DisposeAsync();
-            deadline?.Dispose();
+            publisher.Dispose();
+            await client.DisposeAsync();
+            deadline.Dispose();
         }
     }
 
@@ -112,6 +118,38 @@ public class ClusterAssignmentRecoveryIntegrationTests
     public void Request_DifferentSession_TimesOutWithoutReplyingForAnotherOwner()
     {
         Assert.ThrowsAsync<NatsNoReplyException>(async () => await RequestBytesAsync(OTHER_SESSION));
+    }
+
+    [Test]
+    public void Request_WithoutASession_GetsNoReply()
+    {
+        Assert.ThrowsAsync<NatsNoReplyException>(async () => await RequestBytesAsync(string.Empty));
+    }
+
+    [Test]
+    public async Task Request_ChecksumCasedWalletSubject_ResolvesTheLowerCasedAssignment()
+    {
+        NatsMsg<byte[]> reply = await client.RequestAsync<byte[], byte[]>(
+            $"peer.{wallet.ToUpperInvariant()}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION), cancellationToken: deadline.Token);
+
+        Assert.That(PeerClusterChange.Parser.ParseFrom(reply.Data ?? []).ClusterId, Is.EqualTo("C1"));
+    }
+
+    [Test]
+    public async Task Request_NamingAForeignReplySubject_IsNotAnsweredThere()
+    {
+        string foreignSubject = $"peer.{wallet}.cluster_change";
+        await using INatsSub<byte[]> foreign = await client.SubscribeCoreAsync<byte[]>(foreignSubject, cancellationToken: deadline.Token);
+        await client.PingAsync(deadline.Token);
+
+        await client.PublishAsync($"peer.{wallet}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION),
+            replyTo: foreignSubject, cancellationToken: deadline.Token);
+
+        // The responder handles one subscription in order, and the broker delivers to one connection in
+        // order, so once this well-formed request has been answered any reply to the forged one would
+        // already be sitting on the foreign subscription.
+        Assert.That((await RequestAssignmentAsync(SESSION)).ClusterId, Is.EqualTo("C1"));
+        Assert.That(foreign.Msgs.TryRead(out _), Is.False, "a reply must never be published under a requester-chosen subject");
     }
 
     [Test]
@@ -210,7 +248,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
             [probeWallet] = new(room, "realm", SESSION),
         });
         SetRoom("before");
-        await using var proxy = new BrokerProxy(new Uri(Environment.GetEnvironmentVariable("NATS_TEST_URL") ?? throw new InvalidOperationException("Expected test broker URL")));
+        await using var proxy = new BrokerProxy(new Uri(brokerUrl));
         using var other = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
             Options.Create(new NatsOptions
             {
@@ -296,7 +334,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
 
     private void PublishAssignment(string clusterId, string realm)
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>(StringComparer.OrdinalIgnoreCase)
+        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
         {
             [wallet] = new(clusterId, realm, SESSION),
         });
@@ -306,7 +344,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
         new(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
             Options.Create(new NatsOptions
             {
-                Url = Environment.GetEnvironmentVariable("NATS_TEST_URL") ?? string.Empty,
+                Url = brokerUrl,
                 DiscoveryIntervalMs = 0,
                 AssignmentRefreshIntervalMs = 0,
             }), new SnapshotBoard(10, 4), assignments);
@@ -348,6 +386,8 @@ public class ClusterAssignmentRecoveryIntegrationTests
         private readonly Task accepting;
         private readonly Uri broker;
 
+        public string Url { get; }
+
         public BrokerProxy(Uri broker)
         {
             this.broker = broker;
@@ -356,7 +396,15 @@ public class ClusterAssignmentRecoveryIntegrationTests
             accepting = AcceptAsync();
         }
 
-        public string Url { get; }
+        public async ValueTask DisposeAsync()
+        {
+            await stopped.CancelAsync();
+            await accepting;
+            listener.Stop();
+            Disconnect();
+            await Task.WhenAll(forwards);
+            stopped.Dispose();
+        }
 
         public void Disconnect()
         {
@@ -398,16 +446,6 @@ public class ClusterAssignmentRecoveryIntegrationTests
                 catch (ObjectDisposedException) { }
                 catch (OperationCanceledException) when (stopped.IsCancellationRequested) { }
             }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await stopped.CancelAsync();
-            await accepting;
-            listener.Stop();
-            Disconnect();
-            await Task.WhenAll(forwards);
-            stopped.Dispose();
         }
     }
 }

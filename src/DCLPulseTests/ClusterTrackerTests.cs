@@ -10,6 +10,7 @@ using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse;
 using System.Numerics;
+using System.Text;
 
 namespace DCLPulseTests;
 
@@ -1104,6 +1105,29 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Assignments, Has.Count.EqualTo(1));
         Assert.That(clusterBoard.Assignments[WALLET].Session, Is.EqualTo(SESSION_B));
         Assert.That(clusterBoard.Assignments[WALLET].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(1))));
+    }
+
+    [Test]
+    public void RecoveryAssignments_AreKeyedByTheLowerCasedWallet_AndResolveFromAnyCasedSubject()
+    {
+        const string checksumWallet = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01";
+        // The resolver only answers a 42-byte session address; the fixture's short placeholders never reach it.
+        const string session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: checksumWallet, session: session);
+        using var publisher = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
+            Options.Create(new NatsOptions()), snapshotBoard, clusterBoard);
+
+        tracker.RunPass();
+
+        string lowerCased = checksumWallet.ToLowerInvariant();
+        Assert.Multiple(() =>
+        {
+            Assert.That(clusterBoard.Assignments.Keys, Is.EquivalentTo(new[] { lowerCased }));
+            Assert.That(clusterBoard.Assignments.ContainsKey(checksumWallet), Is.False, "the map is ordinal over lower-cased keys");
+            Assert.That(publisher.ResolveAssignment($"peer.{lowerCased}.cluster_assignment", Encoding.UTF8.GetBytes(session)).ClusterId, Is.EqualTo("C1"));
+            Assert.That(publisher.ResolveAssignment($"peer.{checksumWallet}.cluster_assignment", Encoding.UTF8.GetBytes(session)).ClusterId, Is.EqualTo("C1"));
+        });
     }
 
     private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300)

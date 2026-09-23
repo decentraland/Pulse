@@ -1091,7 +1091,87 @@ public class ClusterTrackerTests
         Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(oldRoom));
         tracker.RunPass();
         Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(2))));
-        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.Not.EqualTo(oldRoom));
+    }
+
+    [Test]
+    public void RecoveryAssignments_WithTheFeedUnconfigured_AreNotBuilt()
+    {
+        ClusterTracker tracker = CreateTracker(feedConfigured: false);
+        SetupCrowdOfThree();
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Is.Empty);
+        feedPublisher.Received(3).PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
+    }
+
+    [Test]
+    public void RecoveryAssignments_WithoutAnyChange_KeepThePreviousMap()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> first = clusterBoard.Assignments;
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Is.SameAs(first));
+    }
+
+    [Test]
+    public void RecoveryAssignments_AfterADeparture_AreRebuilt()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> first = clusterBoard.Assignments;
+        RemovePeer(new PeerIndex(2));
+
+        tracker.RunPass();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clusterBoard.Assignments, Is.Not.SameAs(first));
+            Assert.That(clusterBoard.Assignments.ContainsKey("0xwallet2"), Is.False);
+            Assert.That(first, Has.Count.EqualTo(3), "published snapshots are immutable");
+        });
+    }
+
+    [Test]
+    public void RecoveryAssignments_AfterAPublishedChange_AreRebuilt()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> first = clusterBoard.Assignments;
+        MovePeer(new PeerIndex(2), new Vector3(500, 0, 500));
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(2))));
+        Assert.That(first["0xwallet2"].ClusterId, Is.Not.EqualTo(ClusterIdOf(new PeerIndex(2))), "published snapshots are immutable");
+    }
+
+    [Test]
+    public void Reassignments_CountEveryChangePublishedInThePass()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
+        collector.StartAsync(CancellationToken.None);
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        tracker.RunPass();
+        MetricsSnapshot afterFirst = collector.TakeSnapshot();
+        tracker.RunPass();
+        MetricsSnapshot afterSecond = collector.TakeSnapshot();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(afterFirst.Clusters.TotalReassignments - before.Clusters.TotalReassignments, Is.EqualTo(3));
+            Assert.That(afterSecond.Clusters.TotalReassignments - afterFirst.Clusters.TotalReassignments, Is.Zero);
+        });
     }
 
     [Test]
@@ -1133,7 +1213,8 @@ public class ClusterTrackerTests
         });
     }
 
-    private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300)
+    private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300,
+        bool feedConfigured = true)
     {
         // Options.Create rather than a substitute: IOptions<T> has a real, trivial implementation, and
         // a substituted property getter depends on NSubstitute's ambient call context — which
@@ -1151,6 +1232,7 @@ public class ClusterTrackerTests
         return new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
+            Options.Create(new NatsOptions { Url = feedConfigured ? "nats://localhost:4222" : string.Empty }),
             grids,
             snapshotBoard,
             identityBoard,

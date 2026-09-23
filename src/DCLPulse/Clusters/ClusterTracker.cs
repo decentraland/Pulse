@@ -42,6 +42,9 @@ public sealed class ClusterTracker : BackgroundService
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
 
+    // Stats-only mode has no request responder and no hint loop, so no assignment map is built.
+    private readonly bool feedEnabled;
+
     // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
     // its own union-find state. Cleared between realms — the same cell exists in every realm, and
     // only same-realm neighbors may union.
@@ -70,6 +73,11 @@ public sealed class ClusterTracker : BackgroundService
     private long passNumber;
     private long nextClusterNumber;
 
+    // The map last handed to the board and the pass that built or kept it. Never mutated after it is
+    // handed over.
+    private Dictionary<string, ClusterAssignment>? recoveryAssignments;
+    private long recoveryAssignmentsPass;
+
     // Last value published for each gauge. An up-down counter takes a delta, not an absolute.
     private int lastClusterCount;
     private int lastClusterPeers;
@@ -78,6 +86,7 @@ public sealed class ClusterTracker : BackgroundService
     public ClusterTracker(
         ILogger<ClusterTracker> logger,
         IOptions<ClusterOptions> options,
+        IOptions<NatsOptions> natsOptions,
         RealmSpatialGrids realmGrids,
         SnapshotBoard snapshotBoard,
         IdentityBoard identityBoard,
@@ -93,6 +102,7 @@ public sealed class ClusterTracker : BackgroundService
         this.clusterBoard = clusterBoard;
         this.feedPublisher = feedPublisher;
 
+        feedEnabled = natsOptions.Value.IsConfigured;
         peerStates = new PeerClusterState[maxPeers];
     }
 
@@ -188,10 +198,23 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Replaces the board's assignment map with this pass's published assignments, keyed by the
-    ///     lower-cased wallet — the casing both the request subject and the hint subject carry.
+    ///     lower-cased wallet under ordinal comparison. Keeps the previous map when the previous pass
+    ///     built or kept it, this pass collected no change and no member left: every entry would be
+    ///     rebuilt equal to the one it already holds. Does nothing in stats-only mode.
     /// </summary>
     private void PublishRecoveryAssignments()
     {
+        if (!feedEnabled) return;
+
+        // Every member leaves CollectAssignmentChanges with a published assignment, and a member
+        // without a change this pass was collected, unchanged, by the previous one.
+        if (recoveryAssignments is { } previous && recoveryAssignmentsPass == passNumber - 1
+            && pendingAssignments.Count == 0 && previous.Count == members.Count)
+        {
+            recoveryAssignmentsPass = passNumber;
+            return;
+        }
+
         var assignments = new Dictionary<string, ClusterAssignment>(members.Count, StringComparer.Ordinal);
         foreach (PassMember member in members)
         {
@@ -200,6 +223,8 @@ public sealed class ClusterTracker : BackgroundService
                 assignments[member.Wallet.ToLowerInvariant()] = new ClusterAssignment(clusterId, realm, member.Session);
         }
 
+        recoveryAssignments = assignments;
+        recoveryAssignmentsPass = passNumber;
         clusterBoard.PublishAssignments(assignments);
     }
 

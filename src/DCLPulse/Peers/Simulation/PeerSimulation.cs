@@ -231,7 +231,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
 
-        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: true);
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: true, listener: listener);
     }
 
     /// <summary>
@@ -240,7 +240,8 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     requests (AoI enforcement — see <see cref="Messaging.ResyncRequestHandler" />), and
     ///     periodically sweep views whose subjects left the interest set.
     /// </summary>
-    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly, string? observerRealm = null)
+    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly,
+        string? observerRealm = null, SceneListenerState? listener = null)
     {
         if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
@@ -250,7 +251,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
-        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly, observerRealm);
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly, observerRealm, listener);
 
         observerState.ResyncRequests?.Clear();
 
@@ -333,7 +334,8 @@ public sealed class PeerSimulation : IPeerSimulation
         Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter,
         bool positionalOnly,
-        string? observerRealm)
+        string? observerRealm,
+        SceneListenerState? listener)
     {
         for (var i = 0; i < collector.Count; i++)
         {
@@ -382,7 +384,7 @@ public sealed class PeerSimulation : IPeerSimulation
             if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot latestSnapshot))
                 continue;
 
-            if (!positionalOnly && RejectSubjectOutsideObserverRealm(observerId, entry.Subject, views, latestSnapshot.Realm, observerRealm))
+            if (RejectSubjectOutsideObserverAoi(observerId, entry.Subject, views, in latestSnapshot, observerRealm, listener))
                 continue;
 
             if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, view, latestSnapshot))
@@ -408,19 +410,31 @@ public sealed class PeerSimulation : IPeerSimulation
         }
     }
 
-    private bool RejectSubjectOutsideObserverRealm(PeerIndex observerId, PeerIndex subjectId,
-        Dictionary<PeerIndex, PeerToPeerView> views, string? subjectRealm, string? observerRealm)
+    private bool RejectSubjectOutsideObserverAoi(PeerIndex observerId, PeerIndex subjectId,
+        Dictionary<PeerIndex, PeerToPeerView> views, in PeerSnapshot latestSnapshot, string? observerRealm,
+        SceneListenerState? listener)
     {
-        if (string.Equals(subjectRealm, observerRealm, StringComparison.Ordinal))
+        if (IsInsideObserverAoi(in latestSnapshot, observerRealm, listener))
             return false;
 
         // A subject can change realm on another worker after interest collection. Retire
-        // an existing view once; never announce an out-of-realm snapshot as a new subject.
+        // an existing view once; never announce an out-of-AoI snapshot as a new subject.
         if (views.Remove(subjectId))
-            SendPlayerLeft(observerId, subjectId, "subject outside observer realm");
+            SendPlayerLeft(observerId, subjectId, "subject outside observer AoI");
 
         return true;
     }
+
+    /// <summary>
+    ///     A player observer sees only its own realm; a scene listener sees only an announced
+    ///     parcel of the realm that parcel was announced for.
+    /// </summary>
+    private static bool IsInsideObserverAoi(in PeerSnapshot subject, string? observerRealm, SceneListenerState? listener) =>
+        listener == null
+            ? string.Equals(subject.Realm, observerRealm, StringComparison.Ordinal)
+            : subject.Realm != null
+              && listener.ParcelsByRealm.TryGetValue(subject.Realm, out HashSet<int>? parcels)
+              && parcels.Contains(subject.Parcel);
 
     private bool RetireChangedSubjectRealm(PeerIndex observerId, PeerIndex subjectId,
         PeerToPeerView view, PeerSnapshot latestSnapshot)

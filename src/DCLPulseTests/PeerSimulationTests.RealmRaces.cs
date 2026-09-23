@@ -59,8 +59,34 @@ public partial class PeerSimulationTests
         Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void RealmRace_SubjectMovesAfterListenerCollection_RetiresOnlyExistingView(bool previouslyVisible)
+    {
+        MakeSceneListener(observer, new Dictionary<string, int[]> { ["old"] = [0] });
+        PlaceInRealm(subject, "old", 2);
+        if (previouslyVisible)
+        {
+            simulation.SimulateTick(peers, 0);
+            Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
+        }
+
+        // The state a cross-worker teleport leaves between collection and TryRead: still
+        // indexed in the announced realm's grid under a snapshot naming an unannounced realm.
+        snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 3, serverTick: 30, realm: "new", isTeleport: true));
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(previouslyVisible
+            ? new[] { ServerMessage.MessageOneofCase.PlayerLeft }
+            : Array.Empty<ServerMessage.MessageOneofCase>()));
+        Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
+
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty, "An out-of-AoI subject must never be announced");
+    }
+
     [Test]
-    public void RealmRace_PlayerWithoutRealm_DoesNotUseSceneListenerExemption()
+    public void RealmRace_PlayerWithoutRealm_RejectsRealmedSubject()
     {
         PlaceInRealm(subject, "other", 2);
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));

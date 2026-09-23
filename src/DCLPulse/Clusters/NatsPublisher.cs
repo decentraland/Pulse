@@ -782,9 +782,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     /// <summary>
     ///     Publishes every current assignment on <c>peer.{wallet}.cluster_snapshot</c> once per
-    ///     <see cref="NatsOptions.AssignmentRefreshIntervalMs" />, with the same fields as the change
-    ///     event that first announced it. The session it carries is the ephemeral address the request
-    ///     path is keyed by — the value every <c>cluster_change</c> already carries, not a credential.
+    ///     <see cref="NatsOptions.AssignmentRefreshIntervalMs" />, carrying its cluster, realm and session
+    ///     and no displaced-session fields. The session is the ephemeral address the request path is
+    ///     keyed by — the value every <c>cluster_change</c> already carries, not a credential.
     /// </summary>
     private async Task PublishAssignmentRefreshesAsync(NatsConnection connection, CancellationTokenSource loops)
     {

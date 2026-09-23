@@ -10,8 +10,8 @@ namespace Pulse.Peers.Simulation;
 ///     Thread safety: .NET guarantees atomic reference reads/writes. A single
 ///     <see cref="Volatile.Write{T}" /> at registration and <see cref="Volatile.Read{T}" />
 ///     at lookup is sufficient — no seqlock needed because the value never mutates after write.
-///     Wallet, session and registration are published together as one immutable reference. A
-///     tracker reading a weakly consistent grid can never combine two registrations of a slot.
+///     Wallet, session and registration are published together as one immutable reference, so a
+///     single read never combines two registrations of a slot.
 /// </summary>
 public sealed class IdentityBoard(int maxPeers)
 {
@@ -65,4 +65,8 @@ public sealed class IdentityBoard(int maxPeers)
     }
 }
 
+/// <summary>
+///     One registration of a peer slot: the wallet, its session key and a sequence number distinct
+///     for every <see cref="IdentityBoard.Set(PeerIndex, string, string)" /> on the board.
+/// </summary>
 public sealed record IdentityRegistration(string Wallet, string Session, long Registration);

@@ -75,7 +75,8 @@ public static partial class PulseMetrics
     }
 
     /// <summary>
-    ///     Broker instruments for the outbound cluster feed.
+    ///     Broker instruments for the outbound cluster feed and the <c>cluster_assignment</c>
+    ///     request responder.
     /// </summary>
     public static class Nats
     {
@@ -83,7 +84,8 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.nats.published");
 
         /// <summary>
-        ///     Publishes that threw, counted for the outbox drain and the discovery heartbeat alike.
+        ///     Publishes that threw, counted for the outbox drain, the discovery heartbeat, assignment
+        ///     replies and recovery hints alike.
         ///     Every one of them is raised client-side — a timeout, a connect failure, an oversized
         ///     payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a
         ///     broker refusing one cannot fail the call. The lever is the broker or the path to it,

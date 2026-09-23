@@ -187,6 +187,8 @@ public sealed class ClusterTracker : BackgroundService
         // of the assignments that reference it.
         feedPublisher.PublishTopology(pass);
 
+        // The complete assignment map is visible before any change event for this pass is handed
+        // to the feed.
         CollectAssignmentChanges();
         PublishRecoveryAssignments();
         PublishAssignmentChanges();
@@ -684,8 +686,8 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Collects every changed assignment after debounce. The complete authoritative snapshot
-    ///     must become visible before any corresponding event can reach a consumer.
+    ///     Collects every changed assignment after debounce into <see cref="pendingAssignments" />
+    ///     without publishing it.
     /// </summary>
     private void CollectAssignmentChanges()
     {

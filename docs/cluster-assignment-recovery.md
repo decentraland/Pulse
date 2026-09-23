@@ -20,8 +20,11 @@ be lost on restart. Pulse now exposes its current assignment independently of th
   counted but spend none of the request budget, so they cannot crowd out a valid lookup.
 * Each instance handles at most `Nats__MaxAssignmentRequestsPerSecond` requests per second
   (default 5000, counted over fixed one-second windows) and drops the rest unanswered, counting
-  each drop as it happens and logging the window's total when the next window opens. A dropped request looks to the caller like any other timeout, and
-  the next hint retries it.
+  each drop as it happens and logging the window's total when the next window opens. A dropped
+  request looks to the caller like any other timeout, and the next hint retries it. The
+  subscription has no queue group, so every instance on the broker receives every request and
+  spends its budget on it before learning whether it owns the session: the budget effectively
+  bounds the request rate for all instances' peers combined, not for this instance's own.
 * Every 30 seconds, `peer.{lowercase-wallet}.cluster_snapshot` carries the same protobuf as
   a recovery hint, session included: the consumer's hint handler keys its re-query on that
   session, and it is the same ephemeral address every `cluster_change` already carries — a
@@ -69,14 +72,43 @@ Gatekeeper's membership guard identifies the wallet, not the ephemeral session. 
 takeover leaves the displaced session occupying the same desired room, hints alone cannot
 distinguish it from a healthy participant and will not evict it.
 
+## Overlapping deployments
+
+Every instance answers for the sessions in its own last completed pass, and nothing arbitrates
+between instances. Two consequences follow.
+
+* **A lingering instance keeps answering for a departed session.** When a client leaves old
+  instance A and reconnects to new instance B with the same ephemeral session, A drops the peer
+  from its assignment map only on the first pass after its transport reports the disconnect. An
+  ENet client that disconnects cleanly is reported at once, so A's window is at most one pass
+  (`Clusters:PassIntervalMs`, 1 s). A client that goes silent is reported when ENet's flat
+  inactivity deadline expires, `Transport:PeerTimeoutMs` (5 s) after its last packet, so the
+  window is up to that plus one pass; for a WebTransport client the native host's QUIC idle
+  timeout, which Pulse does not configure, takes the deadline's place. Throughout the window
+  both A and B answer `cluster_assignment` for the session, and a requester that takes the first
+  reply can receive A's stale cluster. Nothing corrects it until that requester queries again
+  after A's window has closed — at the latest on B's next hint,
+  `Nats__AssignmentRefreshIntervalMs` (30 s) away. Pulse has no per-peer liveness signal that
+  would let the tracker exclude such a peer sooner: the only cross-thread peer state it reads is
+  the grid, the snapshot ring and the identity board, which all keep a connected peer until the
+  transport reports it gone, and a stationary peer publishes no snapshots, so snapshot age
+  cannot tell it from a departed one. ENet's own last-receive time lives in the transport
+  thread's peer table and is not exported to any board.
+* **Cluster IDs collide across instances.** IDs are `{Clusters:IdPrefix}{n}` with a counter that
+  restarts at 1 in every process, so two instances with the same prefix mint the same IDs for
+  unrelated clusters, and `engine.islands` from each names them identically. A consumer that
+  treats the cluster ID as a room name without qualifying it by instance can place peers of
+  different instances in one room. Distinct `Clusters__IdPrefix` values per instance avoid it.
+
 ## Tests
 
 Tracker regressions cover stationary peers beyond the former one-hour mirror lifetime,
-departure, immediate slot reuse, replacement sessions, immutable snapshots, event ordering, debounce
-and lower-cased assignment keys. Resolver tests cover session isolation, malformed and
-session-less requests, any-cased subjects, session replacement, the reply-inbox guard and the
-request budget. Broker integration tests run with `NATS_TEST_URL` set; CI supplies a local NATS
-service. They cover multiple responders, publisher connection loss and resubscription, repeated
-unchanged hints, a failed reply followed by recovery, a session-less request, a checksum-cased
-subject and a request naming a foreign reply subject. Reply and hint publish successes/failures contribute
-to the existing NATS counters; intentional silence on a non-owned session is not a failure.
+departure, immediate slot reuse, replacement sessions, immutable snapshots, event ordering,
+debounce, lower-cased assignment keys, map reuse across unchanged passes and stats-only mode.
+Resolver tests cover session isolation, malformed and session-less requests, any-cased subjects,
+session replacement, the reply-inbox guard and the request budget. Broker integration tests run
+with `NATS_TEST_URL` set; CI supplies a local NATS service. They cover multiple responders,
+publisher connection loss and resubscription, repeated unchanged hints, a failed reply followed
+by recovery, a session-less request, a checksum-cased subject and a request naming a foreign
+reply subject. Reply and hint publish successes/failures contribute to the existing NATS
+counters; intentional silence on a non-owned session is not a failure.

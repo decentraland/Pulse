@@ -85,6 +85,23 @@ public partial class PeerSimulationTests
     }
 
     [Test]
+    public void RealmRace_SubjectMovesToAnotherListenerRealm_IsNotAnnouncedOutsideThatRealmsParcels()
+    {
+        MakeSceneListener(observer, new Dictionary<string, int[]> { ["old"] = [0], ["new"] = [5] });
+        PlaceInRealm(subject, "old", 2);
+        simulation.SimulateTick(peers, 0);
+        Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
+
+        // Collected through the old realm's grid, whose parcel 0 is announced, while the latest
+        // snapshot names parcel 0 of a realm that announces only parcel 5.
+        snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 3, serverTick: 30, realm: "new", isTeleport: true));
+        simulation.SimulateTick(peers, 1);
+        Assert.That(DrainAllMessages().Select(message => message.Message.MessageCase),
+            Is.EqualTo(new[] { ServerMessage.MessageOneofCase.PlayerLeft }));
+        Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
+    }
+
+    [Test]
     public void RealmRace_PlayerWithoutRealm_RejectsRealmedSubject()
     {
         PlaceInRealm(subject, "other", 2);

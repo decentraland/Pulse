@@ -659,26 +659,27 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     /// <summary>
     ///     Resolves a <c>peer.{wallet}.cluster_assignment</c> request whose body is the requester's
-    ///     42-byte ephemeral session. Returns an empty message for a malformed subject or body, an
-    ///     unknown wallet, or a session other than the one that published the assignment — there is
-    ///     no session-less mode.
+    ///     42-byte ephemeral session. Returns false for a malformed subject or body, an unknown wallet,
+    ///     or a session other than the one that published the assignment — there is no session-less
+    ///     mode.
     /// </summary>
-    internal PeerClusterChange ResolveAssignment(string subject, ReadOnlySpan<byte> data)
+    internal bool TryResolveAssignment(string subject, ReadOnlySpan<byte> data, [NotNullWhen(true)] out PeerClusterChange? response)
     {
-        string[] parts = subject.Split('.');
-        if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "cluster_assignment"
-            || !IsAddress(parts[1]) || data.Length != 42)
-            return new PeerClusterChange();
+        response = null;
 
-        string session = Encoding.UTF8.GetString(data);
-        if (!IsAddress(session)) return new PeerClusterChange();
+        // Bounds the decode below; any body of another length cannot equal a session address.
+        if (data.Length != 42) return false;
+
+        string[] parts = subject.Split('.');
+        if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "cluster_assignment") return false;
 
         // The assignment map is keyed by the lower-cased wallet; the subject may carry any casing.
         if (!clusterBoard.Assignments.TryGetValue(parts[1].ToLowerInvariant(), out ClusterAssignment assignment)
-            || !string.Equals(session, assignment.Session, StringComparison.OrdinalIgnoreCase))
-            return new PeerClusterChange();
+            || !string.Equals(Encoding.UTF8.GetString(data), assignment.Session, StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        return AssignmentMessage(assignment);
+        response = AssignmentMessage(assignment);
+        return true;
     }
 
     internal static bool IsRequestInbox(string? replyTo) =>
@@ -737,19 +738,11 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         return true;
     }
 
-    private static bool IsAddress(string value)
-    {
-        if (value.Length != 42 || !value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) return false;
-        foreach (char c in value.AsSpan(2))
-            if (!char.IsAsciiHexDigit(c)) return false;
-        return true;
-    }
-
     private static PeerClusterChange AssignmentMessage(ClusterAssignment assignment) => new ()
     {
         ClusterId = assignment.ClusterId,
         Realm = assignment.Realm,
-        Session = assignment.Session.ToLowerInvariant(),
+        Session = assignment.Session,
     };
 
     private async Task RespondToAssignmentRequestsAsync(NatsConnection connection, CancellationTokenSource loops)
@@ -764,11 +757,10 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                     if (!TryAcceptAssignmentRequest(request.ReplyTo, Environment.TickCount64)) continue;
                     try
                     {
-                        PeerClusterChange response = ResolveAssignment(request.Subject, request.Data);
                         // Multiple Pulse processes can overlap during a deployment. An instance that
                         // does not own this session sends nothing, so it cannot race the owner with
                         // an empty first response.
-                        if (response.ClusterId.Length == 0) continue;
+                        if (!TryResolveAssignment(request.Subject, request.Data, out PeerClusterChange? response)) continue;
                         await request.ReplyAsync(response, serializer: SERIALIZER, cancellationToken: loops.Token);
                         CountPublished();
                     }

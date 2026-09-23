@@ -1,3 +1,4 @@
+using Decentraland.Pulse;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Pulse.Clusters;
@@ -34,32 +35,36 @@ public class ClusterAssignmentRecoveryTests
     [TestCase("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
     public void Lookup_ActiveSession_ReturnsCurrentAssignment(string session)
     {
-        var response = publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session));
+        bool resolved = publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session),
+            out PeerClusterChange? response);
         Assert.Multiple(() =>
         {
-            Assert.That(response.ClusterId, Is.EqualTo("C1"));
-            Assert.That(response.Realm, Is.EqualTo("realm-a"));
-            Assert.That(response.Session, Is.EqualTo(SESSION));
-            Assert.That(response.DisplacedSession, Is.Empty);
-            Assert.That(response.DisplacedClusterId, Is.Empty);
+            Assert.That(resolved, Is.True);
+            Assert.That(response?.ClusterId, Is.EqualTo("C1"));
+            Assert.That(response?.Realm, Is.EqualTo("realm-a"));
+            Assert.That(response?.Session, Is.EqualTo(SESSION));
+            Assert.That(response?.DisplacedSession, Is.Empty);
+            Assert.That(response?.DisplacedClusterId, Is.Empty);
         });
     }
 
     [Test]
     public void Lookup_ChecksumCasedWalletInTheSubject_ResolvesTheLowerCasedKey()
     {
-        var response = publisher.ResolveAssignment($"peer.{WALLET.ToUpperInvariant()}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION));
-        Assert.That(response.ClusterId, Is.EqualTo("C1"));
+        publisher.TryResolveAssignment($"peer.{WALLET.ToUpperInvariant()}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION),
+            out PeerClusterChange? response);
+        Assert.That(response?.ClusterId, Is.EqualTo("C1"));
     }
 
     [TestCase("")]
     [TestCase(OTHER_SESSION)]
     [TestCase("garbage")]
     [TestCase("0xgggggggggggggggggggggggggggggggggggggggg")]
-    public void Lookup_MissingWrongOrMalformedSession_ReturnsEmpty(string session)
+    [TestCase(SESSION + " ")]
+    [TestCase(SESSION + SESSION)]
+    public void Lookup_MissingWrongOrMalformedSession_ResolvesNothing(string session)
     {
-        var response = publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session));
-        Assert.That(response.CalculateSize(), Is.Zero);
+        Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", session), Is.Null);
     }
 
     [TestCase("peer.0x2222222222222222222222222222222222222222.cluster_assignment")]
@@ -67,16 +72,17 @@ public class ClusterAssignmentRecoveryTests
     [TestCase("peer.wallet.cluster_assignment")]
     [TestCase("peer.0x1111111111111111111111111111111111111111.cluster_change")]
     [TestCase("other.0x1111111111111111111111111111111111111111.cluster_assignment")]
-    public void Lookup_UnknownWalletOrInvalidSubject_ReturnsEmpty(string subject)
+    [TestCase("peer.0x1111111111111111111111111111111111111111.cluster_assignment.extra")]
+    public void Lookup_UnknownWalletOrInvalidSubject_ResolvesNothing(string subject)
     {
-        Assert.That(publisher.ResolveAssignment(subject, Encoding.UTF8.GetBytes(SESSION)).CalculateSize(), Is.Zero);
+        Assert.That(Resolve(subject, SESSION), Is.Null);
     }
 
     [Test]
     public void Lookup_AfterDeparture_DoesNotReturnRetainedAssignment()
     {
         board.PublishAssignments(new Dictionary<string, ClusterAssignment>());
-        Assert.That(publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION)).CalculateSize(), Is.Zero);
+        Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", SESSION), Is.Null);
     }
 
     [Test]
@@ -88,8 +94,8 @@ public class ClusterAssignmentRecoveryTests
         });
         Assert.Multiple(() =>
         {
-            Assert.That(publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION)).CalculateSize(), Is.Zero);
-            Assert.That(publisher.ResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(OTHER_SESSION)).ClusterId, Is.EqualTo("C2"));
+            Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", SESSION), Is.Null);
+            Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", OTHER_SESSION)?.ClusterId, Is.EqualTo("C2"));
         });
     }
 
@@ -104,4 +110,7 @@ public class ClusterAssignmentRecoveryTests
     {
         Assert.That(NatsPublisher.IsRequestInbox(replyTo), Is.EqualTo(expected));
     }
+
+    private PeerClusterChange? Resolve(string subject, string body) =>
+        publisher.TryResolveAssignment(subject, Encoding.UTF8.GetBytes(body), out PeerClusterChange? response) ? response : null;
 }

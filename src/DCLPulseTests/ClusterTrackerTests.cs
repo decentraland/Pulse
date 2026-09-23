@@ -1,3 +1,4 @@
+using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -1125,8 +1126,10 @@ public class ClusterTrackerTests
         {
             Assert.That(clusterBoard.Assignments.Keys, Is.EquivalentTo(new[] { lowerCased }));
             Assert.That(clusterBoard.Assignments.ContainsKey(checksumWallet), Is.False, "the map is ordinal over lower-cased keys");
-            Assert.That(publisher.ResolveAssignment($"peer.{lowerCased}.cluster_assignment", Encoding.UTF8.GetBytes(session)).ClusterId, Is.EqualTo("C1"));
-            Assert.That(publisher.ResolveAssignment($"peer.{checksumWallet}.cluster_assignment", Encoding.UTF8.GetBytes(session)).ClusterId, Is.EqualTo("C1"));
+            Assert.That(publisher.TryResolveAssignment($"peer.{lowerCased}.cluster_assignment", Encoding.UTF8.GetBytes(session),
+                out PeerClusterChange? lowerResponse) ? lowerResponse.ClusterId : null, Is.EqualTo("C1"));
+            Assert.That(publisher.TryResolveAssignment($"peer.{checksumWallet}.cluster_assignment", Encoding.UTF8.GetBytes(session),
+                out PeerClusterChange? checksumResponse) ? checksumResponse.ClusterId : null, Is.EqualTo("C1"));
         });
     }
 

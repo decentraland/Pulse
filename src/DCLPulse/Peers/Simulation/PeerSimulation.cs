@@ -198,7 +198,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         AddSelfMirror(observerId, in observerSnapshot);
 
-        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false, observerSnapshot.Realm);
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, observerSnapshot.Realm, listener: null);
     }
 
     private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState, ulong realmGeneration)
@@ -231,7 +231,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
 
-        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: true, listener: listener);
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, observerRealm: null, listener);
     }
 
     /// <summary>
@@ -240,8 +240,8 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     requests (AoI enforcement — see <see cref="Messaging.ResyncRequestHandler" />), and
     ///     periodically sweep views whose subjects left the interest set.
     /// </summary>
-    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter, bool positionalOnly,
-        string? observerRealm = null, SceneListenerState? listener = null)
+    private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter,
+        string? observerRealm, SceneListenerState? listener)
     {
         if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
@@ -251,7 +251,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
-        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly, observerRealm, listener);
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, observerRealm, listener);
 
         observerState.ResyncRequests?.Clear();
 
@@ -333,10 +333,11 @@ public sealed class PeerSimulation : IPeerSimulation
         Dictionary<PeerIndex, PeerToPeerView> views,
         Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter,
-        bool positionalOnly,
         string? observerRealm,
         SceneListenerState? listener)
     {
+        bool positionalOnly = listener != null;
+
         for (var i = 0; i < collector.Count; i++)
         {
             InterestEntry entry = collector.Entries[i];
@@ -387,7 +388,7 @@ public sealed class PeerSimulation : IPeerSimulation
             if (RejectSubjectOutsideObserverAoi(observerId, entry.Subject, views, in latestSnapshot, observerRealm, listener))
                 continue;
 
-            if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, view, latestSnapshot))
+            if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, in view, in latestSnapshot))
                 isNew = true;
 
             if (isNew)
@@ -437,7 +438,7 @@ public sealed class PeerSimulation : IPeerSimulation
               && parcels.Contains(subject.Parcel);
 
     private bool RetireChangedSubjectRealm(PeerIndex observerId, PeerIndex subjectId,
-        PeerToPeerView view, PeerSnapshot latestSnapshot)
+        in PeerToPeerView view, in PeerSnapshot latestSnapshot)
     {
         if (view.LastSentSnapshot.RealmGeneration == latestSnapshot.RealmGeneration)
             return false;
@@ -446,14 +447,16 @@ public sealed class PeerSimulation : IPeerSimulation
         return true;
     }
 
-    private void SendPlayerLeft(PeerIndex observerId, PeerIndex subjectId, string reason)
+    private void SendPlayerLeft(PeerIndex observerId, PeerIndex subjectId, string? reason)
     {
         messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
         {
             PlayerLeft = new PlayerLeft { SubjectId = subjectId },
         }, PacketMode.RELIABLE));
 
-        logger.LogInformation("Sending PlayerLeft for subject {Subject} to observer {Observer} ({Reason})", subjectId, observerId, reason);
+        // A null reason sends without logging.
+        if (reason != null)
+            logger.LogInformation("Sending PlayerLeft for subject {Subject} to observer {Observer} ({Reason})", subjectId, observerId, reason);
     }
 
     /// <summary>
@@ -477,7 +480,7 @@ public sealed class PeerSimulation : IPeerSimulation
         if (string.Equals(view.LastSentWalletId, currentWallet, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        SendPlayerLeft(observerId, subjectId, "peer index aliased");
+        SendPlayerLeft(observerId, subjectId, reason: null);
 
         logger.LogWarning(
             "PeerIndex {Subject} aliased (view held '{OldWallet}', board now '{NewWallet}') — observer {Observer} notified",

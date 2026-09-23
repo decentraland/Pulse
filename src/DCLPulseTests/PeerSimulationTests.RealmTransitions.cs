@@ -13,13 +13,23 @@ namespace DCLPulseTests;
 
 public partial class PeerSimulationTests
 {
+    /// <summary>Gap whose closing tick is the sweep at which a tick-0 view is exactly VIEW_STALE_TICKS old.</summary>
+    private const int GAP_TO_STALE_BOUNDARY = (int)VIEW_STALE_TICKS - 1;
+
+    /// <summary>Gap that spans the first sweep evicting a tick-0 view.</summary>
+    private const int GAP_PAST_FIRST_SWEEP = (int)(VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL) + 1;
+
+    private PeerSimulation CreateSimulation(IAreaOfInterest aoi, bool selfMirrorEnabled = false,
+        ILogger<PeerSimulation>? logger = null) =>
+        new (aoi, snapshotBoard, realmGrids, identityBoard, messagePipe, SimulationSteps, timeProvider,
+            Substitute.For<ITransport>(), profileBoard, peerIndexAllocator,
+            logger ?? Substitute.For<ILogger<PeerSimulation>>(), selfMirrorEnabled);
+
     private void UseSpatialInterest()
     {
         areaOfInterest = new SpatialHashAreaOfInterest(realmGrids, snapshotBoard,
             Options.Create(new SpatialHashAreaOfInterestOptions()));
-        simulation = new PeerSimulation(areaOfInterest, snapshotBoard, realmGrids, identityBoard,
-            messagePipe, SimulationSteps, timeProvider, Substitute.For<ITransport>(),
-            profileBoard, peerIndexAllocator, Substitute.For<ILogger<PeerSimulation>>());
+        simulation = CreateSimulation(areaOfInterest);
     }
 
     private void PlaceInRealm(PeerIndex peer, string realm, uint seq, bool teleport = false, EmoteState? emote = null)
@@ -31,12 +41,12 @@ public partial class PeerSimulationTests
 
     [TestCase(true, 0)]
     [TestCase(true, 20)]
-    [TestCase(true, 59)]
-    [TestCase(true, 81)]
+    [TestCase(true, GAP_TO_STALE_BOUNDARY)]
+    [TestCase(true, GAP_PAST_FIRST_SWEEP)]
     [TestCase(false, 0)]
     [TestCase(false, 20)]
-    [TestCase(false, 59)]
-    [TestCase(false, 81)]
+    [TestCase(false, GAP_TO_STALE_BOUNDARY)]
+    [TestCase(false, GAP_PAST_FIRST_SWEEP)]
     public void RealmTransition_Coteleport_ReseedsIdentityBeforeFurtherMovement(bool observerFirst, int gapTicks)
     {
         UseSpatialInterest();
@@ -46,26 +56,34 @@ public partial class PeerSimulationTests
         Assert.That(DrainSingleMessage().Message.PlayerJoined.UserId, Is.EqualTo("0xSUBJECT_WALLET"));
 
         PlaceInRealm(observerFirst ? observer : subject, "new", 3, teleport: true);
+        var received = new List<(uint Tick, OutgoingMessage Message)>();
         for (uint tick = 1; tick <= gapTicks; tick++)
         {
             simulation.SimulateTick(peers, tick);
-            Assert.That(DrainAllMessages().All(m => m.Message.PlayerLeft != null), Is.True,
-                "Peers in different realms must not receive each other's state or identities");
+            foreach (OutgoingMessage message in DrainAllMessages()) received.Add((tick, message));
         }
 
+        uint closingTick = (uint)gapTicks + 1;
         PlaceInRealm(observerFirst ? subject : observer, "new", 3, teleport: true);
-        simulation.SimulateTick(peers, (uint)gapTicks + 1);
-        List<OutgoingMessage> messages = DrainAllMessages();
-        OutgoingMessage joined = messages.Single(m => m.Message.PlayerJoined != null);
+        simulation.SimulateTick(peers, closingTick);
+        foreach (OutgoingMessage message in DrainAllMessages()) received.Add((closingTick, message));
+
+        // An observer teleport retires the view at once; a subject teleport leaves it to the
+        // stale sweep, or to the observer's own realm change if that comes first.
+        uint leftTick = observerFirst ? 1u : Math.Min(FirstSweepTickAfter(0), closingTick);
+        Assert.That(received.Select(r => (r.Tick, r.Message.Message.MessageCase)), Is.EqualTo(new[]
+        {
+            (leftTick, ServerMessage.MessageOneofCase.PlayerLeft),
+            (closingTick, ServerMessage.MessageOneofCase.PlayerJoined),
+        }));
+        OutgoingMessage joined = received[1].Message;
         Assert.Multiple(() =>
         {
+            Assert.That(received[0].Message.Message.PlayerLeft.SubjectId, Is.EqualTo(subject.Value));
             Assert.That(joined.PacketMode, Is.EqualTo(PacketMode.RELIABLE));
             Assert.That(joined.Message.PlayerJoined.UserId, Is.EqualTo("0xSUBJECT_WALLET"));
             Assert.That(joined.Message.PlayerJoined.Realm, Is.EqualTo("new"));
             Assert.That(joined.Message.PlayerJoined.State.Sequence, Is.EqualTo(3u));
-            Assert.That(messages.Last().Message.PlayerJoined, Is.Not.Null,
-                "No delayed PlayerLeft may undo the newly restored identity");
-            Assert.That(messages.Any(m => m.Message.Teleported != null), Is.False);
         });
 
         // The reseeded baseline must support continued movement, not repeated joins or
@@ -112,7 +130,7 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void RealmTransition_ReseedsCurrentProfileAndActiveEmote_AndClearsOldResync()
+    public void RealmTransition_ReseedsCurrentProfileAndActiveEmote_WithoutAnsweringOldResync()
     {
         UseSpatialInterest();
         PlaceInRealm(observer, "old", 2);
@@ -133,7 +151,6 @@ public partial class PeerSimulationTests
         }));
         Assert.That(messages[1].Message.PlayerJoined.ProfileVersion, Is.EqualTo(7));
         Assert.That(messages[2].Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
-        Assert.That(peers[observer].ResyncRequests, Is.Empty);
         simulation.SimulateTick(peers, 2);
         Assert.That(DrainAllMessages(), Is.Empty, "Reseeding must not replay the same emote or profile every tick");
     }
@@ -231,20 +248,81 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void RealmTransition_ReusedObserverIndex_StartsWithFreshVisibility()
+    public void RealmTransition_SelfMirror_ReseedsAndKeepsItsViewStamped()
+    {
+        UseSpatialInterest();
+        simulation = CreateSimulation(areaOfInterest, selfMirrorEnabled: true);
+        PlaceInRealm(observer, "old", 2);
+        simulation.SimulateTick(peers, 0);
+        Assert.That(DrainSingleMessage().Message.PlayerJoined.UserId, Is.EqualTo(PeerSimulation.SELF_MIRROR_WALLET_ID));
+        PlaceInRealm(observer, "new", 3, teleport: true);
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.PlayerLeft,
+            ServerMessage.MessageOneofCase.PlayerJoined,
+        }));
+        Assert.That(messages[1].Message.PlayerJoined.Realm, Is.EqualTo("new"));
+        Assert.That(messages[1].Message.PlayerJoined.UserId, Is.EqualTo(PeerSimulation.SELF_MIRROR_WALLET_ID));
+        Assert.That(simulation.observerViews[observer][observer].LastSeenTick, Is.EqualTo(1u));
+        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
+            simulation.SimulateTick(peers, tick);
+        Assert.That(DrainAllMessages(), Is.Empty);
+        Assert.That(simulation.observerViews[observer], Does.ContainKey(observer));
+    }
+
+    [Test]
+    public void RealmTransition_InheritedEmoteSurvivesGenerationChangeAndHistoryEviction()
+    {
+        UseSpatialInterest();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
+        simulation.SimulateTick(peers, 0);
+        DrainAllMessages();
+        PlaceInRealm(observer, "new", 3, teleport: true);
+        PlaceInRealm(subject, "new", 3, teleport: true);
+        for (uint seq = 4; seq <= RING_CAPACITY * 2; seq++)
+            snapshotBoard.Publish(subject, TestSnapshots.Make(seq: seq));
+        Assert.That(snapshotBoard.TryRead(subject, 2, out _), Is.False);
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.PlayerLeft,
+            ServerMessage.MessageOneofCase.PlayerJoined,
+            ServerMessage.MessageOneofCase.EmoteStarted,
+        }));
+        Assert.That(messages[2].Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
+        Assert.That(messages[2].Message.EmoteStarted.Sequence, Is.EqualTo((uint)RING_CAPACITY * 2));
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
+    }
+
+    [Test]
+    public void RealmTransition_ObserverCleanupAndSlotReuse_UsesNewPeerStateGeneration()
     {
         UseSpatialInterest();
         PlaceInRealm(observer, "old", 2);
         PlaceInRealm(subject, "old", 2);
         simulation.SimulateTick(peers, 0);
         DrainAllMessages();
-        simulation.RemoveObserver(observer);
-        snapshotBoard.ClearActive(observer);
+        Assert.That(peers[observer].LastObservedRealmGeneration, Is.EqualTo(1ul));
+        peers[observer].ConnectionState = PeerConnectionState.DISCONNECTING;
+        peers[observer].TransportState = new PeerTransportState(ConnectionTime: 0, DisconnectionTime: 0);
+        timeProvider.MonotonicTime.Returns(6000u);
+        simulation.SimulateTick(peers, 1);
+        Assert.That(peers, Does.Not.ContainKey(observer));
+        Assert.That(simulation.observerViews, Does.Not.ContainKey(observer));
+
+        peers[observer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        Assert.That(peers[observer].LastObservedRealmGeneration, Is.Zero);
         snapshotBoard.SetActive(observer);
         PlaceInRealm(observer, "new", 1);
-        PlaceInRealm(subject, "new", 3);
-        simulation.SimulateTick(peers, 1);
+        PlaceInRealm(subject, "new", 3, teleport: true);
+        simulation.SimulateTick(peers, 2);
         Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("new"));
+        Assert.That(peers[observer].LastObservedRealmGeneration, Is.EqualTo(1ul));
     }
 
     /// <summary>

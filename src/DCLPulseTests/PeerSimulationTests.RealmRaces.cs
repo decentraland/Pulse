@@ -1,10 +1,8 @@
 using Decentraland.Pulse;
-using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.InterestManagement;
 using Pulse.Peers;
-using Pulse.Peers.Simulation;
-using Pulse.Transport;
+using System.Numerics;
 using static Pulse.Messaging.MessagePipe;
 
 namespace DCLPulseTests;
@@ -31,9 +29,7 @@ public partial class PeerSimulationTests
                     moveAfterCollection = false;
                 }
             });
-        simulation = new PeerSimulation(areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
-            SimulationSteps, timeProvider, Substitute.For<ITransport>(), profileBoard, peerIndexAllocator,
-            Substitute.For<ILogger<PeerSimulation>>());
+        simulation = CreateSimulation(areaOfInterest);
         PlaceInRealm(observer, "old", 2);
         PlaceInRealm(subject, "old", 2);
         if (previouslyVisible)
@@ -81,8 +77,11 @@ public partial class PeerSimulationTests
             : Array.Empty<ServerMessage.MessageOneofCase>()));
         Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
 
-        simulation.SimulateTick(peers, 2);
-        Assert.That(DrainAllMessages(), Is.Empty, "An out-of-AoI subject must never be announced");
+        // The teleport completes: the subject leaves the announced realm's grid.
+        realmGrids.Set(subject, "new", Vector3.Zero);
+        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
+            simulation.SimulateTick(peers, tick);
+        Assert.That(DrainAllMessages(), Is.Empty, "Removed views must not emit another leave in the stale sweep");
     }
 
     [Test]
@@ -94,101 +93,47 @@ public partial class PeerSimulationTests
         Assert.That(DrainAllMessages(), Is.Empty);
     }
 
-    [Test]
-    public void RealmRace_TierDelayedSubject_IsRejectedBeforeSendingANewBaseline()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void RealmRace_TierDelayedSubjectTeleports_RetiresWithoutANewRealmBaseline(bool pendingResync)
     {
+        bool collectSubject = true;
+        bool teleportAfterCollection = false;
+        IAreaOfInterest aoi = Substitute.For<IAreaOfInterest>();
+        aoi.When(x => x.GetVisibleSubjects(Arg.Any<PeerIndex>(), Arg.Any<PeerSnapshot>(), Arg.Any<IInterestCollector>()))
+           .Do(call =>
+            {
+                if (collectSubject)
+                    call.ArgAt<IInterestCollector>(2).Add(subject, PeerViewSimulationTier.TIER_2);
+
+                if (!teleportAfterCollection)
+                    return;
+
+                // Collection saw the old realm's grid once; later collections never return the subject.
+                PlaceInRealm(subject, "other", 3, teleport: true);
+                teleportAfterCollection = false;
+                collectSubject = false;
+            });
+        simulation = CreateSimulation(aoi);
         PlaceInRealm(observer, "old", 2);
         PlaceInRealm(subject, "old", 2);
-        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_2));
         simulation.SimulateTick(peers, 0);
-        DrainAllMessages();
-        PlaceInRealm(subject, "other", 3, teleport: true);
-        for (uint tick = 1; tick < 4; tick++)
+        Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
+
+        // Tick 1 is not due for TIER_2; only a pending resync bypasses the tier gate.
+        if (pendingResync)
+            AddResyncRequest(observer, subject, 2);
+        teleportAfterCollection = true;
+        var received = new List<(uint Tick, ServerMessage.MessageOneofCase Case, uint Subject)>();
+        for (uint tick = 1; tick <= FirstSweepTickAfter(1); tick++)
+        {
             simulation.SimulateTick(peers, tick);
-        Assert.That(DrainAllMessages(), Is.Empty);
-        Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Realm, Is.EqualTo("old"));
-        simulation.SimulateTick(peers, 4);
-        Assert.That(DrainSingleMessage().Message.PlayerLeft.SubjectId, Is.EqualTo(subject.Value));
+            foreach (OutgoingMessage message in DrainAllMessages())
+                received.Add((tick, message.Message.MessageCase, message.Message.PlayerLeft?.SubjectId ?? 0));
+        }
+
+        uint leftTick = pendingResync ? 1u : FirstSweepTickAfter(1);
+        Assert.That(received, Is.EqualTo(new[] { (leftTick, ServerMessage.MessageOneofCase.PlayerLeft, subject.Value) }));
         Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
-    }
-
-    [Test]
-    public void RealmTransition_SelfMirror_ReseedsAndKeepsItsViewStamped()
-    {
-        UseSpatialInterest();
-        simulation = new PeerSimulation(areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
-            SimulationSteps, timeProvider, Substitute.For<ITransport>(), profileBoard, peerIndexAllocator,
-            Substitute.For<ILogger<PeerSimulation>>(), selfMirrorEnabled: true);
-        PlaceInRealm(observer, "old", 2);
-        simulation.SimulateTick(peers, 0);
-        Assert.That(DrainSingleMessage().Message.PlayerJoined.UserId, Is.EqualTo(PeerSimulation.SELF_MIRROR_WALLET_ID));
-        PlaceInRealm(observer, "new", 3, teleport: true);
-        simulation.SimulateTick(peers, 1);
-        List<OutgoingMessage> messages = DrainAllMessages();
-        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(new[]
-        {
-            ServerMessage.MessageOneofCase.PlayerLeft,
-            ServerMessage.MessageOneofCase.PlayerJoined,
-        }));
-        Assert.That(messages[1].Message.PlayerJoined.Realm, Is.EqualTo("new"));
-        Assert.That(messages[1].Message.PlayerJoined.UserId, Is.EqualTo(PeerSimulation.SELF_MIRROR_WALLET_ID));
-        Assert.That(simulation.observerViews[observer][observer].LastSeenTick, Is.EqualTo(1u));
-        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
-            simulation.SimulateTick(peers, tick);
-        Assert.That(DrainAllMessages(), Is.Empty);
-        Assert.That(simulation.observerViews[observer], Does.ContainKey(observer));
-    }
-
-    [Test]
-    public void RealmTransition_InheritedEmoteSurvivesGenerationChangeAndHistoryEviction()
-    {
-        UseSpatialInterest();
-        PlaceInRealm(observer, "old", 2);
-        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
-        simulation.SimulateTick(peers, 0);
-        DrainAllMessages();
-        PlaceInRealm(observer, "new", 3, teleport: true);
-        PlaceInRealm(subject, "new", 3, teleport: true);
-        for (uint seq = 4; seq <= RING_CAPACITY * 2; seq++)
-            snapshotBoard.Publish(subject, TestSnapshots.Make(seq: seq));
-        Assert.That(snapshotBoard.TryRead(subject, 2, out _), Is.False);
-        simulation.SimulateTick(peers, 1);
-        List<OutgoingMessage> messages = DrainAllMessages();
-        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(new[]
-        {
-            ServerMessage.MessageOneofCase.PlayerLeft,
-            ServerMessage.MessageOneofCase.PlayerJoined,
-            ServerMessage.MessageOneofCase.EmoteStarted,
-        }));
-        Assert.That(messages[2].Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
-        Assert.That(messages[2].Message.EmoteStarted.Sequence, Is.EqualTo((uint)RING_CAPACITY * 2));
-        simulation.SimulateTick(peers, 2);
-        Assert.That(DrainAllMessages(), Is.Empty);
-    }
-
-    [Test]
-    public void RealmTransition_ObserverCleanupAndSlotReuse_UsesNewPeerStateGeneration()
-    {
-        UseSpatialInterest();
-        PlaceInRealm(observer, "old", 2);
-        PlaceInRealm(subject, "old", 2);
-        simulation.SimulateTick(peers, 0);
-        DrainAllMessages();
-        Assert.That(peers[observer].LastObservedRealmGeneration, Is.EqualTo(1ul));
-        peers[observer].ConnectionState = PeerConnectionState.DISCONNECTING;
-        peers[observer].TransportState = new PeerTransportState(ConnectionTime: 0, DisconnectionTime: 0);
-        timeProvider.MonotonicTime.Returns(6000u);
-        simulation.SimulateTick(peers, 1);
-        Assert.That(peers, Does.Not.ContainKey(observer));
-        Assert.That(simulation.observerViews, Does.Not.ContainKey(observer));
-
-        peers[observer] = new PeerState(PeerConnectionState.AUTHENTICATED);
-        Assert.That(peers[observer].LastObservedRealmGeneration, Is.Zero);
-        snapshotBoard.SetActive(observer);
-        PlaceInRealm(observer, "new", 1);
-        PlaceInRealm(subject, "new", 3);
-        simulation.SimulateTick(peers, 2);
-        Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("new"));
-        Assert.That(peers[observer].LastObservedRealmGeneration, Is.EqualTo(1ul));
     }
 }

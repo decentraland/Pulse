@@ -1008,16 +1008,19 @@ public class ClusterTrackerTests
         tracker.RunPass();
         feedPublisher.ClearReceivedCalls();
 
-        for (var pass = 0; pass < 3601; pass++) tracker.RunPass();
+        // One pass past an hour at the 1 s pass interval: the lifetime gatekeeper's mirror used to have.
+        const int passesPastFormerMirrorLifetime = 3601;
+        for (var pass = 0; pass < passesPastFormerMirrorLifetime; pass++) tracker.RunPass();
 
         Assert.That(clusterBoard.Assignments[WALLET], Is.EqualTo(new ClusterAssignment("C1", REALM, SESSION_A)));
         feedPublisher.DidNotReceive().PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
     }
 
-    [TestCase("other-wallet", SESSION_B)]
-    [TestCase(WALLET, SESSION_B)]
-    [TestCase(WALLET, SESSION_A)]
-    public void RecoveryAssignments_ReusedSlotBetweenPassesStartsFresh(string replacementWallet, string replacementSession)
+    [TestCase("other-wallet", SESSION_B, null)]
+    [TestCase(WALLET, SESSION_B, SESSION_A)]
+    [TestCase(WALLET, SESSION_A, null)]
+    public void RecoveryAssignments_ReusedSlotBetweenPassesStartsFresh(string replacementWallet, string replacementSession,
+        string? expectedDisplacedSession)
     {
         ClusterTracker tracker = CreateTracker(dwellPasses: 3);
         SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
@@ -1040,7 +1043,7 @@ public class ClusterTrackerTests
         });
         feedPublisher.Received(1).PublishClusterChange(replacementWallet, newRoom, REALM,
             Arg.Is<ClusterSession>(session => session.Session == replacementSession
-                && session.DisplacedSession == (replacementWallet == WALLET && replacementSession != SESSION_A ? SESSION_A : null)));
+                && session.DisplacedSession == expectedDisplacedSession));
     }
 
     [Test]

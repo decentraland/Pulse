@@ -480,10 +480,28 @@ public class NatsPublisherTests
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
         publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("second", "first", "C1"));
-        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("third", "second", "C2"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("third", null, null));
         PeerClusterChange queued = DequeueSingleChange(publisher);
-        Assert.That(queued.DisplacedSession, Is.EqualTo("second"));
-        Assert.That(queued.DisplacedClusterId, Is.EqualTo("C2"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.Session, Is.EqualTo("third"));
+            Assert.That(queued.DisplacedSession, Is.Empty);
+            Assert.That(queued.DisplacedClusterId, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void PendingTakeover_FollowedBySameSessionCarryingItsOwnCleanup_KeepsItsOwn()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+        publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("new", "old", "C1"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("new", "other", "C5"));
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.DisplacedSession, Is.EqualTo("other"));
+            Assert.That(queued.DisplacedClusterId, Is.EqualTo("C5"));
+        });
     }
 
     [Test]

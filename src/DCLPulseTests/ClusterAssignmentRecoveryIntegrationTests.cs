@@ -43,7 +43,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     public async Task SetUp()
     {
         deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        wallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        wallet = RandomWallet();
         board = new ClusterBoard();
         PublishAssignment("C1", "realm-a");
         publisher = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
@@ -171,7 +171,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     [TestCase(true)]
     public async Task Request_WithAnotherPublisher_OnlyMatchingOwnerResponds(bool otherHasDifferentSession)
     {
-        string probeWallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        string probeWallet = RandomWallet();
         var otherBoard = new ClusterBoard();
         var assignments = new Dictionary<string, ClusterAssignment>
         {
@@ -186,7 +186,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
         {
             // The first publisher has no probe assignment. Receiving this reply proves that
             // both subscriptions are active without a startup timing assumption.
-            await WaitForAssignmentAsync(probeWallet);
+            await WaitForAssignmentAsync(probeWallet, "the additional responder never became ready");
 
             for (var attempt = 0; attempt < 100; attempt++)
             {
@@ -204,7 +204,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     [Test]
     public async Task Reply_WhenPayloadCannotBePublished_RecordsFailureAndKeepsResponding()
     {
-        string probeWallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        string probeWallet = RandomWallet();
         var otherBoard = new ClusterBoard();
         void SetRealm(string realm) => otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
         {
@@ -215,7 +215,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
         await other.StartAsync(deadline.Token);
         try
         {
-            await WaitForAssignmentAsync(probeWallet);
+            await WaitForAssignmentAsync(probeWallet, "the additional responder never became ready");
             Assert.That(() => other.PublishedCount, Is.GreaterThan(0).After(1000, 10));
             long publishedBeforeFailure = other.PublishedCount;
             // The test broker uses the default 1 MiB max_payload. Serialization succeeds,
@@ -223,12 +223,12 @@ public class ClusterAssignmentRecoveryIntegrationTests
             SetRealm(new string('r', 2 * 1024 * 1024));
             Assert.ThrowsAsync<NatsNoReplyException>(async () => await client.RequestAsync<byte[], byte[]>(
                 $"peer.{probeWallet}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION), cancellationToken: deadline.Token));
-            Assert.That(other.PublishFailedCount, Is.EqualTo(1));
+            Assert.That(() => other.PublishFailedCount, Is.EqualTo(1).After(1000, 10));
             Assert.That(other.PublishedCount, Is.EqualTo(publishedBeforeFailure));
             Assert.That(other.DroppedCount, Is.Zero);
 
             SetRealm("recovered");
-            PeerClusterChange response = await WaitForAssignmentAsync(probeWallet);
+            PeerClusterChange response = await WaitForAssignmentAsync(probeWallet, "the responder never answered after the failed reply");
             Assert.That(response.Realm, Is.EqualTo("recovered"));
             Assert.That(() => other.PublishedCount, Is.GreaterThan(publishedBeforeFailure).After(1000, 10));
         }
@@ -241,7 +241,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     [Test]
     public async Task ConnectionLoss_ResumesAuthorityAndCurrentHintsWithoutMovement()
     {
-        string probeWallet = "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+        string probeWallet = RandomWallet();
         var otherBoard = new ClusterBoard();
         void SetRoom(string room) => otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
         {
@@ -262,7 +262,8 @@ public class ClusterAssignmentRecoveryIntegrationTests
         await other.StartAsync(deadline.Token);
         try
         {
-            Assert.That((await WaitForAssignmentAsync(probeWallet)).ClusterId, Is.EqualTo("before"));
+            Assert.That((await WaitForAssignmentAsync(probeWallet, "the proxied responder never became ready")).ClusterId,
+                Is.EqualTo("before"));
             proxy.Disconnect();
             while (other.ReconnectCount == 0)
                 await Task.Delay(10, deadline.Token);
@@ -270,7 +271,8 @@ public class ClusterAssignmentRecoveryIntegrationTests
             // This value cannot exist in any hint queued before the outage; observing it
             // below proves the periodic loop is still publishing after reconnection.
             SetRoom("after");
-            Assert.That((await WaitForAssignmentAsync(probeWallet)).ClusterId, Is.EqualTo("after"));
+            Assert.That((await WaitForAssignmentAsync(probeWallet, "the responder never answered after reconnecting")).ClusterId,
+                Is.EqualTo("after"));
             while (true)
             {
                 PeerClusterChange hint = PeerClusterChange.Parser.ParseFrom(
@@ -325,6 +327,35 @@ public class ClusterAssignmentRecoveryIntegrationTests
     }
 
     [Test]
+    public async Task RecoveryHints_CountAsPublished()
+    {
+        string probeWallet = RandomWallet();
+        var otherBoard = new ClusterBoard();
+        otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        {
+            [probeWallet] = new("probe", "realm", SESSION),
+        });
+        await using INatsSub<byte[]> hints = await client.SubscribeCoreAsync<byte[]>(
+            $"peer.{probeWallet}.cluster_snapshot", cancellationToken: deadline.Token);
+        await client.PingAsync(deadline.Token);
+        // Heartbeat off, empty outbox and no request sent to it: hints are all this publisher sends.
+        using NatsPublisher other = CreateAdditionalPublisher(otherBoard, assignmentRefreshIntervalMs: 50);
+        await other.StartAsync(deadline.Token);
+        try
+        {
+            await hints.Msgs.ReadAsync(deadline.Token);
+            await hints.Msgs.ReadAsync(deadline.Token);
+
+            Assert.That(() => other.PublishedCount, Is.GreaterThanOrEqualTo(2).After(1000, 10));
+            Assert.That(other.PublishFailedCount, Is.Zero);
+        }
+        finally
+        {
+            await other.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
     public async Task Stop_WithResponderAndPeriodicHintsRunning_CompletesWithinBound()
     {
         await publisher.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
@@ -340,16 +371,19 @@ public class ClusterAssignmentRecoveryIntegrationTests
         });
     }
 
-    private NatsPublisher CreateAdditionalPublisher(ClusterBoard assignments) =>
+    private static string RandomWallet() =>
+        "0x" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
+
+    private NatsPublisher CreateAdditionalPublisher(ClusterBoard assignments, int assignmentRefreshIntervalMs = 0) =>
         new(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
             Options.Create(new NatsOptions
             {
                 Url = brokerUrl,
                 DiscoveryIntervalMs = 0,
-                AssignmentRefreshIntervalMs = 0,
+                AssignmentRefreshIntervalMs = assignmentRefreshIntervalMs,
             }), new SnapshotBoard(10, 4), assignments);
 
-    private async Task<PeerClusterChange> WaitForAssignmentAsync(string targetWallet)
+    private async Task<PeerClusterChange> WaitForAssignmentAsync(string targetWallet, string timeoutMessage)
     {
         while (!deadline.IsCancellationRequested)
         {
@@ -363,7 +397,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
             catch (NatsNoRespondersException) when (!deadline.IsCancellationRequested) { }
         }
 
-        throw new TimeoutException("Additional assignment responder did not become ready");
+        throw new TimeoutException(timeoutMessage);
     }
 
     private ValueTask<NatsMsg<byte[]>> RequestBytesAsync(string session) =>

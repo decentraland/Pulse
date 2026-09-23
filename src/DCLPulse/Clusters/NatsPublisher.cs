@@ -144,6 +144,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private long droppedCount;
     private long supersededCount;
     private long reconnectCount;
+    private long assignmentRequestsRejectedCount;
+    private long assignmentRequestsThrottledCount;
 
     // Connection edges, held as ints so every transition is a single Interlocked exchange and each
     // edge emits its CONNECTED delta exactly once.
@@ -217,6 +219,21 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     /// </summary>
     public long SupersededCount =>
         Interlocked.Read(ref supersededCount);
+
+    /// <summary>
+    ///     Assignment requests discarded because their reply subject is missing or is not a request
+    ///     inbox. They never consume the request budget, so a flood of them cannot crowd out a valid
+    ///     lookup; the lever is broker permissions on <c>peer.*</c>.
+    /// </summary>
+    public long AssignmentRequestsRejectedCount =>
+        Interlocked.Read(ref assignmentRequestsRejectedCount);
+
+    /// <summary>
+    ///     Assignment requests refused over <see cref="NatsOptions.MaxAssignmentRequestsPerSecond" />,
+    ///     counted as they are refused.
+    /// </summary>
+    public long AssignmentRequestsThrottledCount =>
+        Interlocked.Read(ref assignmentRequestsThrottledCount);
 
     /// <summary>
     ///     Times the client has re-established the connection after losing it.
@@ -668,10 +685,28 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         replyTo is not null && replyTo.StartsWith(REQUEST_INBOX_PREFIX, StringComparison.Ordinal);
 
     /// <summary>
+    ///     Discards a request with no request inbox to reply to, then applies the request budget.
+    ///     The inbox check comes first so that requests this instance would never answer cannot
+    ///     spend the budget valid lookups depend on.
+    /// </summary>
+    internal bool TryAcceptAssignmentRequest(string? replyTo, long nowMs)
+    {
+        if (!IsRequestInbox(replyTo))
+        {
+            Interlocked.Increment(ref assignmentRequestsRejectedCount);
+            PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED.Add(1);
+            return false;
+        }
+
+        return TryAdmitAssignmentRequest(nowMs);
+    }
+
+    /// <summary>
     ///     Admits at most <see cref="NatsOptions.MaxAssignmentRequestsPerSecond" /> requests per fixed
     ///     one-second window and refuses the rest before they are resolved. Requests are counted rather
     ///     than replies, so a flood this instance would answer with silence is bounded too. Refusals are
-    ///     logged once, when the next window opens; a non-positive limit admits everything.
+    ///     counted as they happen and logged once, when the next window opens; a non-positive limit
+    ///     admits everything.
     /// </summary>
     internal bool TryAdmitAssignmentRequest(long nowMs)
     {
@@ -693,6 +728,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         if (requestsInWindow >= limit)
         {
             requestsDroppedInWindow++;
+            Interlocked.Increment(ref assignmentRequestsThrottledCount);
+            PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED.Add(1);
             return false;
         }
 
@@ -724,8 +761,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 await foreach (NatsMsg<byte[]> request in connection.SubscribeAsync<byte[]>(
                                    "peer.*.cluster_assignment", cancellationToken: loops.Token))
                 {
-                    if (!IsRequestInbox(request.ReplyTo)) continue;
-                    if (!TryAdmitAssignmentRequest(Environment.TickCount64)) continue;
+                    if (!TryAcceptAssignmentRequest(request.ReplyTo, Environment.TickCount64)) continue;
                     try
                     {
                         PeerClusterChange response = ResolveAssignment(request.Subject, request.Data);

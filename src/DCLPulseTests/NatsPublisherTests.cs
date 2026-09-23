@@ -504,6 +504,37 @@ public class NatsPublisherTests
     }
 
     [Test]
+    public void RequestBudget_CountsEachRefusalWhileTheWindowIsStillOpen()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAdmitAssignmentRequest(10_000);
+        publisher.TryAdmitAssignmentRequest(10_001);
+        publisher.TryAdmitAssignmentRequest(10_002);
+
+        Assert.That(publisher.AssignmentRequestsThrottledCount, Is.EqualTo(2));
+    }
+
+    [Test]
+    public void AssignmentRequest_WithoutARequestInbox_IsRejectedWithoutSpendingTheBudget()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        bool[] foreign = Enumerable.Range(0, 1_000)
+            .Select(i => publisher.TryAcceptAssignmentRequest(i % 2 == 0 ? null : "peer.0xabc.cluster_change", 10_000))
+            .ToArray();
+        bool valid = publisher.TryAcceptAssignmentRequest("_INBOX.abc", 10_001);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(foreign, Has.All.False);
+            Assert.That(valid, Is.True, "rejected requests must not spend the budget");
+            Assert.That(publisher.AssignmentRequestsRejectedCount, Is.EqualTo(1_000));
+            Assert.That(publisher.AssignmentRequestsThrottledCount, Is.Zero);
+        });
+    }
+
+    [Test]
     public void RequestBudget_NonPositiveLimit_AdmitsEverything()
     {
         using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 0);

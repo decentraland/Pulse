@@ -16,10 +16,11 @@ be lost on restart. Pulse now exposes its current assignment independently of th
   cannot name the session of.
 * Replies go only to the requester's inbox — a reply subject under the `_INBOX.` prefix both
   NATS clients default to. A request naming any other reply subject is ignored, so Pulse never
-  publishes a `PeerClusterChange` under a subject the requester chose.
+  publishes a `PeerClusterChange` under a subject the requester chose. Ignored requests are
+  counted but spend none of the request budget, so they cannot crowd out a valid lookup.
 * Each instance handles at most `Nats__MaxAssignmentRequestsPerSecond` requests per second
-  (default 5000, counted over fixed one-second windows) and drops the rest unanswered, logging
-  the count once per window. A dropped request looks to the caller like any other timeout, and
+  (default 5000, counted over fixed one-second windows) and drops the rest unanswered, counting
+  each drop as it happens and logging the window's total when the next window opens. A dropped request looks to the caller like any other timeout, and
   the next hint retries it.
 * Every 30 seconds, `peer.{lowercase-wallet}.cluster_snapshot` carries the same protobuf as
   a recovery hint, session included: the consumer's hint handler keys its re-query on that

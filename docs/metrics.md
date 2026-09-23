@@ -386,7 +386,7 @@ One takeover is one wallet taken over by a second device. The event carries the 
 
 ### NATS Published / Publish Failed / Dropped / Superseded / Reconnects / Connected
 
-Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_publish_failed_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`.
+Feed delivery health. `dcl_pulse_nats_published_total`, `dcl_pulse_nats_publish_failed_total`, `dcl_pulse_nats_dropped_total`, `dcl_pulse_nats_superseded_total`, `dcl_pulse_nats_reconnects_total`, `dcl_pulse_nats_connected`, plus the assignment responder's `dcl_pulse_nats_assignment_requests_rejected_total` and `dcl_pulse_nats_assignment_requests_throttled_total`.
 
 **Three ways a message does not arrive, three different levers.** Superseded is harmless, dropped is a capacity problem, publish-failed is a broker or network problem — and reaching for the wrong lever makes things worse, so they are separate counters rather than one.
 
@@ -395,13 +395,17 @@ The outbox keeps the two feeds apart because they supersede differently. `engine
 - **Superseded** — replaced before delivery by a newer message on the same subject. Expected whenever the broker lags a pass; harmless, because the replacement carries strictly fresher state. No lever.
 - **Dropped** — evicted from the outbox, and nothing else: more than `Nats:ChannelCapacity` distinct peers held an undelivered assignment at once, so the longest-admitted one was pushed out (admission order, not wait time — a supersede keeps a peer's original place in line). Actionable: a lost `cluster_change` leaves that peer addressed by a stale cluster until its *next* reassignment, which may never come if the peer stops moving. The lever is the capacity.
 - **Published** — counts the same four paths as *Publish Failed*: outbox drain, discovery heartbeat, assignment replies and periodic recovery hints. Its rate therefore steps up when the recovery feed ships — one hint per active peer per `Nats:AssignmentRefreshIntervalMs` plus reply traffic — so a rate baseline set before that deploy needs re-basing, not investigating.
+- **Assignment requests rejected** — `cluster_assignment` requests with no reply subject, or one outside `_INBOX.`, discarded unanswered. They spend no request budget. Gatekeeper always sends a request inbox, so any rate here means something else publishes on `peer.*`; the lever is broker permissions.
+- **Assignment requests throttled** — requests refused over `Nats:MaxAssignmentRequestsPerSecond`, counted as they are refused. A refused lookup times out at the caller and retries on the next hint.
 - **Publish Failed** — the publish call threw, on the outbox drain, discovery heartbeat, assignment reply or periodic recovery hint. Every one of these is raised **client-side** — a timeout, a connect failure, an oversized payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a broker that refuses a publish cannot fail the call (see the rejected-publish note below). The lever is the broker or the path to it. Raising `Nats:ChannelCapacity` in response is actively harmful: a larger outbox only lengthens the stale backlog the recovered connection has to drain before it delivers anything current.
 
 | Signal | Meaning |
 |---|---|
 | `connected` 1, published rising, dropped and publish-failed zero | Healthy — superseded may be non-zero and is fine |
 | `connected` 0 with a broker URL set | Broker unreachable — assignments stop reaching gatekeeper, clients stay in their previous rooms |
-| `Dropped N cluster assignment requests over the L/s budget` (Warning, at most once per second) | The responder is shedding a request flood. Legitimate lookups in that second timed out and retry on the next hint; the lever is `Nats:MaxAssignmentRequestsPerSecond` or broker permissions on `peer.*` |
+| **Assignment requests throttled rising** | The responder is shedding a request flood. Legitimate lookups in that second timed out and retry on the next hint; the lever is `Nats:MaxAssignmentRequestsPerSecond` or broker permissions on `peer.*` |
+| `Dropped N cluster assignment requests over the L/s budget` (Warning, at most once per second) | The same refusals, summed per window. Emitted when the next window opens, so a flood's final window is logged late or, if no request follows, never; read the counter for timing |
+| **Assignment requests rejected rising** | A publisher other than gatekeeper is sending requests without a request inbox. Nothing is answered and the budget is untouched; tighten broker permissions on `peer.*` |
 | `connected` 0 with no broker URL | Stats-only mode, by configuration — not a fault |
 | Superseded rising, dropped zero | Broker slower than the pass rate; freshness degrades but nothing is lost |
 | **Dropped rising** | More than `Nats:ChannelCapacity` peers pending at once. Raise the capacity toward `Transport.MaxPeers` — some peer is in the wrong room. Nothing about the broker is implied |

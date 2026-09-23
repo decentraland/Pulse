@@ -108,6 +108,19 @@ public static partial class PulseMetrics
         public static readonly Counter<long> SUPERSEDED =
             METER.CreateCounter<long>("pulse.nats.superseded");
 
+        /// <summary>
+        ///     <c>cluster_assignment</c> requests discarded for a missing or non-inbox reply subject.
+        ///     They spend no request budget; the lever is broker permissions on <c>peer.*</c>.
+        /// </summary>
+        public static readonly Counter<long> ASSIGNMENT_REQUESTS_REJECTED =
+            METER.CreateCounter<long>("pulse.nats.assignment_requests_rejected");
+
+        /// <summary>
+        ///     <c>cluster_assignment</c> requests refused over <c>Nats:MaxAssignmentRequestsPerSecond</c>.
+        /// </summary>
+        public static readonly Counter<long> ASSIGNMENT_REQUESTS_THROTTLED =
+            METER.CreateCounter<long>("pulse.nats.assignment_requests_throttled");
+
         public static readonly Counter<long> RECONNECTS =
             METER.CreateCounter<long>("pulse.nats.reconnects");
 

@@ -516,6 +516,62 @@ public class NatsPublisherTests
     }
 
     [Test]
+    public void RequestBudget_CountsRefusalsOnceAcrossAWindowRollover()
+    {
+        using var throttled = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED);
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAdmitAssignmentRequest(10_000);
+        publisher.TryAdmitAssignmentRequest(10_001);
+        publisher.TryAdmitAssignmentRequest(10_002);
+        publisher.TryAdmitAssignmentRequest(11_000);
+        publisher.TryAdmitAssignmentRequest(11_001);
+        publisher.TryAdmitAssignmentRequest(12_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(publisher.AssignmentRequestsThrottledCount, Is.EqualTo(3), "the rollover must not recount the closed window");
+            Assert.That(throttled.Total, Is.EqualTo(3), "the exported counter must agree with the property");
+        });
+    }
+
+    [Test]
+    public void RequestBudget_Refusal_IncrementsTheThrottledCounterOnly()
+    {
+        using var throttled = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED);
+        using var rejected = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED);
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAcceptAssignmentRequest("_INBOX.a", 10_000);
+        publisher.TryAcceptAssignmentRequest("_INBOX.b", 10_001);
+        publisher.TryAcceptAssignmentRequest("_INBOX.c", 10_002);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(throttled.Total, Is.EqualTo(2));
+            Assert.That(rejected.Total, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void AssignmentRequest_WithoutARequestInbox_IncrementsTheRejectedCounterOnly()
+    {
+        using var throttled = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED);
+        using var rejected = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED);
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAcceptAssignmentRequest(null, 10_000);
+        publisher.TryAcceptAssignmentRequest("peer.0xabc.cluster_change", 10_001);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rejected.Total, Is.EqualTo(2));
+            Assert.That(rejected.Total, Is.EqualTo(publisher.AssignmentRequestsRejectedCount), "the exported counter must agree with the property");
+            Assert.That(throttled.Total, Is.Zero);
+        });
+    }
+
+    [Test]
     public void AssignmentRequest_WithoutARequestInbox_IsRejectedWithoutSpendingTheBudget()
     {
         using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);

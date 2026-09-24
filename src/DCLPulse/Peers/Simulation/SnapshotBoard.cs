@@ -60,9 +60,7 @@ public sealed class SnapshotBoard
     ///     inherits the previous snapshot's realm so AoI lookups read the latest ring slot and
     ///     never see a null realm after the peer has been placed in one once.
     ///     <para />
-    ///     Returns the snapshot as stored, with both ledger columns resolved. Callers that need the
-    ///     inherited values — placing the peer in its realm's spatial grid, for one — read them from
-    ///     the result instead of paying for a second read of the slot they just wrote.
+    ///     Returns the stored snapshot with its emote, realm and realm generation resolved.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PeerSnapshot Publish(PeerIndex id, in PeerSnapshot snapshot)
@@ -74,6 +72,7 @@ public sealed class SnapshotBoard
         {
             Emote = snapshot.Emote ?? InheritEmoteState(index),
             Realm = snapshot.Realm ?? InheritRealm(index),
+            RealmGeneration = ResolveRealmGeneration(index, snapshot.Realm),
         };
 
         // Increment to odd (write in progress)
@@ -125,6 +124,23 @@ public sealed class SnapshotBoard
             return null;
 
         return rings[index][lastSeq % ringCapacity].Realm;
+    }
+
+    /// <summary>
+    ///     Advances the lifecycle only for an explicit change of realm. The generation is
+    ///     derived from the prior ledger, never from the incoming snapshot's field, and is
+    ///     preserved even after every snapshot containing the transition has been overwritten.
+    /// </summary>
+    private ulong ResolveRealmGeneration(int index, string? realm)
+    {
+        uint lastSeq = lastSeqs[index];
+        if (lastSeq == uint.MaxValue)
+            return realm == null ? 0ul : 1ul;
+
+        ref readonly PeerSnapshot previous = ref rings[index][lastSeq % ringCapacity];
+        return realm != null && !string.Equals(previous.Realm, realm, StringComparison.Ordinal)
+            ? unchecked(previous.RealmGeneration + 1)
+            : previous.RealmGeneration;
     }
 
     /// <summary>

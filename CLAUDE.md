@@ -150,7 +150,7 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 
 **TELEPORT_REQUEST** (ch0, reliable)
 - Client-initiated teleport (e.g. triggered by game logic)
-- Server validates and rebroadcasts as TELEPORT to all observers
+- Server validates and rebroadcasts as TELEPORT to observers that see the peer in the same realm; a realm-changing teleport reaches observers as PLAYER_LEFT / PLAYER_JOINED instead (see TELEPORT below)
 
 **RESYNC_REQUEST** (ch0, reliable)
 - Sent when a received STATE_DELTA can't be applied (gap in seq)
@@ -160,7 +160,7 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 - Alternative to `HANDSHAKE`: same Decentraland ECDSA auth chain, plus an area of interest announced at connect as `repeated SceneListenerAoi` — one entry per realm, each with a non-empty `realm` (same rules as `TeleportRequest.realm`) and its inclusive parcel-coordinate rects (`repeated ParcelRect`, a single parcel is `min == max`). The server validates and expands each realm's rects to its own parcel set. `SceneListener:MaxParcels` (default 4096) is **one cumulative budget over realms and parcels alike** — Σ over realms of (a fixed per-realm charge + Σ nominal rect areas) — so extra realms buy no extra area and extra area buys no extra realms; over budget is rejected, never clamped. **A peer whose source IP is in `Transport:Hardening:IpLimiter:Whitelist` is exempt from the budget entirely** — not raised, not clamped, simply not applied, in both dimensions; every other rule (realm length, one entry per realm, rect well-formedness and bounds) still holds. A realm may appear once
 - **Per realm, not per connection**, because parcels only mean anything within a realm: every world numbers its parcels from 0,0, so an authoritative server cohosting scenes from several worlds would otherwise need a connection per world — which the wallet-unique session rule and the per-IP listener cap both forbid
 - Authenticates a **receive-only listener**: it never becomes a subject (no snapshot/grid registration, so players can never see it) and observes only players standing in an announced parcel *of the realm that parcel was announced for*
-- Receives the positional and emote stream — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`, `EmoteStarted`, `EmoteStopped`; profile-version messages are suppressed for listener observers. `PlayerJoined` and `Teleported` carry the subject's realm, which is what lets a multi-realm listener tell two identically-numbered parcels apart
+- Receives the positional and emote stream — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`, `EmoteStarted`, `EmoteStopped`; profile-version messages are suppressed for listener observers. `PlayerJoined` and `Teleported` carry the subject's realm, which is what lets a multi-realm listener tell two identically-numbered parcels apart. A subject that moves between two observed realms is sent `PlayerLeft`, then a `PlayerJoined` carrying the new realm once it stands in a parcel announced for that realm — never a cross-realm `Teleported`
 - `RESYNC_REQUEST` and `SCENE_LISTENER_UPDATE` remain allowed; every other inbound message from a listener is silently dropped and counted
 
 **SCENE_LISTENER_UPDATE** (ch0, reliable)
@@ -197,7 +197,7 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 
 **TELEPORT** (ch0, reliable, broadcast to interest set)
 - Server-authoritative teleport position with server_tick
-- Carries the subject's `realm` (a teleport may move the peer to a different realm)
+- Carries the subject's `realm`, always the realm the observer already knows it in: a subject that changes realm is never sent as TELEPORT. Observers of the old realm get PLAYER_LEFT, observers of the new realm PLAYER_JOINED (a scene listener observing both gets both, in that order, the join only for a parcel announced in the new realm), and an observer that changes realm itself has all its views retired and reseeded
 - Receiver clears interpolation buffer and snaps to position
 
 ---

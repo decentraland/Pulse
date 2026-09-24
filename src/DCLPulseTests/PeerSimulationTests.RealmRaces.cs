@@ -110,9 +110,35 @@ public partial class PeerSimulationTests
         Assert.That(DrainAllMessages(), Is.Empty);
     }
 
+    [Test]
+    public void RealmRace_TierDelayedRoundTrip_RetiresAtOnceAndRejoinsOnTheNextDueTick()
+    {
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2);
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_2));
+        simulation.SimulateTick(peers, 0);
+        Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
+
+        PlaceInRealm(subject, "away", 3, teleport: true);
+        PlaceInRealm(subject, "old", 4, teleport: true);
+        var received = new List<(uint Tick, ServerMessage.MessageOneofCase Case)>();
+        for (uint tick = 1; tick <= 4; tick++)
+        {
+            simulation.SimulateTick(peers, tick);
+            foreach (OutgoingMessage message in DrainAllMessages())
+                received.Add((tick, message.Message.MessageCase));
+        }
+
+        Assert.That(received, Is.EqualTo(new[]
+        {
+            (1u, ServerMessage.MessageOneofCase.PlayerLeft),
+            (4u, ServerMessage.MessageOneofCase.PlayerJoined),
+        }));
+    }
+
     [TestCase(false)]
     [TestCase(true)]
-    public void RealmRace_TierDelayedSubjectTeleports_RetiresWithoutANewRealmBaseline(bool pendingResync)
+    public void RealmRace_TierDelayedSubjectTeleports_RetiresOnTheSameTick(bool pendingResync)
     {
         bool collectSubject = true;
         bool teleportAfterCollection = false;
@@ -137,7 +163,7 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, 0);
         Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
 
-        // Tick 1 is not due for TIER_2; only a pending resync bypasses the tier gate.
+        // Tick 1 is not due for TIER_2; the retirement must not wait for a due tick or a resync.
         if (pendingResync)
             AddResyncRequest(observer, subject, 2);
         teleportAfterCollection = true;
@@ -149,8 +175,7 @@ public partial class PeerSimulationTests
                 received.Add((tick, message.Message.MessageCase, message.Message.PlayerLeft?.SubjectId ?? 0));
         }
 
-        uint leftTick = pendingResync ? 1u : FirstSweepTickAfter(1);
-        Assert.That(received, Is.EqualTo(new[] { (leftTick, ServerMessage.MessageOneofCase.PlayerLeft, subject.Value) }));
+        Assert.That(received, Is.EqualTo(new[] { (1u, ServerMessage.MessageOneofCase.PlayerLeft, subject.Value) }));
         Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
     }
 }

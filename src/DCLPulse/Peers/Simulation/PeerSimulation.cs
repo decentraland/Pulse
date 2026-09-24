@@ -375,13 +375,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 views[entry.Subject] = view;
             }
 
-            // Skip if this tier is not due on this tick — but never gate a pending resync
-            bool hasResync = !isNew && resyncRequests != null && resyncRequests.ContainsKey(entry.Subject);
-            int tierIndex = entry.Tier.Value;
-
-            if (!hasResync && tierIndex < tierDivisors.Length && tickCounter % tierDivisors[tierIndex] != 0)
-                continue;
-
+            // AoI and realm lifecycle are checked every tick; the tier gate below paces only delivery.
             if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot latestSnapshot))
                 continue;
 
@@ -389,7 +383,17 @@ public sealed class PeerSimulation : IPeerSimulation
                 continue;
 
             if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, in view, in latestSnapshot))
+            {
+                views.Remove(entry.Subject);
                 isNew = true;
+            }
+
+            // Skip if this tier is not due on this tick — but never gate a pending resync
+            bool hasResync = !isNew && resyncRequests != null && resyncRequests.ContainsKey(entry.Subject);
+            int tierIndex = entry.Tier.Value;
+
+            if (!hasResync && tierIndex < tierDivisors.Length && tickCounter % tierDivisors[tierIndex] != 0)
+                continue;
 
             if (isNew)
             {

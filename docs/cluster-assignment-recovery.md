@@ -35,6 +35,11 @@ be lost on restart. Pulse now exposes its current assignment independently of th
 * What a broker client may learn is bounded by broker permissions, not by these payloads:
   `engine.islands` already lists every wallet per cluster each pass. Scope publish and
   subscribe on `peer.*` to Pulse and gatekeeper.
+* The request/reply path needs two grants beyond `peer.*`, or every lookup times out. Pulse
+  publishes each reply to the requester's `_INBOX.` subject: grant it response permissions
+  (`allow_responses`, one response per request), which is narrower than publish on
+  `_INBOX.>`. Gatekeeper receives the reply on its own inbox, so it needs subscribe on
+  `_INBOX.>`.
 * Neither reply nor hint repeats displaced-session cleanup. The original `cluster_change`
   event retains takeover semantics. Coalescing subsequent moves for the same replacement
   session preserves any displaced identity still pending in the outbox.

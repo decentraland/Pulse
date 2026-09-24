@@ -253,6 +253,7 @@ builder.Services.AddSingleton(sp =>
     return new ClusterTracker(
         sp.GetRequiredService<ILogger<ClusterTracker>>(),
         sp.GetRequiredService<IOptions<ClusterOptions>>(),
+        sp.GetRequiredService<IOptions<NatsOptions>>(),
         sp.GetRequiredService<RealmSpatialGrids>(),
         sp.GetRequiredService<SnapshotBoard>(),
         sp.GetRequiredService<IdentityBoard>(),

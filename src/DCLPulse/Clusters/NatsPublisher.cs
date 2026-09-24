@@ -16,7 +16,7 @@ namespace Pulse.Clusters;
 
 /// <summary>
 ///     Sole owner of Pulse's NATS connection and the only component that talks to the broker.
-///     Publish-only and fail-soft: producers hand messages to a coalescing outbox and never block, so
+///     Fail-soft: producers hand messages to a coalescing outbox and never block, so
 ///     a slow, stalled or absent broker can delay the feed but never a tracker pass.
 ///     <para />
 ///     The outbox keeps the two feeds apart because they supersede differently.
@@ -64,6 +64,14 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     private const string DISCOVERY_SUBJECT = "engine.discovery";
 
+    // A reply goes only to a request inbox, the subject family NATS clients name under this prefix
+    // by default. A reply anywhere else would be a schema-valid message published under a subject the
+    // requester chose, so requests naming one are ignored.
+    private const string REQUEST_INBOX_PREFIX = "_INBOX.";
+
+    // Width of the fixed window MaxAssignmentRequestsPerSecond is counted over.
+    private const long REQUEST_WINDOW_MS = 1000;
+
     /// <summary>
     ///     Wait before rebuilding a faulted pipeline. Not a reconnect delay — the client handles
     ///     broker loss itself — only a guard against a reproducing fault spinning the loop.
@@ -87,6 +95,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     private readonly NatsOptions options;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly ClusterBoard clusterBoard;
     private readonly bool feedEnabled;
 
     // Outbox. Every access runs under outboxLock, and all three callers mutate: the tracker thread
@@ -135,22 +144,31 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private long droppedCount;
     private long supersededCount;
     private long reconnectCount;
+    private long assignmentRequestsRejectedCount;
+    private long assignmentRequestsThrottledCount;
 
     // Connection edges, held as ints so every transition is a single Interlocked exchange and each
     // edge emits its CONNECTED delta exactly once.
     private int connected;
     private int everConnected;
 
+    // Request budget, touched by the responder loop alone.
+    private long requestWindowStartMs;
+    private int requestsInWindow;
+    private int requestsDroppedInWindow;
+
     public NatsPublisher(
         ILogger<NatsPublisher> logger,
         ILoggerFactory loggerFactory,
         IOptions<NatsOptions> options,
-        SnapshotBoard snapshotBoard)
+        SnapshotBoard snapshotBoard,
+        ClusterBoard clusterBoard)
     {
         this.logger = logger;
         this.loggerFactory = loggerFactory;
         this.options = options.Value;
         this.snapshotBoard = snapshotBoard;
+        this.clusterBoard = clusterBoard;
 
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
@@ -175,7 +193,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         Interlocked.Read(ref publishedCount);
 
     /// <summary>
-    ///     Publishes that threw, counted for the outbox drain and the heartbeat alike. Every one of
+    ///     Publishes that threw, including outbox, heartbeat, recovery replies and hints. Every one of
     ///     them is raised client-side — a timeout, a connect failure, an oversized payload, a subject
     ///     the client rejects — because core NATS never acknowledges a PUB, so a broker refusing one
     ///     cannot fail the call: that surfaces through <see cref="OnServerError" /> and a silent gap at
@@ -201,6 +219,21 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     /// </summary>
     public long SupersededCount =>
         Interlocked.Read(ref supersededCount);
+
+    /// <summary>
+    ///     Assignment requests discarded because their reply subject is missing or is not a request
+    ///     inbox. They never consume the request budget, so a flood of them cannot crowd out a valid
+    ///     lookup; the lever is broker permissions on <c>peer.*</c>.
+    /// </summary>
+    public long AssignmentRequestsRejectedCount =>
+        Interlocked.Read(ref assignmentRequestsRejectedCount);
+
+    /// <summary>
+    ///     Assignment requests refused over <see cref="NatsOptions.MaxAssignmentRequestsPerSecond" />,
+    ///     counted as they are refused.
+    /// </summary>
+    public long AssignmentRequestsThrottledCount =>
+        Interlocked.Read(ref assignmentRequestsThrottledCount);
 
     /// <summary>
     ///     Times the client has re-established the connection after losing it.
@@ -392,6 +425,15 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             {
                 superseded = true;
 
+                // A room change for the replacement session must not erase a takeover that
+                // has not left the outbox yet. Never carry cleanup across another takeover.
+                if (string.Equals(change.Session, previous.Session, StringComparison.OrdinalIgnoreCase)
+                    && change.DisplacedSession.Length == 0)
+                {
+                    change.DisplacedSession = previous.DisplacedSession;
+                    change.DisplacedClusterId = previous.DisplacedClusterId;
+                }
+
                 // Replaced and returned in one step, so the free list cannot hold an instance the
                 // outbox still names.
                 pendingChangeBySubject[subject] = change;
@@ -514,6 +556,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         if (!heartbeatEnabled)
             logger.LogWarning("NATS discovery heartbeat disabled (Nats:DiscoveryIntervalMs is not positive)");
 
+        if (options.AssignmentRefreshIntervalMs <= 0)
+            logger.LogWarning("NATS assignment recovery hints disabled (Nats:AssignmentRefreshIntervalMs is not positive)");
+
+        if (options.MaxAssignmentRequestsPerSecond <= 0)
+            logger.LogWarning("NATS assignment request budget disabled (Nats:MaxAssignmentRequestsPerSecond is not positive)");
+
         // A non-positive capacity makes the eviction test pass on every admission, so each new
         // assignment throws out the one before it and the feed delivers almost nothing. It still
         // "works", which is what makes it worth saying out loud at startup rather than leaving to be
@@ -552,7 +600,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Owns one connection and the two loops that use it, for as long as they stay healthy.
+    ///     Owns one connection and its publishing and assignment-response loops while healthy.
     ///     Returns only on shutdown; any other exit propagates to the supervision loop, which rebuilds.
     /// </summary>
     private async Task RunConnectionAsync(Channel<byte> signal, bool heartbeatEnabled, CancellationToken stoppingToken)
@@ -573,7 +621,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             // unlimited retries (MaxReconnectRetry -1) with 2–5 s backoff plus jitter.
             //
             // The one default worth overriding: the client normally gives up permanently once the
-            // server returns the same auth error twice. For a publish-only feed that would turn a
+            // server returns the same auth error twice. For this background feed that would turn a
             // rotated credential into a silently dead feed recoverable only by restarting Pulse, so
             // it keeps retrying instead and surfaces the state through dcl_pulse_nats_connected.
             IgnoreAuthErrorAbort = true,
@@ -593,6 +641,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             await Task.WhenAll(
                 DrainAsync(connection, signal, loops),
+                RespondToAssignmentRequestsAsync(connection, loops),
+                PublishAssignmentRefreshesAsync(connection, loops),
                 heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask);
         }
         finally
@@ -604,6 +654,169 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             // Pairs the gauge before the next iteration builds a fresh connection, so a rebuild
             // cannot leave dcl_pulse_nats_connected stuck at 1.
             MarkDisconnected();
+        }
+    }
+
+    /// <summary>
+    ///     Resolves a <c>peer.{wallet}.cluster_assignment</c> request whose body is the requester's
+    ///     42-byte ephemeral session. Returns false for a malformed subject or body, an unknown wallet,
+    ///     or a session other than the one that published the assignment — there is no session-less
+    ///     mode.
+    /// </summary>
+    internal bool TryResolveAssignment(string subject, ReadOnlySpan<byte> data, [NotNullWhen(true)] out PeerClusterChange? response)
+    {
+        response = null;
+
+        // Bounds the decode below; any body of another length cannot equal a session address.
+        if (data.Length != 42) return false;
+
+        string[] parts = subject.Split('.');
+        if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "cluster_assignment") return false;
+
+        // The assignment map is keyed by the lower-cased wallet; the subject may carry any casing.
+        if (!clusterBoard.Assignments.TryGetValue(parts[1].ToLowerInvariant(), out ClusterAssignment assignment)
+            || !string.Equals(Encoding.UTF8.GetString(data), assignment.Session, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        response = AssignmentMessage(assignment);
+        return true;
+    }
+
+    internal static bool IsRequestInbox(string? replyTo) =>
+        replyTo is not null && replyTo.StartsWith(REQUEST_INBOX_PREFIX, StringComparison.Ordinal);
+
+    /// <summary>
+    ///     Discards a request with no request inbox to reply to, then applies the request budget.
+    ///     The inbox check comes first so that requests this instance would never answer cannot
+    ///     spend the budget valid lookups depend on.
+    /// </summary>
+    internal bool TryAcceptAssignmentRequest(string? replyTo, long nowMs)
+    {
+        if (!IsRequestInbox(replyTo))
+        {
+            Interlocked.Increment(ref assignmentRequestsRejectedCount);
+            PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED.Add(1);
+            return false;
+        }
+
+        return TryAdmitAssignmentRequest(nowMs);
+    }
+
+    /// <summary>
+    ///     Admits at most <see cref="NatsOptions.MaxAssignmentRequestsPerSecond" /> requests per fixed
+    ///     one-second window and refuses the rest before they are resolved. Requests are counted rather
+    ///     than replies, so a flood this instance would answer with silence is bounded too. Refusals are
+    ///     counted as they happen and logged once, when the next window opens; a non-positive limit
+    ///     admits everything.
+    /// </summary>
+    internal bool TryAdmitAssignmentRequest(long nowMs)
+    {
+        int limit = options.MaxAssignmentRequestsPerSecond;
+        if (limit <= 0) return true;
+
+        if (nowMs - requestWindowStartMs >= REQUEST_WINDOW_MS)
+        {
+            if (requestsDroppedInWindow > 0)
+                logger.LogWarning(
+                    "Dropped {Dropped} cluster assignment requests over the {Limit}/s budget (Nats:MaxAssignmentRequestsPerSecond)",
+                    requestsDroppedInWindow, limit);
+
+            requestWindowStartMs = nowMs;
+            requestsInWindow = 0;
+            requestsDroppedInWindow = 0;
+        }
+
+        if (requestsInWindow >= limit)
+        {
+            requestsDroppedInWindow++;
+            Interlocked.Increment(ref assignmentRequestsThrottledCount);
+            PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED.Add(1);
+            return false;
+        }
+
+        requestsInWindow++;
+        return true;
+    }
+
+    private static PeerClusterChange AssignmentMessage(ClusterAssignment assignment) => new ()
+    {
+        ClusterId = assignment.ClusterId,
+        Realm = assignment.Realm,
+        Session = assignment.Session,
+    };
+
+    private async Task RespondToAssignmentRequestsAsync(NatsConnection connection, CancellationTokenSource loops)
+    {
+        while (!loops.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (NatsMsg<byte[]> request in connection.SubscribeAsync<byte[]>(
+                                   "peer.*.cluster_assignment", cancellationToken: loops.Token))
+                {
+                    if (!TryAcceptAssignmentRequest(request.ReplyTo, Environment.TickCount64)) continue;
+                    try
+                    {
+                        // Multiple Pulse processes can overlap during a deployment. An instance that
+                        // does not own this session sends nothing, so it cannot race the owner with
+                        // an empty first response.
+                        if (!TryResolveAssignment(request.Subject, request.Data, out PeerClusterChange? response)) continue;
+                        await request.ReplyAsync(response, serializer: SERIALIZER, cancellationToken: loops.Token);
+                        CountPublished();
+                    }
+                    catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+                    catch (Exception e)
+                    {
+                        CountPublishFailed();
+                        logger.LogWarning(e, "Failed to answer cluster assignment request");
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+            catch (Exception e) { logger.LogWarning(e, "Cluster assignment responder interrupted; retrying"); }
+
+            try { await Task.Delay(PIPELINE_REBUILD_BACKOFF, loops.Token); }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+        }
+    }
+
+    /// <summary>
+    ///     Publishes every current assignment on <c>peer.{wallet}.cluster_snapshot</c> once per
+    ///     <see cref="NatsOptions.AssignmentRefreshIntervalMs" />, carrying its cluster, realm and session
+    ///     and no displaced-session fields. The session is the ephemeral address the request path is
+    ///     keyed by — the value every <c>cluster_change</c> already carries, not a credential.
+    /// </summary>
+    private async Task PublishAssignmentRefreshesAsync(NatsConnection connection, CancellationTokenSource loops)
+    {
+        if (options.AssignmentRefreshIntervalMs <= 0) return;
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(options.AssignmentRefreshIntervalMs));
+            while (await timer.WaitForNextTickAsync(loops.Token))
+            {
+                // Keys are lower-cased wallets, so the subject needs no normalisation here.
+                foreach ((string wallet, ClusterAssignment assignment) in clusterBoard.Assignments)
+                {
+                    try
+                    {
+                        await connection.PublishAsync($"peer.{wallet}.cluster_snapshot",
+                            AssignmentMessage(assignment), serializer: SERIALIZER, cancellationToken: loops.Token);
+                        CountPublished();
+                    }
+                    catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+                    catch (Exception e)
+                    {
+                        CountPublishFailed();
+                        logger.LogWarning(e, "Failed to publish cluster recovery hint");
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (loops.IsCancellationRequested) { }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Cluster recovery hint loop stopped unexpectedly");
+            await loops.CancelAsync();
         }
     }
 

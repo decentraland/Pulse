@@ -75,7 +75,8 @@ public static partial class PulseMetrics
     }
 
     /// <summary>
-    ///     Broker instruments for the outbound cluster feed.
+    ///     Broker instruments for the outbound cluster feed and the <c>cluster_assignment</c>
+    ///     request responder.
     /// </summary>
     public static class Nats
     {
@@ -83,7 +84,8 @@ public static partial class PulseMetrics
             METER.CreateCounter<long>("pulse.nats.published");
 
         /// <summary>
-        ///     Publishes that threw, counted for the outbox drain and the discovery heartbeat alike.
+        ///     Publishes that threw, counted for the outbox drain, the discovery heartbeat, assignment
+        ///     replies and recovery hints alike.
         ///     Every one of them is raised client-side — a timeout, a connect failure, an oversized
         ///     payload, a subject the client rejects — because core NATS never acknowledges a PUB, so a
         ///     broker refusing one cannot fail the call. The lever is the broker or the path to it,
@@ -107,6 +109,19 @@ public static partial class PulseMetrics
         /// </summary>
         public static readonly Counter<long> SUPERSEDED =
             METER.CreateCounter<long>("pulse.nats.superseded");
+
+        /// <summary>
+        ///     <c>cluster_assignment</c> requests discarded for a missing or non-inbox reply subject.
+        ///     They spend no request budget; the lever is broker permissions on <c>peer.*</c>.
+        /// </summary>
+        public static readonly Counter<long> ASSIGNMENT_REQUESTS_REJECTED =
+            METER.CreateCounter<long>("pulse.nats.assignment_requests_rejected");
+
+        /// <summary>
+        ///     <c>cluster_assignment</c> requests refused over <c>Nats:MaxAssignmentRequestsPerSecond</c>.
+        /// </summary>
+        public static readonly Counter<long> ASSIGNMENT_REQUESTS_THROTTLED =
+            METER.CreateCounter<long>("pulse.nats.assignment_requests_throttled");
 
         public static readonly Counter<long> RECONNECTS =
             METER.CreateCounter<long>("pulse.nats.reconnects");

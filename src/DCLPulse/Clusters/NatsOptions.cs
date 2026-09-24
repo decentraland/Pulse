@@ -36,6 +36,19 @@ public sealed class NatsOptions
     public int DiscoveryIntervalMs { get; set; } = 10_000;
 
     /// <summary>
+    ///     Cadence of the <c>peer.{wallet}.cluster_snapshot</c> recovery hints. Non-positive values
+    ///     disable periodic hints; request/reply stays available.
+    /// </summary>
+    public int AssignmentRefreshIntervalMs { get; set; } = 30_000;
+
+    /// <summary>
+    ///     Cap on <c>cluster_assignment</c> requests handled per second, counted per instance over fixed
+    ///     one-second windows; requests over the cap are dropped unanswered. Non-positive values disable
+    ///     the cap.
+    /// </summary>
+    public int MaxAssignmentRequestsPerSecond { get; set; } = 5_000;
+
+    /// <summary>
     ///     Maximum number of distinct peers with an undelivered assignment. Past the bound the
     ///     longest-admitted peer is evicted, which is the only thing
     ///     <c>dcl_pulse_nats_dropped_total</c> counts — so that counter, and only that counter, is the

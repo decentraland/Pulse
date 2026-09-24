@@ -444,6 +444,201 @@ public class NatsPublisherTests
     }
 
     [Test]
+    public void PendingTakeover_FollowedBySameSessionMoves_PreservesDisplacedIdentity()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+        publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("new", "old", "C1"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("new", null, null));
+        publisher.PublishClusterChange("0xwallet", "C4", "other", new ClusterSession("new", null, null));
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.ClusterId, Is.EqualTo("C4"));
+            Assert.That(queued.Realm, Is.EqualTo("other"));
+            Assert.That(queued.DisplacedSession, Is.EqualTo("old"));
+            Assert.That(queued.DisplacedClusterId, Is.EqualTo("C1"));
+        });
+    }
+
+    [Test]
+    public void PendingTakeover_FollowedBySameSessionInAnotherCasing_StillPreservesDisplacedIdentity()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+        publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("0xNEW", "old", "C1"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("0xnew", null, null));
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.ClusterId, Is.EqualTo("C3"));
+            Assert.That(queued.DisplacedSession, Is.EqualTo("old"));
+            Assert.That(queued.DisplacedClusterId, Is.EqualTo("C1"));
+        });
+    }
+
+    [Test]
+    public void PendingTakeover_FollowedByDifferentSession_DoesNotInheritCleanup()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+        publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("second", "first", "C1"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("third", null, null));
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.Session, Is.EqualTo("third"));
+            Assert.That(queued.DisplacedSession, Is.Empty);
+            Assert.That(queued.DisplacedClusterId, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void PendingTakeover_FollowedBySameSessionCarryingItsOwnCleanup_KeepsItsOwn()
+    {
+        NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
+        publisher.PublishClusterChange("0xwallet", "C2", "main", new ClusterSession("new", "old", "C1"));
+        publisher.PublishClusterChange("0xwallet", "C3", "main", new ClusterSession("new", "other", "C5"));
+        PeerClusterChange queued = DequeueSingleChange(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(queued.DisplacedSession, Is.EqualTo("other"));
+            Assert.That(queued.DisplacedClusterId, Is.EqualTo("C5"));
+        });
+    }
+
+    [Test]
+    public void RequestBudget_RefusesRequestsOverTheLimitUntilTheNextWindowOpens()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 2);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_000), Is.True);
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_100), Is.True);
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_200), Is.False);
+            Assert.That(publisher.TryAdmitAssignmentRequest(10_999), Is.False, "the window is a full second wide");
+            Assert.That(publisher.TryAdmitAssignmentRequest(11_000), Is.True, "a new window opens one second after the first admitted request");
+            Assert.That(publisher.TryAdmitAssignmentRequest(11_001), Is.True);
+            Assert.That(publisher.TryAdmitAssignmentRequest(11_002), Is.False);
+        });
+    }
+
+    [Test]
+    public void RequestBudget_CountsEachRefusalWhileTheWindowIsStillOpen()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAdmitAssignmentRequest(10_000);
+        publisher.TryAdmitAssignmentRequest(10_001);
+        publisher.TryAdmitAssignmentRequest(10_002);
+
+        Assert.That(publisher.AssignmentRequestsThrottledCount, Is.EqualTo(2));
+    }
+
+    [Test]
+    public void RequestBudget_CountsRefusalsOnceAcrossAWindowRollover()
+    {
+        using var throttled = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED);
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAdmitAssignmentRequest(10_000);
+        publisher.TryAdmitAssignmentRequest(10_001);
+        publisher.TryAdmitAssignmentRequest(10_002);
+        publisher.TryAdmitAssignmentRequest(11_000);
+        publisher.TryAdmitAssignmentRequest(11_001);
+        publisher.TryAdmitAssignmentRequest(12_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(publisher.AssignmentRequestsThrottledCount, Is.EqualTo(3), "the rollover must not recount the closed window");
+            Assert.That(throttled.Total, Is.EqualTo(3), "the exported counter must agree with the property");
+        });
+    }
+
+    [Test]
+    public void RequestBudget_Refusal_IncrementsTheThrottledCounterOnly()
+    {
+        using var throttled = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED);
+        using var rejected = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED);
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAcceptAssignmentRequest("_INBOX.a", 10_000);
+        publisher.TryAcceptAssignmentRequest("_INBOX.b", 10_001);
+        publisher.TryAcceptAssignmentRequest("_INBOX.c", 10_002);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(throttled.Total, Is.EqualTo(2));
+            Assert.That(rejected.Total, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void AssignmentRequest_WithoutARequestInbox_IncrementsTheRejectedCounterOnly()
+    {
+        using var throttled = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED);
+        using var rejected = new NatsCounterProbe(PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED);
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAcceptAssignmentRequest(null, 10_000);
+        publisher.TryAcceptAssignmentRequest("peer.0xabc.cluster_change", 10_001);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rejected.Total, Is.EqualTo(2));
+            Assert.That(rejected.Total, Is.EqualTo(publisher.AssignmentRequestsRejectedCount), "the exported counter must agree with the property");
+            Assert.That(throttled.Total, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void AssignmentRequest_WithoutARequestInbox_IsRejectedWithoutSpendingTheBudget()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 1);
+
+        bool[] foreign = Enumerable.Range(0, 1_000)
+            .Select(i => publisher.TryAcceptAssignmentRequest(i % 2 == 0 ? null : "peer.0xabc.cluster_change", 10_000))
+            .ToArray();
+        bool valid = publisher.TryAcceptAssignmentRequest("_INBOX.abc", 10_001);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(foreign, Has.All.False);
+            Assert.That(valid, Is.True, "rejected requests must not spend the budget");
+            Assert.That(publisher.AssignmentRequestsRejectedCount, Is.EqualTo(1_000));
+            Assert.That(publisher.AssignmentRequestsThrottledCount, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void RequestBudget_NonPositiveLimit_AdmitsEverything()
+    {
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, maxAssignmentRequestsPerSecond: 0);
+
+        Assert.That(Enumerable.Range(0, 100_000).All(_ => publisher.TryAdmitAssignmentRequest(5_000)), Is.True);
+    }
+
+    [Test]
+    public void RequestBudget_LogsTheRefusedCountOnceWhenTheNextWindowOpens()
+    {
+        var logger = Substitute.For<ILogger<NatsPublisher>>();
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, logger: logger, maxAssignmentRequestsPerSecond: 1);
+
+        publisher.TryAdmitAssignmentRequest(10_000);
+        publisher.TryAdmitAssignmentRequest(10_001);
+        publisher.TryAdmitAssignmentRequest(10_002);
+        Assert.That(HasLogged(logger, "cluster assignment requests"), Is.False, "nothing is logged while the window is still open");
+
+        publisher.TryAdmitAssignmentRequest(11_000);
+        publisher.TryAdmitAssignmentRequest(12_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(HasLogged(logger, "Dropped 2 cluster assignment requests over the 1/s budget"), Is.True);
+            Assert.That(LoggedLevel(logger, "Dropped 2 cluster assignment requests"), Is.EqualTo(LogLevel.Warning));
+            Assert.That(logger.ReceivedCalls().Count(), Is.EqualTo(1), "a window with no refusals logs nothing");
+        });
+    }
+
+    [Test]
     public void PublishClusterChange_RoundTripsClusterIdAndRealm()
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
@@ -897,6 +1092,35 @@ public class NatsPublisherTests
         Assert.That(dropped.Total, Is.Zero);
     }
 
+    [Test]
+    public async Task FailedRecoveryHint_CountsAsPublishFailedAndNotAsDropped()
+    {
+        var assignments = new ClusterBoard();
+        assignments.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        {
+            ["0x1111111111111111111111111111111111111111"] = new("C1", REALM, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        });
+        using var publishFailed = new NatsCounterProbe(PulseMetrics.Nats.PUBLISH_FAILED);
+        using NatsPublisher publisher = CreatePublisher(url: UNREACHABLE_BROKER_URL,
+            discoveryIntervalMs: 0, assignmentRefreshIntervalMs: 1, assignments: assignments);
+        await publisher.StartAsync(CancellationToken.None);
+        try
+        {
+            WaitFor(() => publisher.PublishFailedCount > 0, "the recovery hint never recorded a failed publish");
+        }
+        finally
+        {
+            await publisher.StopAsync(CancellationToken.None);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(publisher.PublishedCount, Is.Zero);
+            Assert.That(publisher.DroppedCount, Is.Zero, "hints do not enter the bounded outbox");
+            Assert.That(publishFailed.Total, Is.EqualTo(publisher.PublishFailedCount));
+        });
+    }
+
     [TestCase("nats://broker.example:4222", "broker.example:4222")]
     [TestCase("nats://broker.example", "broker.example")]
     [TestCase("nats://fakeuser:fakepassword@broker.example:4222", "broker.example:4222")]
@@ -936,7 +1160,10 @@ public class NatsPublisherTests
         string url,
         int channelCapacity = 1024,
         int discoveryIntervalMs = 10_000,
-        ILogger<NatsPublisher>? logger = null)
+        ILogger<NatsPublisher>? logger = null,
+        int assignmentRefreshIntervalMs = 30_000,
+        ClusterBoard? assignments = null,
+        int maxAssignmentRequestsPerSecond = 5_000)
     {
         var options = Substitute.For<IOptions<NatsOptions>>();
 
@@ -946,13 +1173,16 @@ public class NatsPublisherTests
             ServerName = "pulse-test",
             DiscoveryIntervalMs = discoveryIntervalMs,
             ChannelCapacity = channelCapacity,
+            AssignmentRefreshIntervalMs = assignmentRefreshIntervalMs,
+            MaxAssignmentRequestsPerSecond = maxAssignmentRequestsPerSecond,
         });
 
         return new NatsPublisher(
             logger ?? NullLogger<NatsPublisher>.Instance,
             NullLoggerFactory.Instance,
             options,
-            snapshotBoard);
+            snapshotBoard,
+            assignments ?? new ClusterBoard());
     }
 
     /// <summary>

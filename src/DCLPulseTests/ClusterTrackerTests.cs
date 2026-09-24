@@ -1,3 +1,4 @@
+using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -10,6 +11,7 @@ using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse;
 using System.Numerics;
+using System.Text;
 
 namespace DCLPulseTests;
 
@@ -998,7 +1000,224 @@ public class ClusterTrackerTests
         Assert.That(afterTakeover.Clusters.TotalTakeovers - before.Clusters.TotalTakeovers, Is.EqualTo(1));
     }
 
-    private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300)
+    [Test]
+    public void RecoveryAssignments_StayAvailableWithoutRepublishingChanges()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        feedPublisher.ClearReceivedCalls();
+
+        // One pass past an hour at the 1 s pass interval: the lifetime gatekeeper's mirror used to have.
+        const int passesPastFormerMirrorLifetime = 3601;
+        for (var pass = 0; pass < passesPastFormerMirrorLifetime; pass++) tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments[WALLET], Is.EqualTo(new ClusterAssignment("C1", REALM, SESSION_A)));
+        feedPublisher.DidNotReceive().PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
+    }
+
+    [TestCase("other-wallet", SESSION_B, null)]
+    [TestCase(WALLET, SESSION_B, SESSION_A)]
+    [TestCase(WALLET, SESSION_A, null)]
+    public void RecoveryAssignments_ReusedSlotBetweenPassesStartsFresh(string replacementWallet, string replacementSession,
+        string? expectedDisplacedSession)
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        SetupPeer(new PeerIndex(1), Vector3.Zero);
+        SetupPeer(new PeerIndex(2), Vector3.Zero);
+        tracker.RunPass();
+        string oldRoom = clusterBoard.Assignments[WALLET].ClusterId;
+        feedPublisher.ClearReceivedCalls();
+
+        // Disconnect and slot reuse can both happen between two 1 Hz tracker passes.
+        RemovePeer(new PeerIndex(0));
+        SetupPeer(new PeerIndex(0), new Vector3(500, 0, 500), wallet: replacementWallet, session: replacementSession);
+        tracker.RunPass();
+
+        string newRoom = ClusterIdOf(new PeerIndex(0));
+        Assert.Multiple(() =>
+        {
+            Assert.That(newRoom, Is.Not.EqualTo(oldRoom));
+            Assert.That(clusterBoard.Assignments[replacementWallet], Is.EqualTo(new ClusterAssignment(newRoom, REALM, replacementSession)));
+        });
+        feedPublisher.Received(1).PublishClusterChange(replacementWallet, newRoom, REALM,
+            Arg.Is<ClusterSession>(session => session.Session == replacementSession
+                && session.DisplacedSession == expectedDisplacedSession));
+    }
+
+    [Test]
+    public void RecoveryAssignments_AreVisibleBeforeFirstChangeIsPublished()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        int observedChanges = 0;
+        feedPublisher.When(component => component.PublishClusterChange(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>())).Do(call =>
+        {
+            Assert.That(clusterBoard.Assignments, Has.Count.EqualTo(3), "the whole snapshot is ready before any event");
+            Assert.That(clusterBoard.Assignments[call.ArgAt<string>(0)], Is.EqualTo(
+                new ClusterAssignment(call.ArgAt<string>(1), call.ArgAt<string>(2), call.ArgAt<ClusterSession>(3).Session)));
+            observedChanges++;
+        });
+
+        tracker.RunPass();
+
+        Assert.That(observedChanges, Is.EqualTo(3));
+    }
+
+    [Test]
+    public void RecoveryAssignments_ExcludeDepartedSessionsDespiteTakeoverRetention()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> previous = clusterBoard.Assignments;
+        RemovePeer(new PeerIndex(0));
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Is.Empty);
+        Assert.That(previous[WALLET].Session, Is.EqualTo(SESSION_A), "published snapshots are immutable");
+    }
+
+    [Test]
+    public void RecoveryAssignments_ExposeOnlyPostDebounceRoom()
+    {
+        ClusterTracker tracker = CreateTracker(dwellPasses: 3);
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        string oldRoom = clusterBoard.Assignments["0xwallet2"].ClusterId;
+        MovePeer(new PeerIndex(2), new Vector3(500, 0, 500));
+        tracker.RunPass();
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(oldRoom));
+        tracker.RunPass();
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(oldRoom));
+        tracker.RunPass();
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(2))));
+    }
+
+    [Test]
+    public void RecoveryAssignments_WithTheFeedUnconfigured_AreNotBuilt()
+    {
+        ClusterTracker tracker = CreateTracker(feedConfigured: false);
+        SetupCrowdOfThree();
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Is.Empty);
+        feedPublisher.Received(3).PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
+    }
+
+    [Test]
+    public void RecoveryAssignments_WithoutAnyChange_KeepThePreviousMap()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> first = clusterBoard.Assignments;
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Is.SameAs(first));
+    }
+
+    [Test]
+    public void RecoveryAssignments_AfterADeparture_AreRebuilt()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> first = clusterBoard.Assignments;
+        RemovePeer(new PeerIndex(2));
+
+        tracker.RunPass();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clusterBoard.Assignments, Is.Not.SameAs(first));
+            Assert.That(clusterBoard.Assignments.ContainsKey("0xwallet2"), Is.False);
+            Assert.That(first, Has.Count.EqualTo(3), "published snapshots are immutable");
+        });
+    }
+
+    [Test]
+    public void RecoveryAssignments_AfterAPublishedChange_AreRebuilt()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        tracker.RunPass();
+        IReadOnlyDictionary<string, ClusterAssignment> first = clusterBoard.Assignments;
+        MovePeer(new PeerIndex(2), new Vector3(500, 0, 500));
+
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments["0xwallet2"].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(2))));
+        Assert.That(first["0xwallet2"].ClusterId, Is.Not.EqualTo(ClusterIdOf(new PeerIndex(2))), "published snapshots are immutable");
+    }
+
+    [Test]
+    public void Reassignments_CountEveryChangePublishedInThePass()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupCrowdOfThree();
+        var messagePipe = new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters());
+        using var collector = new MeterListenerMetricsCollector(messagePipe, new ClientMessageCounters(), new ServerMessageCounters());
+        collector.StartAsync(CancellationToken.None);
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        tracker.RunPass();
+        MetricsSnapshot afterFirst = collector.TakeSnapshot();
+        tracker.RunPass();
+        MetricsSnapshot afterSecond = collector.TakeSnapshot();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(afterFirst.Clusters.TotalReassignments - before.Clusters.TotalReassignments, Is.EqualTo(3));
+            Assert.That(afterSecond.Clusters.TotalReassignments - afterFirst.Clusters.TotalReassignments, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void RecoveryAssignments_ExcludeOutgoingSessionStillInGrid()
+    {
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: WALLET, session: SESSION_A);
+        tracker.RunPass();
+        SetupPeer(new PeerIndex(1), new Vector3(500, 0, 500), wallet: WALLET, session: SESSION_B);
+        tracker.RunPass();
+
+        Assert.That(clusterBoard.Assignments, Has.Count.EqualTo(1));
+        Assert.That(clusterBoard.Assignments[WALLET].Session, Is.EqualTo(SESSION_B));
+        Assert.That(clusterBoard.Assignments[WALLET].ClusterId, Is.EqualTo(ClusterIdOf(new PeerIndex(1))));
+    }
+
+    [Test]
+    public void RecoveryAssignments_AreKeyedByTheLowerCasedWallet_AndResolveFromAnyCasedSubject()
+    {
+        const string checksumWallet = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01";
+        // The resolver only answers a 42-byte session address; the fixture's short placeholders never reach it.
+        const string session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        ClusterTracker tracker = CreateTracker();
+        SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: checksumWallet, session: session);
+        using var publisher = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
+            Options.Create(new NatsOptions()), snapshotBoard, clusterBoard);
+
+        tracker.RunPass();
+
+        string lowerCased = checksumWallet.ToLowerInvariant();
+        Assert.Multiple(() =>
+        {
+            Assert.That(clusterBoard.Assignments.Keys, Is.EquivalentTo(new[] { lowerCased }));
+            Assert.That(clusterBoard.Assignments.ContainsKey(checksumWallet), Is.False, "the map is ordinal over lower-cased keys");
+            Assert.That(publisher.TryResolveAssignment($"peer.{lowerCased}.cluster_assignment", Encoding.UTF8.GetBytes(session),
+                out PeerClusterChange? lowerResponse) ? lowerResponse.ClusterId : null, Is.EqualTo("C1"));
+            Assert.That(publisher.TryResolveAssignment($"peer.{checksumWallet}.cluster_assignment", Encoding.UTF8.GetBytes(session),
+                out PeerClusterChange? checksumResponse) ? checksumResponse.ClusterId : null, Is.EqualTo("C1"));
+        });
+    }
+
+    private ClusterTracker CreateTracker(bool enabled = true, int dwellPasses = 1, int sessionRetentionPasses = 300,
+        bool feedConfigured = true)
     {
         // Options.Create rather than a substitute: IOptions<T> has a real, trivial implementation, and
         // a substituted property getter depends on NSubstitute's ambient call context — which
@@ -1016,6 +1235,7 @@ public class ClusterTrackerTests
         return new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
+            Options.Create(new NatsOptions { Url = feedConfigured ? "nats://localhost:4222" : string.Empty }),
             grids,
             snapshotBoard,
             identityBoard,

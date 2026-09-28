@@ -77,6 +77,7 @@ public partial class PeerSimulationTests
     [Test]
     public void PlayerJoined_CarriesRealm()
     {
+        snapshotBoard.Publish(observer, TestSnapshots.Make(seq: 2, realm: "genesis"));
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 5, realm: "genesis"));
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
 

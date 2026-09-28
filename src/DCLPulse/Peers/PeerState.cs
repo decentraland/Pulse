@@ -27,4 +27,10 @@ public class PeerState(PeerConnectionState connectionState)
     ///     between simulation ticks — only the latest known_seq is kept.
     /// </summary>
     public Dictionary<PeerIndex, uint>? ResyncRequests { get; set; }
+
+    /// <summary>
+    ///     Realm generation last processed by this player's observer simulation. Owned by the
+    ///     peer's worker and initialized to zero with each new peer state.
+    /// </summary>
+    public ulong LastObservedRealmGeneration { get; set; }
 }

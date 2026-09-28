@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
@@ -220,6 +221,36 @@ public partial class PeerSimulationTests
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerLeft), Is.False,
             "case-only wallet changes must not trigger PlayerLeft — matches IdentityBoard's OrdinalIgnoreCase semantics");
+    }
+
+    [Test]
+    public void AliasingGuard_WalletChanged_ReannouncesAndLogsTheLeaveOnce()
+    {
+        ILogger<PeerSimulation> logger = Substitute.For<ILogger<PeerSimulation>>();
+        simulation = CreateSimulation(areaOfInterest, logger: logger);
+        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
+        simulation.SimulateTick(peers, tickCounter: 0);
+        DrainAllMessages();
+        identityBoard.Remove(subject);
+        identityBoard.Set(subject, "0xOTHER_WALLET");
+        PublishSnapshot(subject, seq: 2);
+        logger.ClearReceivedCalls();
+
+        simulation.SimulateTick(peers, tickCounter: 1);
+
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(m => m.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.PlayerLeft,
+            ServerMessage.MessageOneofCase.PlayerJoined,
+        }));
+        Assert.That(messages[1].Message.PlayerJoined.UserId, Is.EqualTo("0xOTHER_WALLET"));
+        IEnumerable<object?> leaveLogLevels = logger.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(ILogger.Log))
+            .Select(call => call.GetArguments())
+            .Where(args => args[2]?.ToString() is { } text && (text.Contains("PlayerLeft") || text.Contains("aliased")))
+            .Select(args => args[0]);
+        Assert.That(leaveLogLevels, Is.EqualTo(new object[] { LogLevel.Warning }));
     }
 
     /// <summary>

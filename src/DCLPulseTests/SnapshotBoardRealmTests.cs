@@ -115,6 +115,52 @@ public class SnapshotBoardRealmTests
         Assert.That(snapshot.Realm, Is.Null);
     }
 
+    [Test]
+    public void Publish_RealmGeneration_ChangesOnlyWithRealmTransitions()
+    {
+        Assert.That(board.Publish(peer, MakeSnapshot(1, null)).RealmGeneration, Is.Zero);
+        Assert.That(board.Publish(peer, MakeSnapshot(2, "a")).RealmGeneration, Is.EqualTo(1ul));
+        Assert.That(board.Publish(peer, MakeSnapshot(3, "a")).RealmGeneration, Is.EqualTo(1ul));
+        Assert.That(board.Publish(peer, MakeSnapshot(4, null)).RealmGeneration, Is.EqualTo(1ul));
+        Assert.That(board.Publish(peer, MakeSnapshot(5, "b")).RealmGeneration, Is.EqualTo(2ul));
+        Assert.That(board.Publish(peer, MakeSnapshot(6, "a")).RealmGeneration, Is.EqualTo(3ul));
+    }
+
+    [Test]
+    public void Publish_RealmGeneration_SurvivesRoundTripAndCompleteHistoryEviction()
+    {
+        board.Publish(peer, MakeSnapshot(1, "a"));
+        board.Publish(peer, MakeSnapshot(2, "b"));
+        board.Publish(peer, MakeSnapshot(3, "a"));
+        for (uint seq = 4; seq <= RING_CAPACITY * 3; seq++)
+            board.Publish(peer, MakeSnapshot(seq, null));
+
+        Assert.That(board.TryRead(peer, 2, out _), Is.False);
+        Assert.That(board.TryRead(peer, 3, out _), Is.False);
+        Assert.That(board.TryRead(peer, out PeerSnapshot latest), Is.True);
+        Assert.That(latest.RealmGeneration, Is.EqualTo(3ul));
+        Assert.That(latest.Realm, Is.EqualTo("a"));
+    }
+
+    [Test]
+    public void Publish_RealmGeneration_IsDerivedRatherThanCopiedFromCaller()
+    {
+        board.Publish(peer, MakeSnapshot(1, "a"));
+        PeerSnapshot stored = board.Publish(peer, MakeSnapshot(2, null) with { RealmGeneration = 100 });
+        Assert.That(stored.RealmGeneration, Is.EqualTo(1ul));
+    }
+
+    [Test]
+    public void ClearActive_ResetsRealmGenerationForReusedPeerIndex()
+    {
+        board.Publish(peer, MakeSnapshot(1, "a"));
+        board.Publish(peer, MakeSnapshot(2, "b"));
+        board.ClearActive(peer);
+        board.SetActive(peer);
+        Assert.That(board.Publish(peer, MakeSnapshot(1, null)).RealmGeneration, Is.Zero);
+        Assert.That(board.Publish(peer, MakeSnapshot(2, "b")).RealmGeneration, Is.EqualTo(1ul));
+    }
+
     private static PeerSnapshot MakeSnapshot(uint seq, string? realm, EmoteState? emote = null) =>
         TestSnapshots.Make(seq: seq, serverTick: seq * 10,
             emote: emote,

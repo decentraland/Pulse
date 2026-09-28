@@ -193,6 +193,8 @@ This surfaced a latent gap: `ServiceStatus` / `ServiceDiscoveryMessage` were **n
 | `Url` | — | Broker URL; unset = feed disabled (stats-only mode) |
 | `ServerName` | `pulse` | Reported as `server_name` on `engine.discovery` |
 | `DiscoveryIntervalMs` | 10000 | Heartbeat cadence; must stay well under archipelago-stats' 90 s health window |
+| `AssignmentRefreshIntervalMs` | 30000 | Cadence of the `peer.{addr}.cluster_snapshot` recovery hints; non-positive disables hints, request/reply stays on |
+| `MaxAssignmentRequestsPerSecond` | 5000 | Per-instance cap on `cluster_assignment` requests handled per second; the rest are dropped unanswered; non-positive disables the cap |
 | `ChannelCapacity` | 1024 | Max distinct peers with an undelivered assignment |
 
 The broker URL is read from **either** `Nats__Url` or the flat `NATS_URL` — the latter is the name archipelago's services read (`config.requireString("NATS_URL")`), so one CI-injected secret serves both. `Nats__Url` wins if both are set. Because an unresolved URL fails soft rather than erroring, `dcl_pulse_nats_connected` and the startup log are the only signals that a secret never arrived.

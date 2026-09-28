@@ -24,6 +24,11 @@ jobs:
   test:
     name: Run tests
     runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.10-alpine
+        ports:
+          - 4222:4222
     steps:
       - uses: actions/checkout@v4
 
@@ -38,6 +43,8 @@ jobs:
         run: dotnet build src/DCLPulse/DCLPulse.sln -c Release --no-restore -p:GenerateProto=false
 
       - name: Test
+        env:
+          NATS_TEST_URL: nats://127.0.0.1:4222
         run: >
           dotnet test src/DCLPulse/DCLPulse.sln
           -c Release

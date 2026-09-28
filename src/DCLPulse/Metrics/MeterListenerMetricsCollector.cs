@@ -117,6 +117,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private long natsDropped;
     private long natsSuperseded;
     private long natsReconnects;
+    private long natsAssignmentRequestsRejected;
+    private long natsAssignmentRequestsThrottled;
     private int natsConnected;
 
     public MeterListenerMetricsCollector(
@@ -229,6 +231,8 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 TotalNatsDropped = Interlocked.Read(ref natsDropped),
                 TotalNatsSuperseded = Interlocked.Read(ref natsSuperseded),
                 TotalNatsReconnects = Interlocked.Read(ref natsReconnects),
+                TotalNatsAssignmentRequestsRejected = Interlocked.Read(ref natsAssignmentRequestsRejected),
+                TotalNatsAssignmentRequestsThrottled = Interlocked.Read(ref natsAssignmentRequestsThrottled),
                 NatsConnected = Volatile.Read(ref natsConnected),
             },
             IncomingMessages = incomingMessageCounters,
@@ -357,6 +361,12 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.nats.reconnects":
                 Interlocked.Add(ref natsReconnects, value);
+                break;
+            case "pulse.nats.assignment_requests_rejected":
+                Interlocked.Add(ref natsAssignmentRequestsRejected, value);
+                break;
+            case "pulse.nats.assignment_requests_throttled":
+                Interlocked.Add(ref natsAssignmentRequestsThrottled, value);
                 break;
             case "pulse.hardening.ip_limit_refused":
                 Interlocked.Add(ref ipLimitRefused[ConnectionClassIndex(tags)], value);

@@ -103,6 +103,7 @@ public class ClusterTrackerBenchmarks
         tracker = new ClusterTracker(
             NullLogger<ClusterTracker>.Instance,
             options,
+            new OptionsWrapper<NatsOptions>(new NatsOptions { Url = "nats://localhost:4222" }),
             grids,
             snapshotBoard,
             identityBoard,

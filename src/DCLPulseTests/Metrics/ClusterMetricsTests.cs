@@ -58,4 +58,46 @@ public class ClusterMetricsTests
         Assert.That(Encoding.UTF8.GetString(buffer.ToArray()),
             Does.Contain($"dcl_pulse_cluster_takeovers_total {snapshot.Clusters.TotalTakeovers}"));
     }
+
+    [Test]
+    public void AssignmentRequestInstruments_ReachTheirOwnSnapshotFields()
+    {
+        MetricsSnapshot before = collector.TakeSnapshot();
+
+        PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED.Add(3);
+        PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED.Add(5);
+
+        MetricsSnapshot after = collector.TakeSnapshot();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(after.Clusters.TotalNatsAssignmentRequestsRejected - before.Clusters.TotalNatsAssignmentRequestsRejected,
+                Is.EqualTo(3));
+            Assert.That(after.Clusters.TotalNatsAssignmentRequestsThrottled - before.Clusters.TotalNatsAssignmentRequestsThrottled,
+                Is.EqualTo(5));
+        });
+    }
+
+    [Test]
+    public void AssignmentRequestCounters_ReachTheMetricsEndpoint()
+    {
+        PulseMetrics.Nats.ASSIGNMENT_REQUESTS_REJECTED.Add(1);
+        PulseMetrics.Nats.ASSIGNMENT_REQUESTS_THROTTLED.Add(2);
+        MetricsSnapshot snapshot = collector.TakeSnapshot();
+
+        using var buffer = new MemoryStream();
+
+        using (var writer = new StreamWriter(buffer, leaveOpen: true))
+            PrometheusFormatter.Write(writer, snapshot);
+
+        string output = Encoding.UTF8.GetString(buffer.ToArray());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(output, Does.Contain(
+                $"dcl_pulse_nats_assignment_requests_rejected_total {snapshot.Clusters.TotalNatsAssignmentRequestsRejected}"));
+            Assert.That(output, Does.Contain(
+                $"dcl_pulse_nats_assignment_requests_throttled_total {snapshot.Clusters.TotalNatsAssignmentRequestsThrottled}"));
+        });
+    }
 }

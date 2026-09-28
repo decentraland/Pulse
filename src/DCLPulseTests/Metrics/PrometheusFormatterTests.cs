@@ -61,7 +61,8 @@ public class PrometheusFormatterTests
     /// <summary>
     ///     An outbox eviction and a failed publish are remedied in opposite directions — raise the
     ///     capacity, or fix the broker — so they have to reach the exposition as two independent series.
-    ///     A single number for both would send an operator to whichever lever they guessed.
+    ///     A single number for both would send an operator to whichever lever they guessed. The two
+    ///     discarded-request counters answer to different levers too: broker permissions and the budget.
     /// </summary>
     [Test]
     public void Write_NatsLossCounters_AreSeparateSeries()
@@ -76,6 +77,8 @@ public class PrometheusFormatterTests
                 TotalNatsPublished = 11,
                 TotalNatsPublishFailed = 6,
                 TotalNatsDropped = 4,
+                TotalNatsAssignmentRequestsRejected = 8,
+                TotalNatsAssignmentRequestsThrottled = 9,
             },
             IncomingMessages = new ClientMessageCounters(),
             OutgoingMessages = new ServerMessageCounters(),
@@ -84,6 +87,8 @@ public class PrometheusFormatterTests
         Assert.That(output, Does.Contain("dcl_pulse_nats_published_total 11"));
         Assert.That(output, Does.Contain("dcl_pulse_nats_publish_failed_total 6"));
         Assert.That(output, Does.Contain("dcl_pulse_nats_dropped_total 4"));
+        Assert.That(output, Does.Contain("dcl_pulse_nats_assignment_requests_rejected_total 8"));
+        Assert.That(output, Does.Contain("dcl_pulse_nats_assignment_requests_throttled_total 9"));
     }
 
     /// <summary>

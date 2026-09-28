@@ -144,6 +144,8 @@ public sealed class ConsoleDashboard(
     private readonly RateTracker natsPublishFailedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsDroppedTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsSupersededTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker natsAssignmentRequestsRejectedTracker = new (SPARKLINE_MAX_SAMPLES);
+    private readonly RateTracker natsAssignmentRequestsThrottledTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly RateTracker natsReconnectsTracker = new (SPARKLINE_MAX_SAMPLES);
     private readonly GaugeTracker natsConnectedTracker = new (SPARKLINE_MAX_SAMPLES);
 
@@ -201,6 +203,8 @@ public sealed class ConsoleDashboard(
     private readonly RateStatsView natsPublishFailed = new ();
     private readonly RateStatsView natsDropped = new ();
     private readonly RateStatsView natsSuperseded = new ();
+    private readonly RateStatsView natsAssignmentRequestsRejected = new ();
+    private readonly RateStatsView natsAssignmentRequestsThrottled = new ();
     private readonly RateStatsView natsReconnects = new ();
     private readonly RateStatsView natsConnected = new ();
 
@@ -248,6 +252,8 @@ public sealed class ConsoleDashboard(
     private readonly Sparkline natsPublishFailedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsDroppedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsSupersededSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline natsAssignmentRequestsRejectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
+    private readonly Sparkline natsAssignmentRequestsThrottledSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsReconnectsSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
     private readonly Sparkline natsConnectedSparkline = new (Enumerable.Repeat(0.0, SPARKLINE_MAX_SAMPLES));
 
@@ -474,6 +480,8 @@ public sealed class ConsoleDashboard(
         RateStats publishFailedRate = natsPublishFailedTracker.Update(snap.Clusters.TotalNatsPublishFailed, elapsed);
         RateStats droppedRate = natsDroppedTracker.Update(snap.Clusters.TotalNatsDropped, elapsed);
         RateStats supersededRate = natsSupersededTracker.Update(snap.Clusters.TotalNatsSuperseded, elapsed);
+        RateStats requestsRejectedRate = natsAssignmentRequestsRejectedTracker.Update(snap.Clusters.TotalNatsAssignmentRequestsRejected, elapsed);
+        RateStats requestsThrottledRate = natsAssignmentRequestsThrottledTracker.Update(snap.Clusters.TotalNatsAssignmentRequestsThrottled, elapsed);
         RateStats reconnectsRate = natsReconnectsTracker.Update(snap.Clusters.TotalNatsReconnects, elapsed);
         RateStats connectedStats = natsConnectedTracker.Record(snap.Clusters.NatsConnected);
 
@@ -487,6 +495,8 @@ public sealed class ConsoleDashboard(
         natsPublishFailed.Apply(publishFailedRate, v => v.ToString("N0"));
         natsDropped.Apply(droppedRate, v => v.ToString("N0"));
         natsSuperseded.Apply(supersededRate, v => v.ToString("N0"));
+        natsAssignmentRequestsRejected.Apply(requestsRejectedRate, v => v.ToString("N0"));
+        natsAssignmentRequestsThrottled.Apply(requestsThrottledRate, v => v.ToString("N0"));
         natsReconnects.Apply(reconnectsRate, v => v.ToString("N0"));
         natsConnected.Apply(connectedStats, v => v.ToString("N0"));
 
@@ -500,6 +510,8 @@ public sealed class ConsoleDashboard(
         ShiftSample(natsPublishFailedSparkline.Values, publishFailedRate.PerSec);
         ShiftSample(natsDroppedSparkline.Values, droppedRate.PerSec);
         ShiftSample(natsSupersededSparkline.Values, supersededRate.PerSec);
+        ShiftSample(natsAssignmentRequestsRejectedSparkline.Values, requestsRejectedRate.PerSec);
+        ShiftSample(natsAssignmentRequestsThrottledSparkline.Values, requestsThrottledRate.PerSec);
         ShiftSample(natsReconnectsSparkline.Values, reconnectsRate.PerSec);
         ShiftSample(natsConnectedSparkline.Values, snap.Clusters.NatsConnected);
     }
@@ -572,6 +584,8 @@ public sealed class ConsoleDashboard(
                 RateStatsRow("NATS Publish Failed", natsPublishFailed, natsPublishFailedSparkline.Style(STYLE_ERROR)),
                 RateStatsRow("NATS Dropped", natsDropped, natsDroppedSparkline.Style(STYLE_ERROR)),
                 RateStatsRow("NATS Superseded", natsSuperseded, natsSupersededSparkline.Style(STYLE_BACKPRESSURE)),
+                RateStatsRow("NATS Requests Rejected", natsAssignmentRequestsRejected, natsAssignmentRequestsRejectedSparkline.Style(STYLE_ERROR)),
+                RateStatsRow("NATS Requests Throttled", natsAssignmentRequestsThrottled, natsAssignmentRequestsThrottledSparkline.Style(STYLE_BACKPRESSURE)),
                 RateStatsRow("NATS Reconnects", natsReconnects, natsReconnectsSparkline.Style(STYLE_ERROR)),
                 RateStatsRow("NATS Connected", natsConnected, natsConnectedSparkline.Style(STYLE_OUTBOUND)),
             ]);

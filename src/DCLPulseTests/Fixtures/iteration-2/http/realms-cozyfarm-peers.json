@@ -1,0 +1,25 @@
+{
+  "request": "GET /realms/CozyFarm.dcl.eth/peers",
+  "note": "mixed-case path segment matches case-insensitively; the response carries the canonical lowercase realm",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "realm": "cozyfarm.dcl.eth",
+    "peers": [
+      {
+        "id": "0x0000000000000000000000000000000000000003",
+        "address": "0x0000000000000000000000000000000000000003",
+        "lastPing": 1788515567790,
+        "parcel": [
+          0,
+          0
+        ],
+        "position": [
+          8,
+          0,
+          8
+        ]
+      }
+    ]
+  }
+}

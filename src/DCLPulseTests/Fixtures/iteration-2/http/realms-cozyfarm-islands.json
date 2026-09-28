@@ -1,0 +1,36 @@
+{
+  "request": "GET /realms/cozyfarm.dcl.eth/islands",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "realm": "cozyfarm.dcl.eth",
+    "islands": [
+      {
+        "id": "C3",
+        "maxPeers": 0,
+        "center": [
+          8,
+          0,
+          8
+        ],
+        "radius": 0,
+        "peers": [
+          {
+            "id": "0x0000000000000000000000000000000000000003",
+            "address": "0x0000000000000000000000000000000000000003",
+            "lastPing": 1788515567790,
+            "parcel": [
+              0,
+              0
+            ],
+            "position": [
+              8,
+              0,
+              8
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

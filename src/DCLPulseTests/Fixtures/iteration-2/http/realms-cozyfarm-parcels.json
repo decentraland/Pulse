@@ -1,0 +1,17 @@
+{
+  "request": "GET /realms/cozyfarm.dcl.eth/parcels",
+  "note": "worlds number parcels from 0,0 — realm scoping is mandatory",
+  "status": 200,
+  "body": {
+    "realm": "cozyfarm.dcl.eth",
+    "parcels": [
+      {
+        "peersCount": 1,
+        "parcel": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    ]
+  }
+}

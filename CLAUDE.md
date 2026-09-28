@@ -304,6 +304,16 @@ NRT is `enable`d in every project. Type nullable params/returns/fields as `T?`. 
 - A comment states only what the annotated code itself does or guarantees — **never what a caller or another layer will do with the result.** External behavior can change without this code changing, silently turning the comment into a lie.
 - Sentence case, end with a period. No commented-out code. No `/* */` block comments.
 
+**Budget.** Comments earn their lines, and the default budget is small:
+
+- A `<summary>` is **1–3 lines**; an inline `//` is **1–2**. Past that, the code wants a name, not a paragraph.
+- **Say it once.** A fact belongs at one site — the field, the method, or the type doc. Repeating it across neighbours just creates a second copy to go stale.
+- **Don't argue a hazard that cannot happen.** Explaining why a race is impossible reads as evidence the race is live. State the invariant that rules it out, in one line, and stop.
+- **Don't narrate the change.** Why a line moved, what it replaced, which review found it — that is the commit message's job, not the file's.
+- Prefer **deleting** a comment to shortening it. If deleting it loses no fact the code cannot state, it was noise.
+
+The test: delete the comment and ask what a reader no longer knows. "Nothing" means it should not have been written.
+
 ### Member ordering
 
 Within a type: enums/delegates → fields → properties → events → methods → nested types. Within each group, order by visibility public → internal → protected → private. Fields: `const`/`static readonly` → `static` → `readonly` → public → private. Methods: constructor → `Dispose` → public API → private helpers, each private helper placed **after** the method that calls it.
@@ -318,6 +328,40 @@ Concrete consequences:
 - Same-wallet reconnect always gets a **fresh** server-allocated `PeerIndex` today. We do not rekey the transport to reuse the prior `PeerIndex` — doing so would require cross-worker rekey, which this rule forbids.
 - Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~(`VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL`) × `BaseTickMs` ≈ 4 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
 - Different-wallet on a recycled ENet slot: the allocator's pending-recycle already prevents the server from issuing the same `PeerIndex` to a different wallet within the grace window, so this case does not produce aliased observer views; the original bug is fixed.
+
+## A PeerSimulation call tree must be lock-free
+
+`PeerSimulation` runs on the worker threads that drive the simulation tick. **Nothing reachable from
+it may block**: no `lock`/`Monitor`, no `SemaphoreSlim.Wait`, no blocking channel write, no
+`Task.Wait()` or `.Result`. A worker stalled on a lock delays every peer on its shard, and the holder
+is on a schedule of its own — a 1 Hz `ClusterTracker` pass, a broker drain — so the stall is unbounded
+in tick terms and invisible in tick metrics.
+
+This binds the **whole call tree, not the first frame**. When `PeerSimulation` calls a shared
+component, that method and everything it reaches must be lock-free *on that path*. Adding a `lock` to
+a method that is only called from a background service is fine until something in `PeerSimulation`
+reaches it; check the callers before you add one.
+
+Cross-thread work leaves the worker by **handoff, never by waiting** — a lock-free queue, or a
+single-writer field the owning thread polls on its own schedule. This is the same principle as the
+worker-shard rule above: the tick hands work over and moves on. Consequences worth naming:
+
+- A worker cannot publish to the NATS outbox inline: `NatsPublisher`'s publish methods take
+  `outboxLock`. It enqueues and lets the owning thread publish.
+- A worker cannot mutate another component's per-peer table inline, for the same reason.
+- Prefer the existing lock-free primitives over inventing one — `SnapshotBoard`'s ring seqlock,
+  `ClusterBoard`'s whole-result `Volatile.Write` swap, `IdentityBoard`'s `ConcurrentDictionary`.
+- Concurrent collections are not the answer. `ConcurrentQueue.Enqueue` takes a lock of its own when it
+  appends a segment, and allocates one per ~32 items. Preallocate an array sized to
+  `Transport:MaxPeers` and index it by `PeerIndex`.
+
+**A lock off the tick is fine, and `outboxLock` is the worked example.** The rule bans blocking *on a
+worker*, not locks as such. `NatsPublisher`'s outbox keeps its lock deliberately: `ClusterTracker` is
+its only producer, so it serializes one 1 Hz producer against one drain loop, and holds are in-memory
+only because `await` cannot appear under `lock`. Making it lock-free would mean an SPSC rewrite of the
+supersede-by-subject dictionary and the instance pools — real work to remove microseconds of
+uncontended locking that no tick ever waits on. The check to apply is "can a `PeerSimulation` call
+tree reach this?", not "is there a lock?".
 
 ## PeerSimulation — method decoupling
 
@@ -354,6 +398,58 @@ For full debugging workflows (local + remote Fargate, Rider setup, logpoints, po
 
 ---
 
+## Outbound surfaces — presence feed & stats HTTP
+
+Pulse is the platform's source of online-player information. Two surfaces carry it, and both are
+derived from the same `ClusterTracker` pass, so what the feed says and what HTTP serves cannot
+disagree by more than one pass interval.
+
+**`engine.parcel_changes`** (`Clusters/ClusterTracker.Presence.cs`, `Clusters/NatsPublisher.Presence.cs`) —
+`decentraland.pulse.ParcelChangesBatch`: which wallet is on which parcel of which realm, batched
+every `Presence:BatchIntervalMs`, with a full `snapshot=true` batch on start, on reconnect, every
+`Presence:SnapshotIntervalMs`, and after an outbox eviction (coalesced). Invariants to preserve when
+touching it:
+
+- **Exits come from one place.** `PeerSimulation.CleanupDisconnectedPeer` calls
+  `ClusterTracker.OnPeerRemoved`, and every way a peer can leave is a transport disconnect that
+  ends there exactly once. Do **not** also derive exits from "present last pass, missing in this
+  one" — that double-emits, and it races a pass still in flight when the peer disconnected.
+- **`seq` is stamped per assembled batch and never reused.** A publish that throws leaves a real gap,
+  which is what it is; consumers hold their state and are corrected by the next snapshot. Do not
+  retry a batch under its old `seq`.
+- **Every batch is per wallet, not per slot, and a snapshot discards nothing.** Slots are per
+  connection and a wallet sits on two of them after a duplicate-session kick or a fast reconnect —
+  until the evicted connection's transport disconnect lands (its ENet disconnect is queued, so that
+  waits on the client's ack, up to `Transport:PeerTimeoutMs`) and for a further
+  `Peers:DisconnectionCleanTimeoutMs` after that — so both entry points reduce per address:
+  `OnPeerRemoved` publishes an exit only when the wallet is left on no slot of this server (otherwise
+  the kick withdraws a peer that is online on its newer connection), and `CollectLivePresence` emits
+  one entry per wallet, at the slot the latest pass saw — never the stale one, whose parcel a
+  last-write-wins consumer would otherwise hold until the next snapshot. Keep the `Slot` recency
+  stamps in step with any new way of writing a slot. Meanwhile whatever was pending when a snapshot
+  was collected is published *ahead* of it under its own `seq`, because the snapshot lists live peers
+  and so cannot name an exit. All of it is C1.3 plus amendments A1/A2 — every clause has a test in
+  `PresenceGuaranteeTests` named after it.
+
+[docs/presence-feed.md](docs/presence-feed.md) is the consumer-facing reference — guarantees,
+the `seq`-gap rule, config and metrics.
+
+**Stats HTTP** (`src/DCLPulse/Stats/`) — the read-only routes archipelago-stats used to answer,
+re-sourced from Pulse's boards and scoped by realm: `/realms`, `/realms/{realm}/peers|parcels|
+islands`, all-realms `/peers` lookups, `/status`, `/about`, `/health`. `StatsRouter` owns routing and
+`StatsBoardView` the single read of `ClusterBoard` + `SnapshotBoard`; `HttpService` keeps only
+`/metrics`, which is the one route with a bearer token. Shapes and ordering are a frozen contract —
+[docs/openapi.yaml](docs/openapi.yaml) — and are pinned by golden tests against the fixture pack
+copied into `src/DCLPulseTests/Fixtures/iteration-2/`. Add routes to the router, not to
+`HttpService`.
+
+Realms and wallet addresses are canonical **lowercase** everywhere: `CanonicalName.Of` runs in
+`FieldValidator` on every ingest path (handshake seed, teleport, scene-listener AoI), because realms
+are the partition key `RealmSpatialGrids`, the presence feed and the `/realms/{realm}` routes all
+compare `Ordinal`.
+
+---
+
 ## Files / Components Expected
 
 Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/Protocol/Directory.Build.props`); only the generated C# under `src/Protocol/Generated/` is committed here.
@@ -362,6 +458,9 @@ Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/P
 - `decentraland/pulse/pulse_client.proto` — client→server messages and the `ClientMessage` envelope
 - `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and its only quantized message (`PlayerStateDeltaTier0`)
 - `decentraland/pulse/pulse_shared.proto` — types referenced by both directions (`PlayerState`, `GlideState`, `PlayerAnimationFlags`); imported by both client and server protos
+- `decentraland/pulse/pulse_presence.proto` — `ParcelChangesBatch` / `ParcelChange` / `Parcel`, the `engine.parcel_changes` presence feed
+- `decentraland/pulse/pulse_clusters.proto` — `PeerClusterChange`, the `peer.{addr}.cluster_change` feed
+- `kernel/comms/v3/archipelago.proto` — `IslandStatusMessage` / `ServiceDiscoveryMessage`, for `engine.islands` and `engine.discovery`
 - `protoc-gen-bitwise` — Node/JS plugin in the protocol repo (wrappers in `tools/protoc-gen-bitwise/`), reads `CodeGeneratorRequest`, emits the `*.Bitwise.cs` quantized-accessor partials
 - `Quantize` (C#, `src/Protocol/Generated/Quantize.cs`) — static quantization helpers (`Encode` / `Decode`, power-law `EncodePower` / `DecodePower`) backing the generated `{Field}Quantized` accessors
 

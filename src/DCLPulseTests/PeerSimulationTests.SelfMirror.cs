@@ -65,7 +65,7 @@ public class SelfMirrorTests
             areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
-            Substitute.For<ILogger<PeerSimulation>>(),
+            Substitute.For<ILogger<PeerSimulation>>(), PresenceTestFactory.Disabled(),
             selfMirrorEnabled: true, selfMirrorTier: 0);
 
         peers = new Dictionary<PeerIndex, PeerState>
@@ -245,7 +245,7 @@ public class SelfMirrorTests
             SimulationSteps, timeProvider,
             Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
-            Substitute.For<ILogger<PeerSimulation>>());
+            Substitute.For<ILogger<PeerSimulation>>(), PresenceTestFactory.Disabled());
 
         SetVisibleSubjects((observer, PeerViewSimulationTier.TIER_0));
 
@@ -261,7 +261,7 @@ public class SelfMirrorTests
             areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, Substitute.For<IPeerIndexAllocator>(),
-            Substitute.For<ILogger<PeerSimulation>>(),
+            Substitute.For<ILogger<PeerSimulation>>(), PresenceTestFactory.Disabled(),
             selfMirrorEnabled: true, selfMirrorTier: 1);
 
         SetVisibleSubjects();

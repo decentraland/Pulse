@@ -47,7 +47,7 @@ namespace Pulse.Clusters;
 ///     <c>PublishTimeoutOnDisconnected</c> staying <c>false</c> is what makes a publish wait for the
 ///     reconnect instead of throwing once <c>CommandTimeout</c> elapses.
 /// </summary>
-public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
+public sealed partial class NatsPublisher : BackgroundService, IClusterFeedPublisher
 {
     // IslandData.max_peers belongs to archipelago's shape and Pulse caps cluster size nowhere, so
     // every island goes out carrying zero rather than a bound this server does not enforce.
@@ -63,6 +63,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private const string ISLANDS_SUBJECT = "engine.islands";
 
     private const string DISCOVERY_SUBJECT = "engine.discovery";
+
+    private const string PARCEL_CHANGES_SUBJECT = "engine.parcel_changes";
 
     /// <summary>
     ///     Wait before rebuilding a faulted pipeline. Not a reconnect delay — the client handles
@@ -86,6 +88,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly ILoggerFactory loggerFactory;
 
     private readonly NatsOptions options;
+    private readonly PresenceOptions presenceOptions;
+    private readonly ITimeProvider timeProvider;
     private readonly SnapshotBoard snapshotBoard;
     private readonly bool feedEnabled;
 
@@ -94,6 +98,10 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     // left. Every entry holds a message instance checked out of a free list, so anything that leaves
     // the outbox — superseded, evicted, dequeued or abandoned at shutdown — is returned by whoever took
     // it out.
+    //
+    // This lock is deliberate and stays. It is off the tick: ClusterTracker is the only producer, so
+    // it serializes one 1 Hz producer against one drain, never a peer worker — see the lock-free rule
+    // in CLAUDE.md. Holds are in-memory only, since `await` cannot appear under `lock`.
     private readonly Lock outboxLock = new ();
     private readonly Dictionary<string, PeerClusterChange> pendingChangeBySubject = new (StringComparer.Ordinal);
     private readonly Queue<string> changeOrder = new ();
@@ -115,13 +123,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
 
     private readonly string commitHash;
 
-    // Topology scratch, reached from FillIslandStatus alone and so covered by no lock of its own: it
-    // relies on PublishTopology's callers serializing their calls, which nothing here enforces, and two
-    // concurrent fills would interleave into both snapshots. islandById maps one pass's cluster ids to
-    // the islands just built, so its members are filed in a single walk; islandPool holds the IslandData
-    // a shrinking snapshot no longer needs, so a later one that grows again reuses them. An instance is
-    // only ever filled while no other holder has it, so the islands reached through either of these
-    // belong to no live message.
+    // Topology scratch, reached from FillIslandStatus alone and so needing no lock: ClusterTracker is
+    // its only caller, one pass at a time. islandById files one pass's members in a single walk;
+    // islandPool holds the IslandData a shrinking snapshot no longer needs.
     private readonly Dictionary<string, IslandData> islandById = new (StringComparer.Ordinal);
     private readonly Stack<IslandData> islandPool = new ();
 
@@ -145,15 +149,31 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         ILogger<NatsPublisher> logger,
         ILoggerFactory loggerFactory,
         IOptions<NatsOptions> options,
+        IOptions<PresenceOptions> presenceOptions,
+        ITimeProvider timeProvider,
         SnapshotBoard snapshotBoard)
     {
         this.logger = logger;
         this.loggerFactory = loggerFactory;
         this.options = options.Value;
+        this.presenceOptions = presenceOptions.Value;
+        this.timeProvider = timeProvider;
         this.snapshotBoard = snapshotBoard;
 
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
+        presenceEnabled = feedEnabled && this.presenceOptions.BatchIntervalMs > 0;
+
+        // The first batch of the process has to be a full snapshot (C1.4). Raised here rather than in
+        // the run loop, so a slow-to-reach broker cannot turn the opening batch into a delta.
+        if (presenceEnabled)
+        {
+            parcelSnapshotRequest = PresenceSnapshotReason.Start;
+
+            // The periodic deadline runs from process start, not from the epoch: left at zero it is
+            // due on the first turn and re-sends what the start snapshot just said.
+            lastParcelSnapshotUnixMs = this.timeProvider.UnixTimeMs;
+        }
 
         if (!feedEnabled) return;
 
@@ -242,6 +262,12 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 topologyPool.Push(abandoned);
             }
 
+            // Presence entries are plain values, not pooled messages — dropping them is the teardown.
+            pendingParcelChangeByAddress.Clear();
+            parcelChangeOrder.Clear();
+            parcelChangesAheadOfSnapshot.Clear();
+            pendingParcelSnapshot = null;
+
             foreach (KeyValuePair<string, PeerClusterChange> pending in pendingChangeBySubject)
                 changePool.Push(pending.Value);
 
@@ -268,10 +294,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             rented.DisplacedSession = session.DisplacedSession ?? string.Empty;
             rented.DisplacedClusterId = session.DisplacedClusterId ?? string.Empty;
 
-            // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
-            // chain carried. The subject is also the coalescing key, so per-subject latest-wins is
-            // exactly per-peer latest-wins.
-            var subject = $"peer.{wallet.ToLowerInvariant()}.cluster_change";
+            // Lower-cased so one wallet always maps to one subject. The subject is also the coalescing
+            // key, so per-subject latest-wins is exactly per-peer latest-wins.
+            var subject = $"peer.{CanonicalName.Of(wallet)}.cluster_change";
 
             PeerClusterChange change = rented;
             rented = null;
@@ -523,7 +548,22 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
                 "NATS outbox capacity is not positive (Nats:ChannelCapacity is {Capacity}) — every assignment will evict the previous one, so the feed will lose almost all of them",
                 options.ChannelCapacity);
 
-        logger.LogInformation("NATS publisher started — {Broker}", SanitizeBrokerUrl(options.Url));
+        if (presenceEnabled)
+            logger.LogInformation(
+                "Presence feed publishing to {Subject} as {ServerName} — batch every {BatchIntervalMs}ms, snapshot every {SnapshotIntervalMs}ms",
+                PARCEL_CHANGES_SUBJECT, options.ServerName, presenceOptions.BatchIntervalMs, presenceOptions.SnapshotIntervalMs);
+        else
+
+            // Warning, not Information: production floors logging at Warning, and a feed that was
+            // meant to be on and silently is not has to be visible in the deployment log.
+            logger.LogWarning(
+                "Presence feed disabled ({Subject} will carry nothing) — Presence:BatchIntervalMs is {BatchIntervalMs}",
+                PARCEL_CHANGES_SUBJECT, presenceOptions.BatchIntervalMs);
+
+        // The effective server_name, configured or defaulted (A3): the only place an operator can see
+        // which value this process resolved, and NatsOptions.ServerName says why it must be unique.
+        logger.LogInformation("NATS publisher started — {Broker}, server_name {ServerName}",
+            SanitizeBrokerUrl(options.Url), options.ServerName);
 
         // Supervision loop. Losing the broker is handled inside the client — it retries forever with
         // its own backoff — so reaching the end of one iteration means the pipeline itself faulted,
@@ -593,7 +633,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             await Task.WhenAll(
                 DrainAsync(connection, signal, loops),
-                heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask);
+                heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask,
+                presenceEnabled ? PublishParcelChangesPeriodicallyAsync(connection, loops) : Task.CompletedTask);
         }
         finally
         {
@@ -783,10 +824,17 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         PulseMetrics.Nats.PUBLISH_FAILED.Add(1);
     }
 
+    /// <summary>
+    ///     Records an eviction — the outbox's one path to genuine loss — and with it that the presence
+    ///     delta stream is incomplete, so the next batch must be a snapshot (C1.4). One call site for
+    ///     every eviction, whichever outbox let the message go.
+    /// </summary>
     private void CountDropped()
     {
         Interlocked.Increment(ref droppedCount);
         PulseMetrics.Nats.DROPPED.Add(1);
+
+        RequestParcelSnapshot(PresenceSnapshotReason.Eviction);
     }
 
     private void CountSuperseded()
@@ -865,6 +913,11 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         {
             Interlocked.Increment(ref reconnectCount);
             PulseMetrics.Nats.RECONNECTS.Add(1);
+
+            // A consumer that subscribed while the connection was down holds nothing for this
+            // server_name, so resuming mid-delta can freeze it for a whole snapshot interval.
+            // Labelled Start because, on the wire, this is a fresh stream.
+            RequestParcelSnapshot(PresenceSnapshotReason.Start);
         }
 
         MarkConnected();

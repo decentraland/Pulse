@@ -90,7 +90,7 @@ public partial class PeerSimulationTests
             areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),
             profileBoard, peerIndexAllocator,
-            Substitute.For<ILogger<PeerSimulation>>());
+            Substitute.For<ILogger<PeerSimulation>>(), PresenceTestFactory.Disabled());
 
         emoteCompleter = new EmoteCompleter(snapshotBoard, timeProvider);
 

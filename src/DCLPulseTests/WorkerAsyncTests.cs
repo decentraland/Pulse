@@ -50,7 +50,8 @@ public class WorkerAsyncTests
             {
                 PreAuthBudget = 0, MaxConcurrentPreAuthPerIP = 0,
             })),
-            DisabledIpLimiter());
+            DisabledIpLimiter(),
+            PresenceTestFactory.Disabled());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         signal = new ManualResetEventSlim();

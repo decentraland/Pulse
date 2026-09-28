@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Pulse.Clusters;
 using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
@@ -54,6 +55,7 @@ public sealed class PeersManager : BackgroundService
     private readonly IPeerIndexAllocator peerIndexAllocator;
     private readonly PreAuthAdmission preAuthAdmission;
     private readonly IpLimiter ipLimiter;
+    private readonly ClusterTracker clusterTracker;
 
     public PeersManager(
         MessagePipe messagePipe,
@@ -73,7 +75,8 @@ public sealed class PeersManager : BackgroundService
         EmoteCompleter emoteCompleter,
         IPeerIndexAllocator peerIndexAllocator,
         PreAuthAdmission preAuthAdmission,
-        IpLimiter ipLimiter)
+        IpLimiter ipLimiter,
+        ClusterTracker clusterTracker)
     {
         this.messagePipe = messagePipe;
         this.logger = logger;
@@ -93,6 +96,7 @@ public sealed class PeersManager : BackgroundService
         this.peerIndexAllocator = peerIndexAllocator;
         this.preAuthAdmission = preAuthAdmission;
         this.ipLimiter = ipLimiter;
+        this.clusterTracker = clusterTracker;
 
         workerCount = WorkerShard.ComputeWorkerCount(peerOptions.MaxWorkerThreads);
 
@@ -121,7 +125,7 @@ public sealed class PeersManager : BackgroundService
             var simulation = new PeerSimulation(
                 areaOfInterest, snapshotBoard, realmGrids, identityBoard,
                 messagePipe, peerOptions.SimulationSteps, timeProvider, transport, profileBoard,
-                peerIndexAllocator, peerSimulationLogger,
+                peerIndexAllocator, peerSimulationLogger, clusterTracker,
                 peerOptions.SelfMirrorEnabled, peerOptions.SelfMirrorTier, peerOptions.ResyncWithDelta,
                 peerOptions.DisconnectionCleanTimeoutMs, peerOptions.PendingAuthCleanTimeoutMs);
 

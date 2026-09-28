@@ -4,7 +4,6 @@ using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -23,7 +22,7 @@ namespace Pulse.Clusters;
 ///     detection for the feed, not partitioning.) Cost is O(N + C) in peers and occupied cells — no
 ///     peer-pair tests. Working buffers are fields, cleared rather than reallocated between passes.
 /// </summary>
-public sealed class ClusterTracker : BackgroundService
+public sealed partial class ClusterTracker : BackgroundService
 {
     // Absent link — no component, no next node, no claimant.
     private const int NONE = -1;
@@ -41,6 +40,8 @@ public sealed class ClusterTracker : BackgroundService
     private readonly IdentityBoard identityBoard;
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
+    private readonly ParcelEncoder parcelEncoder;
+    private readonly ITimeProvider timeProvider;
 
     // Cell graph for the realm being collected. One node per cell, carrying its slice of members and
     // its own union-find state. Cleared between realms — the same cell exists in every realm, and
@@ -58,8 +59,9 @@ public sealed class ClusterTracker : BackgroundService
     // and holds one entry per previous cluster the component draws members from.
     private readonly Dictionary<string, int> overlapCounts = new ();
 
-    // State carried across passes, owned solely by this thread.
-    private readonly PeerClusterState[] peerStates;
+    // State carried across passes, read and written by this thread alone. Departures reach it through
+    // the departed flags rather than from the worker that raised them.
+    private readonly PeerState[] peerStates;
     private readonly Dictionary<string, ClusterRecord> clusterRecords = new ();
 
     // Last assignment published for each wallet. Keyed by wallet rather than PeerIndex so an
@@ -69,11 +71,6 @@ public sealed class ClusterTracker : BackgroundService
     private long passNumber;
     private long nextClusterNumber;
 
-    // Last value published for each gauge. An up-down counter takes a delta, not an absolute.
-    private int lastClusterCount;
-    private int lastClusterPeers;
-    private int lastSizeMax;
-
     public ClusterTracker(
         ILogger<ClusterTracker> logger,
         IOptions<ClusterOptions> options,
@@ -82,6 +79,9 @@ public sealed class ClusterTracker : BackgroundService
         IdentityBoard identityBoard,
         ClusterBoard clusterBoard,
         IClusterFeedPublisher feedPublisher,
+        ParcelEncoder parcelEncoder,
+        IOptions<NatsOptions> natsOptions,
+        ITimeProvider timeProvider,
         int maxPeers)
     {
         this.logger = logger;
@@ -91,8 +91,14 @@ public sealed class ClusterTracker : BackgroundService
         this.identityBoard = identityBoard;
         this.clusterBoard = clusterBoard;
         this.feedPublisher = feedPublisher;
+        this.parcelEncoder = parcelEncoder;
+        this.timeProvider = timeProvider;
 
-        peerStates = new PeerClusterState[maxPeers];
+        presenceEnabled = natsOptions.Value.IsConfigured;
+        passRuns = this.options.Enabled && this.options.PassIntervalMs > 0;
+
+        peerStates = new PeerState[maxPeers];
+        departed = new bool[maxPeers];
     }
 
     // A List indexer hands back a copy of a struct element, so in-place updates go through the
@@ -159,6 +165,10 @@ public sealed class ClusterTracker : BackgroundService
     {
         long startTicks = Stopwatch.GetTimestamp();
 
+        // First, so a departure is retired before this pass places anyone: the wallet's newer
+        // connection then supersedes it in the same batch rather than racing it.
+        DrainDepartures();
+
         // Stamps every per-pass liveness check: a peer slot, a cluster record and a claim are
         // current exactly when they carry this number, so nothing has to be cleared to go stale.
         passNumber++;
@@ -169,64 +179,17 @@ public sealed class ClusterTracker : BackgroundService
 
         ClusterPass pass = BuildPass();
 
-        RememberComputedAssignments();
         clusterBoard.Publish(pass);
 
         // Topology before the per-peer events, so a snapshot declaring a cluster is published ahead
         // of the assignments that reference it.
         feedPublisher.PublishTopology(pass);
 
-        int reassignments = PublishAssignmentChanges();
+        int reassignments = PublishPeerChanges();
         ForgetVanishedPeers();
         ForgetExpiredSessions();
 
         RecordPassMetrics(startTicks, pass.Clusters.Count, reassignments);
-    }
-
-    private void RecordPassMetrics(long startTicks, int clusterCount, int reassignments)
-    {
-        PulseMetrics.Clusters.PASSES.Add(1);
-        PulseMetrics.Clusters.PASS_DURATION_US.Add((long)Stopwatch.GetElapsedTime(startTicks).TotalMicroseconds);
-
-        if (reassignments > 0)
-            PulseMetrics.Clusters.REASSIGNMENTS.Add(reassignments);
-
-        RecordClusterSizes(out int peers, out int largest);
-
-        RecordGauge(PulseMetrics.Clusters.COUNT, clusterCount, ref lastClusterCount);
-        RecordGauge(PulseMetrics.Clusters.PEERS, peers, ref lastClusterPeers);
-        RecordGauge(PulseMetrics.Clusters.SIZE_MAX, largest, ref lastSizeMax);
-    }
-
-    /// <summary>
-    ///     Records one histogram observation per cluster and returns the two totals the histogram cannot
-    ///     answer: how many peers were clustered at all, and the largest cluster. Reads
-    ///     <see cref="PassComponent.MemberCount" /> rather than the built <see cref="ClusterPass" />, so
-    ///     it is independent of how the pass is materialized.
-    /// </summary>
-    private void RecordClusterSizes(out int peers, out int largest)
-    {
-        peers = 0;
-        largest = 0;
-
-        for (var component = 0; component < components.Count; component++)
-        {
-            int size = components[component].MemberCount;
-
-            PulseMetrics.Clusters.SIZE.Record(size);
-
-            peers += size;
-            largest = Math.Max(largest, size);
-        }
-    }
-
-    /// <summary>
-    ///     Publishes an absolute gauge value through an up-down counter, which takes a delta.
-    /// </summary>
-    private static void RecordGauge(UpDownCounter<int> gauge, int value, ref int previous)
-    {
-        gauge.Add(value - previous);
-        previous = value;
     }
 
     /// <summary>
@@ -282,7 +245,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private void TryCollectMember(PeerIndex peer)
     {
-        ref PeerClusterState state = ref peerStates[peer.Value];
+        ref PeerState state = ref peerStates[peer.Value];
 
         if (state.LastSeenPass == passNumber) return;
         if (!snapshotBoard.TryRead(peer, out PeerSnapshot snapshot)) return;
@@ -570,7 +533,7 @@ public sealed class ClusterTracker : BackgroundService
         for (var component = 0; component < components.Count; component++)
             clusterInfos[component] = BuildCluster(component, peers, clusterIdByPeer, ref peerCursor);
 
-        return new ClusterPass(clusterInfos, peers, clusterIdByPeer);
+        return new ClusterPass(clusterInfos, peers, clusterIdByPeer, timeProvider.UnixTimeMs);
     }
 
     /// <summary>
@@ -598,6 +561,11 @@ public sealed class ClusterTracker : BackgroundService
                 member.Peer, member.Wallet, info.Id, info.Realm, member.Position, member.Parcel);
 
             clusterIdByPeer[member.Peer.Value] = info.Id;
+
+            // What this pass computed, which is what the next pass measures cluster-identity overlap
+            // against. Kept apart from PublishedClusterId: a fragment mid-debounce must still inherit
+            // its own ID rather than be minted a new one every pass.
+            peerStates[member.Peer.Value].PreviousPassClusterId = info.Id;
         }
 
         return new ClusterInfo(info.Id, info.Realm, info.MemberCount, centroid, MathF.Sqrt(radiusSquared));
@@ -614,37 +582,49 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     Records what this pass computed, so the next pass can measure cluster-identity overlap
-    ///     against it. Kept separate from the published assignment: a fragment mid-debounce must still
-    ///     inherit its own ID rather than be minted a new one every pass.
+    ///     The pass's one per-peer publish walk: each member's parcel change and its cluster
+    ///     assignment, in that order. Returns how many assignments were published.
+    ///     <para />
+    ///     Both feeds come off the same walk of the same members, so what
+    ///     <c>engine.parcel_changes</c> says and what the stats surface serves cannot disagree by more
+    ///     than one pass. Both halves run on the tracker thread, which owns every column they touch.
     /// </summary>
-    private void RememberComputedAssignments()
-    {
-        for (var component = 0; component < components.Count; component++)
-        {
-            string clusterId = components[component].Id;
-
-            foreach (PassMember member in MembersOf(component))
-                peerStates[member.Peer.Value].PreviousPassClusterId = clusterId;
-        }
-    }
-
-    /// <summary>
-    ///     Publishes every peer whose assignment changed, subject to the dwell debounce, and returns
-    ///     how many were published.
-    /// </summary>
-    private int PublishAssignmentChanges()
+    private int PublishPeerChanges()
     {
         var reassignments = 0;
+
+        // Asked before the walk, because a snapshot sends every live peer and the per-peer deltas
+        // would then be redundant. Slots are brought up to date either way.
+        var reason = default(PresenceSnapshotReason);
+        bool snapshot = presenceEnabled && feedPublisher.TryTakeParcelSnapshotRequest(out reason);
 
         for (var component = 0; component < components.Count; component++)
         {
             PassComponent info = components[component];
 
             foreach (PassMember member in MembersOf(component))
+            {
+                if (presenceEnabled)
+                    ObservePresence(member, info.Realm, publishChange: !snapshot);
+
                 if (TryPublishAssignment(member, info.Id, info.Realm))
                     reassignments++;
+            }
         }
+
+        if (!presenceEnabled) return reassignments;
+
+        // An outbox eviction is raised by the deltas just published, so its snapshot request does not
+        // exist until the walk above has run. Answering it here rather than next pass is what makes
+        // C1.4's "immediately after any outbox eviction" the next batch turn.
+        if (!snapshot && feedPublisher.TryTakeParcelSnapshotRequest(out PresenceSnapshotReason raisedByThisPass))
+        {
+            snapshot = true;
+            reason = raisedByThisPass;
+        }
+
+        if (snapshot)
+            feedPublisher.PublishParcelSnapshot(CollectLivePresence(), reason);
 
         return reassignments;
     }
@@ -656,7 +636,7 @@ public sealed class ClusterTracker : BackgroundService
     /// </summary>
     private bool TryPublishAssignment(PassMember member, string clusterId, string realm)
     {
-        ref PeerClusterState state = ref peerStates[member.Peer.Value];
+        ref PeerState state = ref peerStates[member.Peer.Value];
 
         bool realmChanged = !string.Equals(state.PublishedRealm, realm, StringComparison.Ordinal);
 
@@ -727,7 +707,7 @@ public sealed class ClusterTracker : BackgroundService
     ///     Advances the peer's candidate streak and reports whether the new assignment has now
     ///     been agreed on by <see cref="ClusterOptions.DwellPasses" /> consecutive passes.
     /// </summary>
-    private bool HasDwelled(ref PeerClusterState state, string clusterId)
+    private bool HasDwelled(ref PeerState state, string clusterId)
     {
         if (string.Equals(state.CandidateClusterId, clusterId, StringComparison.Ordinal))
             state.CandidateStreak++;
@@ -749,12 +729,19 @@ public sealed class ClusterTracker : BackgroundService
     {
         for (var peerSlot = 0; peerSlot < peerStates.Length; peerSlot++)
         {
-            ref PeerClusterState state = ref peerStates[peerSlot];
+            ref PeerState state = ref peerStates[peerSlot];
 
             // An unstamped slot is already clear — never collected, or forgotten by an earlier pass.
             if (state.LastSeenPass == passNumber || state.LastSeenPass == 0) continue;
 
-            state = default(PeerClusterState);
+            // Clustering columns only: absent from a pass is not gone, and retiring a presence is
+            // RetirePresence's alone (C1.2). Zeroing LastSeenPass loses the slot every Supersedes tie.
+            state.PreviousPassClusterId = null;
+            state.PublishedClusterId = null;
+            state.PublishedRealm = null;
+            state.CandidateClusterId = null;
+            state.CandidateStreak = 0;
+            state.LastSeenPass = 0;
         }
     }
 
@@ -849,7 +836,10 @@ public sealed class ClusterTracker : BackgroundService
     }
 
     /// <summary>
-    ///     What the tracker carries about one peer slot between passes.
+    ///     What the tracker carries about one peer slot between passes, for both feeds.
+    ///     <para />
+    ///     Every column belongs to the tracker thread; a worker reaches it only through the
+    ///     <see cref="departed" /> handoff.
     ///     <para />
     ///     Two notions of "previous cluster", deliberately kept apart:
     ///     <see cref="PreviousPassClusterId" /> is what the last pass <i>computed</i>, which is what
@@ -858,9 +848,24 @@ public sealed class ClusterTracker : BackgroundService
     ///     the debounce: a fragment mid-debounce would look unassigned to inheritance and be minted a
     ///     fresh ID every pass, so its candidate would never repeat and its streak never reach
     ///     <see cref="ClusterOptions.DwellPasses" />.
+    ///     <para />
+    ///     <see cref="Realm" /> and <see cref="PublishedRealm" /> are likewise distinct: the dwell
+    ///     debounce can hold an assignment back while a parcel change goes out, so the realm the two
+    ///     feeds last carried can differ.
     /// </summary>
-    private struct PeerClusterState
+    private struct PeerState
     {
+        // --- Presence columns. Realm doubles as the occupancy flag.
+        public string? Wallet;
+        public string? Address;
+        public string? Realm;
+        public ParcelCoord Parcel;
+
+        // The order this occupancy was acquired in — not the order its parcel was written in.
+        // See Supersedes.
+        public ulong OccupiedAt;
+
+        // --- Clustering columns. Pass thread only.
         public string? PreviousPassClusterId;
 
         // Cluster and realm as last published together — the feed carries both, so either one
@@ -871,7 +876,8 @@ public sealed class ClusterTracker : BackgroundService
         public string? CandidateClusterId;
         public int CandidateStreak;
 
-        // Pass this slot was last collected in. Zero means never, or forgotten since.
+        // Pass this slot was last collected in. Zero means never, or forgotten since. Read by
+        // Supersedes as well as by the sweep.
         public long LastSeenPass;
     }
 

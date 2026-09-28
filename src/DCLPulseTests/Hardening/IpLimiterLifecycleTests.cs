@@ -66,7 +66,8 @@ public class IpLimiterLifecycleTests
                 PreAuthBudget = 8,
                 MaxConcurrentPreAuthPerIP = 4,
             })),
-            limiter);
+            limiter,
+            PresenceTestFactory.Disabled());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();

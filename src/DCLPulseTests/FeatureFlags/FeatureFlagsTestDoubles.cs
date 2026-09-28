@@ -187,9 +187,9 @@ internal sealed class StubFlagsEndpoint : IDisposable
     private readonly CancellationTokenSource shutdown = new ();
     private readonly Task serving;
     private readonly byte[] body;
-    private readonly int statusCode;
+    private readonly HttpStatusCode statusCode;
 
-    public StubFlagsEndpoint(string body, int statusCode = 200)
+    public StubFlagsEndpoint(string body, HttpStatusCode statusCode = HttpStatusCode.OK)
     {
         this.body = Encoding.UTF8.GetBytes(body);
         this.statusCode = statusCode;
@@ -233,7 +233,7 @@ internal sealed class StubFlagsEndpoint : IDisposable
             {
                 HttpListenerContext ctx = await listener.GetContextAsync().WaitAsync(shutdown.Token);
 
-                ctx.Response.StatusCode = statusCode;
+                ctx.Response.StatusCode = (int)statusCode;
                 ctx.Response.ContentType = "application/json";
                 await ctx.Response.OutputStream.WriteAsync(body, shutdown.Token);
                 ctx.Response.Close();

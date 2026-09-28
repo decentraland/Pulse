@@ -1,0 +1,10 @@
+{
+  "request": "GET /realms/nosuchrealm/peers",
+  "note": "unknown == empty: a realm exists exactly as long as it has peers, so this is 200 with an empty list, not 404",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "realm": "nosuchrealm",
+    "peers": []
+  }
+}

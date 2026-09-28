@@ -59,7 +59,8 @@ public class PreAuthAdmissionLifecycleTests
             new EmoteCompleter(snapshotBoard, timeProvider),
             Substitute.For<IPeerIndexAllocator>(),
             admission,
-            DisabledIpLimiter());
+            DisabledIpLimiter(),
+            PresenceTestFactory.Disabled());
 
         eventChannel = Channel.CreateUnbounded<MessagePipe.IncomingEvent>();
         peers = new Dictionary<PeerIndex, PeerState>();

@@ -1,6 +1,7 @@
 using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Pulse;
 using Pulse.InterestManagement;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
@@ -22,6 +23,7 @@ public class SpatialHashAreaOfInterestTests
 
     private RealmSpatialGrids grids;
     private SnapshotBoard snapshotBoard;
+    private IdentityBoard identityBoard;
     private SpatialHashAreaOfInterest aoi;
     private InterestCollector collector;
 
@@ -30,6 +32,7 @@ public class SpatialHashAreaOfInterestTests
     {
         grids = new RealmSpatialGrids(CELL_SIZE, MAX_PEERS);
         snapshotBoard = new SnapshotBoard(MAX_PEERS, RING_CAPACITY);
+        identityBoard = new IdentityBoard(MAX_PEERS);
         collector = new InterestCollector();
 
         var options = Substitute.For<IOptions<SpatialHashAreaOfInterestOptions>>();
@@ -42,7 +45,7 @@ public class SpatialHashAreaOfInterestTests
             CellSize = CELL_SIZE,
         });
 
-        aoi = new SpatialHashAreaOfInterest(grids, snapshotBoard, options);
+        aoi = new SpatialHashAreaOfInterest(grids, snapshotBoard, identityBoard, options);
     }
 
     [Test]
@@ -334,6 +337,108 @@ public class SpatialHashAreaOfInterestTests
         Assert.That(collector.Count, Is.EqualTo(0));
     }
 
+    [TestCase("realm-b")]
+    [TestCase("REALM-A")]
+    public void SubjectTeleportsWhileItsOldCellIsBeingCollected_NotVisibleInOldRealm(string destinationRealm)
+    {
+        PeerIndex observer = new (0);
+        PeerIndex first = new (1);
+        PeerIndex second = new (2);
+        Vector3 observerPosition = Vector3.Zero;
+        SetupPeer(observer, observerPosition);
+        SetupPeer(first, new Vector3(1, 0, 1));
+        SetupPeer(second, new Vector3(2, 0, 2));
+
+        SpatialGrid? oldGrid = grids.GetGrid(REALM);
+        Assert.That(oldGrid, Is.Not.Null);
+
+        HashSet<PeerIndex>? retainedOccupants = oldGrid?.GetPeers(grids.ComputeCellKey(1, 1));
+        Assert.That(retainedOccupants, Is.Not.Null);
+
+        var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, grids, parcelEncoder, Substitute.For<ITimeProvider>());
+        IInterestCollector interleavingCollector = Substitute.For<IInterestCollector>();
+        PeerIndex teleported = default;
+        bool didTeleport = false;
+
+        interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
+            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+        {
+            PeerIndex accepted = call.ArgAt<PeerIndex>(0);
+            collector.Add(accepted, call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+                call.ArgAt<IdentityRegistration>(3));
+
+            if (didTeleport)
+                return;
+
+            didTeleport = true;
+            teleported = accepted == first ? second : first;
+            publisher.PublishTeleport(teleported, new TeleportRequest
+            {
+                Realm = destinationRealm,
+                ParcelIndex = parcelEncoder.Encode(0, 0),
+                PositionXQuantized = 2,
+                PositionZQuantized = 2,
+            });
+        });
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(observerPosition);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, interleavingCollector);
+
+        Assert.That(didTeleport, Is.True);
+        Assert.That(retainedOccupants, Does.Contain(teleported), "The query retains the old copy-on-write cell set.");
+        Assert.That(oldGrid?.GetPeers(grids.ComputeCellKey(1, 1)), Does.Not.Contain(teleported));
+        Assert.That(snapshotBoard.TryRead(teleported, out PeerSnapshot destination), Is.True);
+        Assert.That(destination.Realm, Is.EqualTo(destinationRealm));
+        Assert.That(collector.Entries.Select(entry => entry.Subject), Does.Not.Contain(teleported));
+        Assert.That(collector.Count, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void SubjectMovesToLaterScannedCell_AcceptedOnce()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+        SetupPeer(observer, Vector3.Zero);
+        SetupPeer(subject, new Vector3(1, 0, 1));
+        Assert.That(snapshotBoard.TryRead(subject, out PeerSnapshot acceptedSnapshot), Is.True);
+        IdentityRegistration? acceptedIdentity = identityBoard.GetIdentity(subject);
+
+        var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, grids, parcelEncoder, Substitute.For<ITimeProvider>());
+        IInterestCollector interleavingCollector = Substitute.For<IInterestCollector>();
+        bool didTeleport = false;
+
+        interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
+            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+        {
+            collector.Add(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+                call.ArgAt<IdentityRegistration>(3));
+
+            if (didTeleport)
+                return;
+
+            didTeleport = true;
+            publisher.PublishTeleport(subject, new TeleportRequest
+            {
+                Realm = REALM,
+                ParcelIndex = parcelEncoder.Encode(3, 0),
+                PositionXQuantized = 3,
+                PositionZQuantized = 1,
+            });
+        });
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(Vector3.Zero);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, interleavingCollector);
+
+        Assert.That(didTeleport, Is.True);
+        Assert.That(collector.Count, Is.EqualTo(1));
+        Assert.That(collector.Entries[0].Subject, Is.EqualTo(subject));
+        Assert.That(collector.Entries[0].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_0));
+        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(acceptedSnapshot));
+        Assert.That(collector.Entries[0].Identity, Is.SameAs(acceptedIdentity));
+    }
+
     [Test]
     public void ObserverWithoutRealm_SeesNobody()
     {
@@ -368,6 +473,7 @@ public class SpatialHashAreaOfInterestTests
         SetupPeer(observer, observerPos);
         grids.Set(subject, REALM, subjectPos);
         snapshotBoard.SetActive(subject);
+        identityBoard.Set(subject, "subject-wallet");
         PublishSnapshot(subject, subjectPos); // seq 1, explicit realm
         PublishSnapshot(subject, subjectPos, realm: null); // seq 2, inherits realm
 
@@ -399,25 +505,268 @@ public class SpatialHashAreaOfInterestTests
         Assert.That(collector.Count, Is.EqualTo(0));
     }
 
+    [Test]
+    public void AcceptedSnapshot_LaterPublicationsAndRingEvictionDoNotReplaceIt()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+        SetupPeer(observer, Vector3.Zero);
+        SetupPeer(subject, new Vector3(1, 0, 1));
+        Assert.That(snapshotBoard.TryRead(subject, out PeerSnapshot accepted), Is.True);
+        IdentityRegistration? identity = identityBoard.GetIdentity(subject);
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(Vector3.Zero);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        for (int i = 0; i < RING_CAPACITY; i++)
+            PublishSnapshot(subject, new Vector3(200 + i, 0, 200), realm: "realm-b");
+
+        Assert.That(snapshotBoard.TryRead(subject, accepted.Seq, out _), Is.False);
+        Assert.That(collector.Count, Is.EqualTo(1));
+        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(accepted));
+        Assert.That(collector.Entries[0].Identity, Is.SameAs(identity));
+        Assert.That(collector.Entries[0].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_0));
+    }
+
+    [Test]
+    public void SubjectWithoutIdentity_NotVisible()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+        SetupPeer(observer, Vector3.Zero);
+        SetupPeer(subject, new Vector3(1, 0, 1));
+        identityBoard.Remove(subject);
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(Vector3.Zero);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        Assert.That(collector.Count, Is.Zero);
+    }
+
+    [Test]
+    public void SubjectWithInactiveSnapshot_NotVisible()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+        SetupPeer(observer, Vector3.Zero);
+        SetupPeer(subject, new Vector3(1, 0, 1));
+        snapshotBoard.ClearActive(subject);
+
+        PeerSnapshot observerSnapshot = MakeSnapshot(Vector3.Zero);
+        aoi.GetVisibleSubjects(observer, in observerSnapshot, collector);
+
+        Assert.That(collector.Count, Is.Zero);
+    }
+
+    [Test]
+    public void Listener_AnnouncedParcelFiltersOtherOccupantsOfCoveringCell()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex inside = new (1);
+        PeerIndex outside = new (2);
+        SetupPeer(observer, new Vector3(1, 0, 1), REALM, parcel: 10);
+        SetupPeer(inside, new Vector3(2, 0, 2), REALM, parcel: 10);
+        SetupPeer(outside, new Vector3(3, 0, 3), REALM, parcel: 20);
+        Assert.That(snapshotBoard.TryRead(inside, out PeerSnapshot accepted), Is.True);
+
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>> { [REALM] = [10] },
+            [grids.ComputeCellKey(1, 1)]);
+        aoi.GetVisibleSubjects(observer, listener, collector);
+
+        Assert.That(collector.Count, Is.EqualTo(1));
+        Assert.That(collector.Entries[0].Subject, Is.EqualTo(inside));
+        Assert.That(collector.Entries[0].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_0));
+        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(accepted));
+        Assert.That(collector.Entries[0].Identity, Is.SameAs(identityBoard.GetIdentity(inside)));
+    }
+
+    [Test]
+    public void Listener_ParcelMembershipIsSpecificToItsAnnouncedRealm()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex insideA = new (1);
+        PeerIndex outsideA = new (2);
+        PeerIndex insideB = new (3);
+        PeerIndex outsideB = new (4);
+        Vector3 position = new (1, 0, 1);
+        SetupPeer(insideA, position, REALM, parcel: 10);
+        SetupPeer(outsideA, position, REALM, parcel: 20);
+        SetupPeer(insideB, position, "realm-b", parcel: 20);
+        SetupPeer(outsideB, position, "realm-b", parcel: 10);
+
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>>
+        {
+            [REALM] = [10],
+            ["realm-b"] = [20],
+        }, [grids.ComputeCellKey(1, 1)]);
+        aoi.GetVisibleSubjects(observer, listener, collector);
+
+        Assert.That(collector.Entries.Select(entry => entry.Subject), Is.EquivalentTo(new[] { insideA, insideB }));
+    }
+
+    [Test]
+    public void Listener_RepeatedCoveringCell_SubjectAcceptedOnce()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+        SetupPeer(subject, new Vector3(1, 0, 1), REALM, parcel: 10);
+        long cellKey = grids.ComputeCellKey(1, 1);
+
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>> { [REALM] = [10] },
+            [cellKey, cellKey]);
+        aoi.GetVisibleSubjects(observer, listener, collector);
+
+        Assert.That(collector.Count, Is.EqualTo(1));
+        Assert.That(collector.Entries[0].Subject, Is.EqualTo(subject));
+    }
+
+    [Test]
+    public void Listener_SubjectTeleportsFromRetainedCellToUnannouncedParcelInAnotherObservedRealm_NotVisible()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex first = new (1);
+        PeerIndex second = new (2);
+        var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+        int sourceParcel = parcelEncoder.Encode(0, 0);
+        SetupPeer(first, new Vector3(1, 0, 1), REALM, sourceParcel);
+        SetupPeer(second, new Vector3(2, 0, 2), REALM, sourceParcel);
+
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>>
+        {
+            [REALM] = [sourceParcel],
+            ["realm-b"] = [parcelEncoder.Encode(1, 0)],
+        }, [grids.ComputeCellKey(1, 1)]);
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, grids, parcelEncoder, Substitute.For<ITimeProvider>());
+        IInterestCollector interleavingCollector = Substitute.For<IInterestCollector>();
+        PeerIndex teleported = default;
+        bool didTeleport = false;
+
+        interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
+            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+        {
+            PeerIndex accepted = call.ArgAt<PeerIndex>(0);
+            collector.Add(accepted, call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+                call.ArgAt<IdentityRegistration>(3));
+
+            if (didTeleport)
+                return;
+
+            didTeleport = true;
+            teleported = accepted == first ? second : first;
+            publisher.PublishTeleport(teleported, new TeleportRequest
+            {
+                Realm = "realm-b",
+                ParcelIndex = sourceParcel,
+                PositionXQuantized = 2,
+                PositionZQuantized = 2,
+            });
+        });
+
+        aoi.GetVisibleSubjects(observer, listener, interleavingCollector);
+
+        Assert.That(didTeleport, Is.True);
+        Assert.That(collector.Entries.Select(entry => entry.Subject), Does.Not.Contain(teleported));
+        Assert.That(collector.Count, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Listener_SubjectTeleportsAfterAcceptance_FirstObservedRealmSnapshotWins()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex subject = new (1);
+        var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+        int parcel = parcelEncoder.Encode(0, 0);
+        SetupPeer(subject, new Vector3(1, 0, 1), REALM, parcel);
+        Assert.That(snapshotBoard.TryRead(subject, out PeerSnapshot accepted), Is.True);
+
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>>
+        {
+            [REALM] = [parcel],
+            ["realm-b"] = [parcel],
+        }, [grids.ComputeCellKey(1, 1)]);
+        var publisher = new PeerSnapshotPublisher(snapshotBoard, grids, parcelEncoder, Substitute.For<ITimeProvider>());
+        IInterestCollector interleavingCollector = Substitute.For<IInterestCollector>();
+        bool didTeleport = false;
+
+        interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
+            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+        {
+            collector.Add(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+                call.ArgAt<IdentityRegistration>(3));
+
+            if (didTeleport)
+                return;
+
+            didTeleport = true;
+            publisher.PublishTeleport(subject, new TeleportRequest
+            {
+                Realm = "realm-b",
+                ParcelIndex = parcel,
+                PositionXQuantized = 2,
+                PositionZQuantized = 2,
+            });
+        });
+
+        aoi.GetVisibleSubjects(observer, listener, interleavingCollector);
+
+        Assert.That(didTeleport, Is.True);
+        Assert.That(collector.Count, Is.EqualTo(1));
+        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(accepted));
+    }
+
+    [Test]
+    public void Listener_UnannouncedRealmAndEmptyAnnouncement_ReturnNoSubjects()
+    {
+        PeerIndex observer = new (0);
+        SetupPeer(new PeerIndex(1), new Vector3(1, 0, 1), "realm-b", parcel: 10);
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>> { [REALM] = [10] },
+            [grids.ComputeCellKey(1, 1)]);
+
+        aoi.GetVisibleSubjects(observer, listener, collector);
+        Assert.That(collector.Count, Is.Zero);
+
+        aoi.GetVisibleSubjects(observer, new SceneListenerState([], []), collector);
+        Assert.That(collector.Count, Is.Zero);
+    }
+
+    [Test]
+    public void Listener_UnregisteredAndInactiveSubjects_NotVisible()
+    {
+        PeerIndex observer = new (0);
+        PeerIndex unregistered = new (1);
+        PeerIndex inactive = new (2);
+        SetupPeer(unregistered, new Vector3(1, 0, 1), REALM, parcel: 10);
+        SetupPeer(inactive, new Vector3(2, 0, 2), REALM, parcel: 10);
+        identityBoard.Remove(unregistered);
+        snapshotBoard.ClearActive(inactive);
+        var listener = new SceneListenerState(new Dictionary<string, HashSet<int>> { [REALM] = [10] },
+            [grids.ComputeCellKey(1, 1)]);
+
+        aoi.GetVisibleSubjects(observer, listener, collector);
+
+        Assert.That(collector.Count, Is.Zero);
+    }
+
     private void SetupPeer(PeerIndex peer, Vector3 position) =>
         SetupPeer(peer, position, REALM);
 
-    private void SetupPeer(PeerIndex peer, Vector3 position, string? realm)
+    private void SetupPeer(PeerIndex peer, Vector3 position, string? realm, int parcel = 0)
     {
         // A peer with no realm belongs to no grid, which is exactly how the publisher treats it.
         if (realm is not null)
             grids.Set(peer, realm, position);
 
         snapshotBoard.SetActive(peer);
-        PublishSnapshot(peer, position, realm);
+        identityBoard.Set(peer, $"wallet-{peer.Value}");
+        PublishSnapshot(peer, position, realm, parcel);
     }
 
-    private void PublishSnapshot(PeerIndex peer, Vector3 position, string? realm = REALM)
+    private void PublishSnapshot(PeerIndex peer, Vector3 position, string? realm = REALM, int parcel = 0)
     {
-        // AoI reads only GlobalPosition, so pass the world position there (kept exact); the
-        // parcel-local position codes are irrelevant here and left at their defaults.
+        // Keep the global position exact; the positional wire codes retain their defaults.
         snapshotBoard.Publish(peer, TestSnapshots.Make(
             seq: snapshotBoard.LastSeq(peer) + 1,
+            parcel: parcel,
             globalPosition: position,
             realm: realm));
     }

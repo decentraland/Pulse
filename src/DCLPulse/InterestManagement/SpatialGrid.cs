@@ -7,8 +7,8 @@ namespace Pulse.InterestManagement;
 /// <summary>
 ///     Cell-to-occupants index for a single realm. One instance exists per realm that currently holds
 ///     at least one peer; <see cref="RealmSpatialGrids" /> creates them, routes writes to them, and
-///     drops them when they empty. A grid therefore only ever contains same-realm peers, which is
-///     what lets both interest management and cluster derivation work without a realm predicate.
+///     drops them when they empty. Each published cell indexes peers placed in that realm; retained
+///     occupant sets can still name peers that have since moved to another realm.
 ///     <para />
 ///     Reads are lock-free. Occupant sets are copy-on-write: <see cref="Add" /> and
 ///     <see cref="Remove" /> replace the set instance rather than mutating it, so a reader that

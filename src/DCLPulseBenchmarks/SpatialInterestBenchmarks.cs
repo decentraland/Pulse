@@ -20,9 +20,10 @@ namespace DCLPulseBenchmarks;
 ///     "1W" methods are single-threaded baselines.
 ///     "4W" methods model the production setup: 4 parallel workers, each owning
 ///     a peer stripe (PeerIndex % 4 == workerIndex), as in PeersManager.
-///     Every peer here shares one realm, so the read comparison is not quite like-for-like: the
-///     reference implementations still test each candidate's realm, while the production path gets
-///     that for free from the partition. The write comparison is unaffected.
+///     Every peer here shares one realm. All implementations return the accepted snapshot and
+///     identity registration and validate realm membership using that snapshot.
+///     Read methods stop at filling the collector; <see cref="InterestSnapshotBenchmarks" /> also
+///     measures consumption of the captured state versus a second board read.
 /// </summary>
 [MemoryDiagnoser]
 public class SpatialInterestBenchmarks
@@ -47,6 +48,7 @@ public class SpatialInterestBenchmarks
     private ConcurrentDictAoi cdAoi = null!;
 
     private SnapshotBoard snapshotBoard = null!;
+    private IdentityBoard? identityBoard;
     private Vector3[] peerPositions = null!;
     private Vector3[] altPositions = null!;
 
@@ -66,6 +68,7 @@ public class SpatialInterestBenchmarks
         observer = new PeerIndex(0);
         peerPositions = new Vector3[PeerCount];
         snapshotBoard = new SnapshotBoard(PeerCount, ringCapacity: 4);
+        identityBoard = new IdentityBoard(PeerCount);
         collector = new InterestCollector();
 
         cowGrid = new RealmSpatialGrids(CELL_SIZE, PeerCount);
@@ -78,9 +81,9 @@ public class SpatialInterestBenchmarks
 
         cdGrid = new ConcurrentDictSpatialGrid(CELL_SIZE);
 
-        cowAoi = new SpatialHashAreaOfInterest(cowGrid, snapshotBoard, aoiOptions);
-        linearAoi = new LinearScanAoi(linearGrid, snapshotBoard, aoiOptions);
-        cdAoi = new ConcurrentDictAoi(cdGrid, snapshotBoard, aoiOptions);
+        cowAoi = new SpatialHashAreaOfInterest(cowGrid, snapshotBoard, identityBoard, aoiOptions);
+        linearAoi = new LinearScanAoi(linearGrid, snapshotBoard, identityBoard, aoiOptions);
+        cdAoi = new ConcurrentDictAoi(cdGrid, snapshotBoard, identityBoard, aoiOptions);
 
         altPositions = new Vector3[PeerCount];
 
@@ -97,6 +100,7 @@ public class SpatialInterestBenchmarks
             linearGrid.Set(peer, pos);
             cdGrid.Set(peer, pos);
 
+            identityBoard.Set(peer, $"benchmark-wallet-{i}");
             snapshotBoard.SetActive(peer);
 
             snapshotBoard.Publish(peer, MakeSnapshot(pos));
@@ -493,16 +497,18 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 {
     private readonly LinearScanGrid grid;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly IdentityBoard identityBoard;
     private readonly float tier0Sq;
     private readonly float tier1Sq;
     private readonly float maxDistanceSq;
     private readonly float cellSize;
 
-    public LinearScanAoi(LinearScanGrid grid, SnapshotBoard snapshotBoard,
+    public LinearScanAoi(LinearScanGrid grid, SnapshotBoard snapshotBoard, IdentityBoard identityBoard,
         IOptions<SpatialHashAreaOfInterestOptions> optionsContainer)
     {
         this.grid = grid;
         this.snapshotBoard = snapshotBoard;
+        this.identityBoard = identityBoard;
 
         SpatialHashAreaOfInterestOptions options = optionsContainer.Value;
         tier0Sq = options.Tier0Radius * options.Tier0Radius;
@@ -513,6 +519,8 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
+        if (observerSnapshot.Realm == null) return;
+
         Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         // Build the 3×3 neighbourhood keys
@@ -543,7 +551,11 @@ internal sealed class LinearScanAoi : IAreaOfInterest
 
             if (!inNeighborhood) continue;
 
+            IdentityRegistration? identity = identityBoard.GetIdentity(subject);
+            if (identity == null) continue;
             if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
+            if (!ReferenceEquals(identityBoard.GetIdentity(subject), identity)) continue;
+            if (!string.Equals(subjectSnapshot.Realm, observerSnapshot.Realm, StringComparison.Ordinal)) continue;
 
             float distX = subjectSnapshot.GlobalPosition.X - observerPos.X;
             float distZ = subjectSnapshot.GlobalPosition.Z - observerPos.Z;
@@ -554,7 +566,28 @@ internal sealed class LinearScanAoi : IAreaOfInterest
             PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
                 distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
 
-            collector.Add(subject, tier);
+            collector.Add(subject, tier, in subjectSnapshot, identity);
+        }
+    }
+
+    public void GetVisibleSubjects(PeerIndex observer, SceneListenerState listener, IInterestCollector collector)
+    {
+        for (uint i = 0; i < (uint)grid.MaxPeers; i++)
+        {
+            if (!grid.IsActive(i)) continue;
+            var subject = new PeerIndex(i);
+            if (subject == observer) continue;
+            if (Array.IndexOf(listener.CellKeys, grid.ReadCellKey(i)) < 0) continue;
+
+            IdentityRegistration? identity = identityBoard.GetIdentity(subject);
+            if (identity == null) continue;
+            if (!snapshotBoard.TryRead(subject, out PeerSnapshot snapshot)) continue;
+            if (!ReferenceEquals(identityBoard.GetIdentity(subject), identity)) continue;
+            if (snapshot.Realm == null
+                || !listener.ParcelsByRealm.TryGetValue(snapshot.Realm, out HashSet<int>? parcels)
+                || !parcels.Contains(snapshot.Parcel)) continue;
+
+            collector.Add(subject, PeerViewSimulationTier.TIER_0, in snapshot, identity);
         }
     }
 }
@@ -591,9 +624,12 @@ internal sealed class ConcurrentDictSpatialGrid(float cellSize)
             cell.TryRemove(peer, out _);
     }
 
-    public ConcurrentDictionary<PeerIndex, byte>? GetPeers(Vector3 position)
+    public ConcurrentDictionary<PeerIndex, byte>? GetPeers(Vector3 position) =>
+        GetPeers(ComputeKey(position));
+
+    public ConcurrentDictionary<PeerIndex, byte>? GetPeers(long cellKey)
     {
-        cells.TryGetValue(ComputeKey(position), out ConcurrentDictionary<PeerIndex, byte>? result);
+        cells.TryGetValue(cellKey, out ConcurrentDictionary<PeerIndex, byte>? result);
         return result;
     }
 
@@ -615,16 +651,18 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
 {
     private readonly ConcurrentDictSpatialGrid grid;
     private readonly SnapshotBoard snapshotBoard;
+    private readonly IdentityBoard identityBoard;
     private readonly float tier0Sq;
     private readonly float tier1Sq;
     private readonly float maxDistanceSq;
     private readonly float cellSize;
 
-    public ConcurrentDictAoi(ConcurrentDictSpatialGrid grid, SnapshotBoard snapshotBoard,
+    public ConcurrentDictAoi(ConcurrentDictSpatialGrid grid, SnapshotBoard snapshotBoard, IdentityBoard identityBoard,
         IOptions<SpatialHashAreaOfInterestOptions> optionsContainer)
     {
         this.grid = grid;
         this.snapshotBoard = snapshotBoard;
+        this.identityBoard = identityBoard;
 
         SpatialHashAreaOfInterestOptions options = optionsContainer.Value;
         tier0Sq = options.Tier0Radius * options.Tier0Radius;
@@ -635,6 +673,8 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
 
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
+        if (observerSnapshot.Realm == null) return;
+
         Vector3 observerPos = observerSnapshot.GlobalPosition;
 
         for (int dx = -1; dx <= 1; dx++)
@@ -649,7 +689,11 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
             {
                 PeerIndex subject = kvp.Key;
                 if (subject == observer) continue;
+                IdentityRegistration? identity = identityBoard.GetIdentity(subject);
+                if (identity == null) continue;
                 if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot)) continue;
+                if (!ReferenceEquals(identityBoard.GetIdentity(subject), identity)) continue;
+                if (!string.Equals(subjectSnapshot.Realm, observerSnapshot.Realm, StringComparison.Ordinal)) continue;
 
                 float distX = subjectSnapshot.GlobalPosition.X - observerPos.X;
                 float distZ = subjectSnapshot.GlobalPosition.Z - observerPos.Z;
@@ -660,7 +704,31 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
                 PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
                     distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
 
-                collector.Add(subject, tier);
+                collector.Add(subject, tier, in subjectSnapshot, identity);
+            }
+        }
+    }
+
+    public void GetVisibleSubjects(PeerIndex observer, SceneListenerState listener, IInterestCollector collector)
+    {
+        foreach (long cellKey in listener.CellKeys)
+        {
+            ConcurrentDictionary<PeerIndex, byte>? peers = grid.GetPeers(cellKey);
+            if (peers == null) continue;
+
+            foreach (KeyValuePair<PeerIndex, byte> item in peers)
+            {
+                PeerIndex subject = item.Key;
+                if (subject == observer) continue;
+                IdentityRegistration? identity = identityBoard.GetIdentity(subject);
+                if (identity == null) continue;
+                if (!snapshotBoard.TryRead(subject, out PeerSnapshot snapshot)) continue;
+                if (!ReferenceEquals(identityBoard.GetIdentity(subject), identity)) continue;
+                if (snapshot.Realm == null
+                    || !listener.ParcelsByRealm.TryGetValue(snapshot.Realm, out HashSet<int>? parcels)
+                    || !parcels.Contains(snapshot.Parcel)) continue;
+
+                collector.Add(subject, PeerViewSimulationTier.TIER_0, in snapshot, identity);
             }
         }
     }

@@ -18,9 +18,8 @@ public sealed class SceneListenerState(Dictionary<string, HashSet<int>> parcelsB
 
     /// <summary>
     ///     Deduped SpatialGrid cell keys covering every announced realm's parcels. The grid is one
-    ///     global coordinate space, so realms overlap in it — that only ever over-covers, and
-    ///     candidates are filtered realm- and parcel-exact by the simulation, so the cost is a
-    ///     lookup, never correctness.
+    ///     global coordinate space, so identical cell keys across realms are stored once. The union
+    ///     can include cells that only another realm's parcel set covers.
     /// </summary>
     public long[] CellKeys { get; } = cellKeys;
 

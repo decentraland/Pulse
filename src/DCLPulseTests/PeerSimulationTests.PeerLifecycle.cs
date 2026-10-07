@@ -199,19 +199,16 @@ public partial class PeerSimulationTests
     }
 
     /// <summary>
-    ///     Wallet comparison in the aliasing guard is case-insensitive, matching
-    ///     <see cref="IdentityBoard" />'s case-insensitive reverse-lookup. Upstream components
-    ///     (MetaForge, clients) may normalize hex addresses to different cases; a case flip must
-    ///     not be treated as a new player.
+    ///     A new slot registration reseeds the view even when its wallet differs only in casing.
     /// </summary>
     [Test]
-    public void AliasingGuard_IsCaseInsensitive()
+    public void AliasingGuard_NewRegistrationWithSameWalletCasingChange_ReseedsView()
     {
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, tickCounter: 0);
         DrainAllMessages();
 
-        // Swap casing — same wallet semantically.
+        // The wallet is semantically unchanged, but Set creates a new registration.
         identityBoard.Remove(subject);
         identityBoard.Set(subject, "0xsubject_wallet");
         PublishSnapshot(subject, seq: 2);
@@ -219,8 +216,12 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, tickCounter: 1);
 
         List<OutgoingMessage> messages = DrainAllMessages();
-        Assert.That(messages.Any(m => m.Message.MessageCase == ServerMessage.MessageOneofCase.PlayerLeft), Is.False,
-            "case-only wallet changes must not trigger PlayerLeft — matches IdentityBoard's OrdinalIgnoreCase semantics");
+        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.PlayerLeft,
+            ServerMessage.MessageOneofCase.PlayerJoined,
+        }));
+        Assert.That(messages[1].Message.PlayerJoined.UserId, Is.EqualTo("0xsubject_wallet"));
     }
 
     [Test]

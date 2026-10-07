@@ -29,7 +29,7 @@ public partial class PeerSimulationTests
 
     private void UseSpatialInterest()
     {
-        areaOfInterest = new SpatialHashAreaOfInterest(realmGrids, snapshotBoard,
+        areaOfInterest = new SpatialHashAreaOfInterest(realmGrids, snapshotBoard, identityBoard,
             Options.Create(new SpatialHashAreaOfInterestOptions()));
         simulation = CreateSimulation(areaOfInterest);
     }

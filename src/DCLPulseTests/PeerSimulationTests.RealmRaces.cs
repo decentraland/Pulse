@@ -2,6 +2,7 @@ using Decentraland.Pulse;
 using NSubstitute;
 using Pulse.InterestManagement;
 using Pulse.Peers;
+using Pulse.Peers.Simulation;
 using System.Numerics;
 using static Pulse.Messaging.MessagePipe;
 
@@ -11,7 +12,7 @@ public partial class PeerSimulationTests
 {
     [TestCase(false)]
     [TestCase(true)]
-    public void RealmRace_SubjectMovesAfterSpatialCollection_RetiresOnlyExistingView(bool previouslyVisible)
+    public void RealmRace_SubjectMovesAfterSpatialCollection_DeliversAcceptedQueryThenRetiresNormally(bool previouslyVisible)
     {
         UseSpatialInterest();
         IAreaOfInterest spatial = areaOfInterest;
@@ -23,8 +24,7 @@ public partial class PeerSimulationTests
                 spatial.GetVisibleSubjects(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerSnapshot>(1), call.ArgAt<IInterestCollector>(2));
                 if (moveAfterCollection)
                 {
-                    // Deterministic cross-worker interleave: collection sees old membership,
-                    // then the simulation reads the snapshot published in the new realm.
+                    // Publish the next realm only after the old snapshot has been accepted.
                     PlaceInRealm(subject, "other", 3, teleport: true);
                     moveAfterCollection = false;
                 }
@@ -42,22 +42,20 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, 1);
         List<OutgoingMessage> messages = DrainAllMessages();
         Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(previouslyVisible
-            ? new[] { ServerMessage.MessageOneofCase.PlayerLeft }
-            : Array.Empty<ServerMessage.MessageOneofCase>()));
-        Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
-
-        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
-            simulation.SimulateTick(peers, tick);
-        Assert.That(DrainAllMessages(), Is.Empty, "Removed views must not emit another leave in the stale sweep");
+            ? Array.Empty<ServerMessage.MessageOneofCase>()
+            : new[] { ServerMessage.MessageOneofCase.PlayerJoined }));
+        Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Realm, Is.EqualTo("old"));
+        Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Seq, Is.EqualTo(2u));
+        AssertAcceptedViewSweptOnce(1);
 
         PlaceInRealm(subject, "old", 4, teleport: true);
-        simulation.SimulateTick(peers, FirstSweepTickAfter(1) + 1);
+        simulation.SimulateTick(peers, FirstSweepTickAfter(1) + SWEEP_CHECK_INTERVAL + 1);
         Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
     }
 
     [TestCase(false)]
     [TestCase(true)]
-    public void RealmRace_SubjectMovesAfterListenerCollection_RetiresOnlyExistingView(bool previouslyVisible)
+    public void RealmRace_StaleListenerGridMembership_IsExcludedByInterestThenRetiresNormally(bool previouslyVisible)
     {
         MakeSceneListener(observer, new Dictionary<string, int[]> { ["old"] = [0] });
         PlaceInRealm(subject, "old", 2);
@@ -67,21 +65,21 @@ public partial class PeerSimulationTests
             Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
         }
 
-        // The state a cross-worker teleport leaves between collection and TryRead: still
-        // indexed in the announced realm's grid under a snapshot naming an unannounced realm.
+        // A retained grid candidate can name a snapshot from an unannounced realm.
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 3, serverTick: 30, realm: "new", isTeleport: true));
         simulation.SimulateTick(peers, 1);
         List<OutgoingMessage> messages = DrainAllMessages();
-        Assert.That(messages.Select(message => message.Message.MessageCase), Is.EqualTo(previouslyVisible
-            ? new[] { ServerMessage.MessageOneofCase.PlayerLeft }
-            : Array.Empty<ServerMessage.MessageOneofCase>()));
-        Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
+        Assert.That(messages, Is.Empty);
+        Assert.That(simulation.observerViews[observer].ContainsKey(subject), Is.EqualTo(previouslyVisible));
 
         // The teleport completes: the subject leaves the announced realm's grid.
         realmGrids.Set(subject, "new", Vector3.Zero);
-        for (uint tick = 2; tick <= FirstSweepTickAfter(1); tick++)
+        for (uint tick = 2; tick <= FirstSweepTickAfter(0); tick++)
             simulation.SimulateTick(peers, tick);
-        Assert.That(DrainAllMessages(), Is.Empty, "Removed views must not emit another leave in the stale sweep");
+        Assert.That(DrainAllMessages().Select(message => message.Message.MessageCase), Is.EqualTo(previouslyVisible
+            ? new[] { ServerMessage.MessageOneofCase.PlayerLeft }
+            : Array.Empty<ServerMessage.MessageOneofCase>()));
+        Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
     }
 
     [Test]
@@ -96,16 +94,16 @@ public partial class PeerSimulationTests
         // snapshot names parcel 0 of a realm that announces only parcel 5.
         snapshotBoard.Publish(subject, TestSnapshots.Make(seq: 3, serverTick: 30, realm: "new", isTeleport: true));
         simulation.SimulateTick(peers, 1);
-        Assert.That(DrainAllMessages().Select(message => message.Message.MessageCase),
-            Is.EqualTo(new[] { ServerMessage.MessageOneofCase.PlayerLeft }));
-        Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
+        Assert.That(DrainAllMessages(), Is.Empty);
+        Assert.That(simulation.observerViews[observer][subject].LastSeenTick, Is.Zero);
+        AssertAcceptedViewSweptOnce(0);
     }
 
     [Test]
     public void RealmRace_PlayerWithoutRealm_RejectsRealmedSubject()
     {
+        UseSpatialInterest();
         PlaceInRealm(subject, "other", 2);
-        SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
         simulation.SimulateTick(peers, 0);
         Assert.That(DrainAllMessages(), Is.Empty);
     }
@@ -137,7 +135,7 @@ public partial class PeerSimulationTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public void RealmRace_TierDelayedSubjectTeleports_RetiresOnTheSameTick(bool pendingResync)
+    public void RealmRace_TierDelayedSubjectTeleports_PreservesAcceptedQueryAndStaleGrace(bool pendingResync)
     {
         bool collectSubject = true;
         bool teleportAfterCollection = false;
@@ -146,7 +144,11 @@ public partial class PeerSimulationTests
            .Do(call =>
             {
                 if (collectSubject)
-                    call.ArgAt<IInterestCollector>(2).Add(subject, PeerViewSimulationTier.TIER_2);
+                {
+                    IdentityRegistration? identity = identityBoard.GetIdentity(subject);
+                    if (identity != null && snapshotBoard.TryRead(subject, out PeerSnapshot snapshot))
+                        call.ArgAt<IInterestCollector>(2).Add(subject, PeerViewSimulationTier.TIER_2, in snapshot, identity);
+                }
 
                 if (!teleportAfterCollection)
                     return;
@@ -162,19 +164,28 @@ public partial class PeerSimulationTests
         simulation.SimulateTick(peers, 0);
         Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("old"));
 
-        // Tick 1 is not due for TIER_2; the retirement must not wait for a due tick or a resync.
+        // Tick 1 keeps the accepted old view; a pending resync can deliver that captured state.
         if (pendingResync)
             AddResyncRequest(observer, subject, 2);
         teleportAfterCollection = true;
-        var received = new List<(uint Tick, ServerMessage.MessageOneofCase Case, uint Subject)>();
+        var received = new List<(uint Tick, ServerMessage.MessageOneofCase Case)>();
         for (uint tick = 1; tick <= FirstSweepTickAfter(1); tick++)
         {
             simulation.SimulateTick(peers, tick);
             foreach (OutgoingMessage message in DrainAllMessages())
-                received.Add((tick, message.Message.MessageCase, message.Message.PlayerLeft?.SubjectId ?? 0));
+            {
+                received.Add((tick, message.Message.MessageCase));
+                if (message.Message.PlayerStateFull is { } state)
+                {
+                    Assert.That(state.Sequence, Is.EqualTo(2u));
+                    Assert.That(state.SubjectId, Is.EqualTo(subject.Value));
+                }
+            }
         }
 
-        Assert.That(received, Is.EqualTo(new[] { (1u, ServerMessage.MessageOneofCase.PlayerLeft, subject.Value) }));
+        Assert.That(received, Is.EqualTo(pendingResync
+            ? new[] { (1u, ServerMessage.MessageOneofCase.PlayerStateFull), (FirstSweepTickAfter(1), ServerMessage.MessageOneofCase.PlayerLeft) }
+            : new[] { (FirstSweepTickAfter(1), ServerMessage.MessageOneofCase.PlayerLeft) }));
         Assert.That(simulation.observerViews[observer], Does.Not.ContainKey(subject));
     }
 }

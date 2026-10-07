@@ -200,6 +200,13 @@ public sealed class SnapshotBoard
     public bool IsEmoting(PeerIndex id) =>
         TryRead(id, out PeerSnapshot snapshot) && snapshot.IsEmoting();
 
+    /// <summary>
+    ///     Reads whether the peer slot is currently active without reading its snapshot history.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsActive(PeerIndex id) =>
+        Volatile.Read(ref active[(int)id.Value]);
+
     public void SetActive(PeerIndex id)
     {
         Volatile.Write(ref active[(int)id.Value], true);

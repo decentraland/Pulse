@@ -124,8 +124,7 @@ public partial class PeerSimulationTests
     }
 
     /// <summary>
-    ///     A scene listener collects straight from the grid and the board, so phase 1 reaches it
-    ///     through exactly the same two calls — no AoI implementation in between.
+    ///     Phase 1 excludes the subject from the listener's interest query and starts stale retirement.
     /// </summary>
     [Test]
     public void SceneListener_DisconnectedSubject_StopsBeingCollected_ThenSweptWithPlayerLeft()
@@ -167,7 +166,7 @@ public partial class PeerSimulationTests
     /// </summary>
     private PeerSimulation CreateGridBackedSimulation() =>
         new (
-            new SpatialHashAreaOfInterest(realmGrids, snapshotBoard,
+            new SpatialHashAreaOfInterest(realmGrids, snapshotBoard, identityBoard,
                 Options.Create(new SpatialHashAreaOfInterestOptions())),
             snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(),

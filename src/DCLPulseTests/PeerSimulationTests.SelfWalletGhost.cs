@@ -13,8 +13,9 @@ public partial class PeerSimulationTests
     ///     self-ghost the reconnecting client sees while the previous PeerIndex is awaiting
     ///     <c>CleanupDisconnectedPeer</c>.
     /// </summary>
-    [Test]
-    public void PlayerJoined_NotSentForStaleSubjectSharingObserverWallet()
+    [TestCase("0xSELF_WALLET")]
+    [TestCase("0xself_wallet")]
+    public void PlayerJoined_NotSentForStaleSubjectSharingObserverWallet(string subjectWallet)
     {
         const string SHARED_WALLET = "0xSELF_WALLET";
 
@@ -22,7 +23,7 @@ public partial class PeerSimulationTests
         // PeerIndex from the prior session — both bound to the same wallet, exactly the state
         // the boards hold between reconnect handshake and CleanupDisconnectedPeer.
         identityBoard.Set(observer, SHARED_WALLET);
-        identityBoard.Set(subject, SHARED_WALLET);
+        identityBoard.Set(subject, subjectWallet);
 
         SetVisibleSubjects((subject, PeerViewSimulationTier.TIER_0));
 

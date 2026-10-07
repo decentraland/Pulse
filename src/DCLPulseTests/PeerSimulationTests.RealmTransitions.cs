@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse.InterestManagement;
+using Pulse.Messaging;
+using Pulse.Messaging.Hardening;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using Pulse.Transport;
@@ -34,8 +36,39 @@ public partial class PeerSimulationTests
 
     private void PlaceInRealm(PeerIndex peer, string realm, uint seq, bool teleport = false, EmoteState? emote = null)
     {
+        if (teleport)
+        {
+            var parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
+            var transport = Substitute.For<ITransport>();
+            var handler = new TeleportHandler(
+                Substitute.For<ILogger<TeleportHandler>>(), snapshotBoard,
+                new PeerSnapshotPublisher(snapshotBoard, realmGrids, parcelEncoder, timeProvider),
+                new DiscreteEventRateLimiter(
+                    Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }), timeProvider, transport),
+                new FieldValidator(
+                    Options.Create(new FieldValidatorOptions()), Options.Create(new SceneListenerOptions()),
+                    parcelEncoder, SceneListenerTestFactory.CellMapper(), SceneListenerTestFactory.Limiter(), transport));
+            var handlerPeers = new Dictionary<PeerIndex, PeerState>
+            {
+                [peer] = peers.TryGetValue(peer, out PeerState? state)
+                    ? state
+                    : new PeerState(PeerConnectionState.AUTHENTICATED),
+            };
+            timeProvider.MonotonicTime.Returns(seq * 10);
+            handler.Handle(handlerPeers, peer, new ClientMessage
+            {
+                Teleport = new TeleportRequest { Realm = realm, ParcelIndex = parcelEncoder.Encode(0, 0) },
+            });
+            Assert.That(snapshotBoard.TryRead(peer, out PeerSnapshot snapshot), Is.True);
+            Assert.That(snapshot.Seq, Is.EqualTo(seq));
+            Assert.That(snapshot.Realm, Is.EqualTo(realm));
+            if (emote != null)
+                snapshotBoard.Publish(peer, snapshot with { Emote = emote });
+            return;
+        }
+
         snapshotBoard.Publish(peer, TestSnapshots.Make(seq: seq, serverTick: seq * 10,
-            realm: realm, isTeleport: teleport, emote: emote));
+            realm: realm, emote: emote));
         realmGrids.Set(peer, realm, Vector3.Zero);
     }
 
@@ -159,7 +192,8 @@ public partial class PeerSimulationTests
     public void RealmTransition_RetainedSubjectChangesRealm_ReseedsForMultiRealmListener()
     {
         UseSpatialInterest();
-        MakeSceneListener(observer, new Dictionary<string, int[]> { ["old"] = [0], ["new"] = [0] });
+        int destinationParcel = new ParcelEncoder(Options.Create(new ParcelEncoderOptions())).Encode(0, 0);
+        MakeSceneListener(observer, new Dictionary<string, int[]> { ["old"] = [0], ["new"] = [destinationParcel] });
         PlaceInRealm(subject, "old", 2);
         simulation.SimulateTick(peers, 0);
         DrainAllMessages();
@@ -228,7 +262,7 @@ public partial class PeerSimulationTests
 
     [TestCase(0)]
     [TestCase(RING_CAPACITY * 2)]
-    public void RealmTransition_SubjectRoundTrip_ReseedsRetainedView(int trailingSnapshots)
+    public void RealmTransition_SubjectRoundTrip_KeepsRetainedIdentity(int trailingSnapshots)
     {
         UseSpatialInterest();
         PlaceInRealm(observer, "old", 2);
@@ -240,11 +274,245 @@ public partial class PeerSimulationTests
         for (uint seq = 5; seq < 5 + trailingSnapshots; seq++)
             snapshotBoard.Publish(subject, TestSnapshots.Make(seq: seq));
         simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(m => m.Message.MessageCase), Is.EqualTo(new[]
+        {
+            trailingSnapshots == 0
+                ? ServerMessage.MessageOneofCase.Teleported
+                : ServerMessage.MessageOneofCase.PlayerStateDelta,
+        }));
+        Assert.That(simulation.observerViews[observer][subject].LastSentWalletId, Is.EqualTo("0xSUBJECT_WALLET"));
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
+    }
+
+    [TestCase(0)]
+    [TestCase(RING_CAPACITY * 2)]
+    public void RealmTransition_SubjectRoundTrip_ForeignEmoteStartUsesDestinationPose(int foreignCarrySnapshots)
+    {
+        UseSpatialInterest();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2);
+        simulation.SimulateTick(peers, 0);
+        DrainAllMessages();
+
+        PlaceInRealm(subject, "away", 3, teleport: true);
+        PublishEmoteSnapshot(subject, seq: 4, emoteId: "wave", startTick: 40, position: new Vector3(1, 0, 0));
+        for (uint seq = 5; seq < 5 + foreignCarrySnapshots; seq++)
+            PublishSnapshot(subject, seq, position: new Vector3(2, 0, 0));
+        uint returnSeq = (uint)(5 + foreignCarrySnapshots);
+        PlaceInRealm(subject, "old", returnSeq, teleport: true);
+
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(m => m.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.Teleported,
+            ServerMessage.MessageOneofCase.EmoteStarted,
+        }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(messages[0].Message.Teleported.Realm, Is.EqualTo("old"));
+            Assert.That(messages[1].Message.EmoteStarted.Sequence, Is.EqualTo(returnSeq));
+            Assert.That(messages[1].Message.EmoteStarted.PlayerState.PositionXQuantized,
+                Is.EqualTo(0).Within(PlayerState.PositionXQuantizedStep));
+            Assert.That(messages[1].Message.EmoteStarted.ServerTick, Is.EqualTo(40u));
+            Assert.That(messages[1].Message.EmoteStarted.EmoteId, Is.EqualTo("wave"));
+            Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Realm, Is.EqualTo("old"));
+        });
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
+        PlaceInRealm(subject, "old", returnSeq + 1);
+        simulation.SimulateTick(peers, 3);
+        Assert.That(DrainSingleMessage().Message.PlayerStateDelta.BaselineSeq, Is.EqualTo(returnSeq));
+    }
+
+    [Test]
+    public void RealmTransition_SubjectRoundTrip_ForeignEmoteStopUsesDestinationPose()
+    {
+        UseSpatialInterest();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
+        simulation.SimulateTick(peers, 0);
+        DrainAllMessages();
+
+        PlaceInRealm(subject, "away", 3, teleport: true);
+        PublishEmoteStopSnapshot(subject, seq: 4, emoteStartTick: 20,
+            reason: EmoteStopReason.Cancelled, position: new Vector3(1, 0, 0));
+        PlaceInRealm(subject, "old", 5, teleport: true);
+
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(m => m.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.Teleported,
+            ServerMessage.MessageOneofCase.EmoteStopped,
+        }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(messages[1].Message.EmoteStopped.Sequence, Is.EqualTo(5u));
+            Assert.That(messages[1].Message.EmoteStopped.PlayerState.PositionXQuantized,
+                Is.EqualTo(0).Within(PlayerState.PositionXQuantizedStep));
+            Assert.That(messages[1].Message.EmoteStopped.Reason, Is.EqualTo(EmoteStopReason.Cancelled));
+            Assert.That(simulation.observerViews[observer][subject].LastSentEmote, Is.Null);
+        });
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
+    }
+
+    [Test]
+    public void RealmTransition_SubjectRoundTrip_EvictedForeignEmoteStopReconcilesIdleLedger()
+    {
+        UseSpatialInterest();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
+        simulation.SimulateTick(peers, 0);
+        DrainAllMessages();
+
+        PlaceInRealm(subject, "away", 3, teleport: true);
+        PublishEmoteStopSnapshot(subject, seq: 4, emoteStartTick: 20);
+        for (uint seq = 5; seq < 5 + RING_CAPACITY * 2; seq++)
+            PublishSnapshot(subject, seq, position: new Vector3(1, 0, 0));
+        uint returnSeq = 5 + RING_CAPACITY * 2;
+        PlaceInRealm(subject, "old", returnSeq, teleport: true);
+        Assert.That(snapshotBoard.TryRead(subject, 4, out _), Is.False);
+
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(m => m.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.Teleported,
+            ServerMessage.MessageOneofCase.EmoteStopped,
+        }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(messages[1].Message.EmoteStopped.Sequence, Is.EqualTo(returnSeq));
+            Assert.That(messages[1].Message.EmoteStopped.PlayerState.PositionXQuantized,
+                Is.EqualTo(0).Within(PlayerState.PositionXQuantizedStep));
+            Assert.That(simulation.observerViews[observer][subject].LastSentEmote, Is.Null);
+        });
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
+        PlaceInRealm(subject, "old", returnSeq + 1);
+        simulation.SimulateTick(peers, 3);
+        Assert.That(DrainSingleMessage().Message.PlayerStateDelta.BaselineSeq, Is.EqualTo(returnSeq));
+    }
+
+    [TestCase(0)]
+    [TestCase(RING_CAPACITY * 2)]
+    public void RealmTransition_SubjectRoundTrip_ForeignStopKeepsExplorerBaselineIdle(int foreignCarrySnapshots)
+    {
+        UseSpatialInterest();
+        ILogger<PeerSimulation> simulationLogger = Substitute.For<ILogger<PeerSimulation>>();
+        simulation = CreateSimulation(areaOfInterest, logger: simulationLogger);
+        var client = new EmoteBaselineClient();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
+        simulation.SimulateTick(peers, 0);
+        foreach (OutgoingMessage message in DrainAllMessages()) client.Receive(message.Message);
+        Assert.That(client.IsEmoting, Is.True);
+
+        PlaceInRealm(subject, "away", 3, teleport: true);
+        PublishEmoteStopSnapshot(subject, seq: 4, emoteStartTick: 20);
+        for (uint seq = 5; seq < 5 + foreignCarrySnapshots; seq++)
+            PublishSnapshot(subject, seq, position: new Vector3(1, 0, 0));
+        uint returnSeq = (uint)(5 + foreignCarrySnapshots);
+        PlaceInRealm(subject, "old", returnSeq, teleport: true);
+
+        simulation.SimulateTick(peers, 1);
+        foreach (OutgoingMessage message in DrainAllMessages()) client.Receive(message.Message);
+        Assert.That(client.IsEmoting, Is.False, "An equal-sequence stop must not leave the teleport baseline marked emoting");
+
+        PlaceInRealm(subject, "old", returnSeq + 1);
+        simulation.SimulateTick(peers, 2);
+        foreach (OutgoingMessage message in DrainAllMessages()) client.Receive(message.Message);
+        Assert.That(client.Sequence, Is.EqualTo(returnSeq + 1));
+        Assert.That(client.IsEmoting, Is.False, "Explorer's delta merge preserves the baseline's emote flag");
+        Assert.That(simulationLogger.ReceivedCalls().Any(call =>
+            call.GetMethodInfo().Name == nameof(ILogger.Log) && call.GetArguments()[0] is LogLevel.Error), Is.False,
+            "Sharing the latest pose between a stop and teleport is intentional");
+    }
+
+    [Test]
+    public void RealmTransition_SubjectRoundTrip_StopInOriginalRealmKeepsExplorerBaselineIdle()
+    {
+        UseSpatialInterest();
+        var client = new EmoteBaselineClient();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
+        simulation.SimulateTick(peers, 0);
+        foreach (OutgoingMessage message in DrainAllMessages()) client.Receive(message.Message);
+
+        PublishEmoteStopSnapshot(subject, seq: 3, emoteStartTick: 20, position: new Vector3(1, 0, 0));
+        PlaceInRealm(subject, "away", 4, teleport: true);
+        PlaceInRealm(subject, "old", 5, teleport: true);
+        simulation.SimulateTick(peers, 1);
+        foreach (OutgoingMessage message in DrainAllMessages()) client.Receive(message.Message);
+        Assert.That(client.IsEmoting, Is.False, "An older stop must clear the emote flag on the newer teleport baseline");
+
+        PlaceInRealm(subject, "old", 6);
+        simulation.SimulateTick(peers, 2);
+        foreach (OutgoingMessage message in DrainAllMessages()) client.Receive(message.Message);
+        Assert.That(client.Sequence, Is.EqualTo(6u));
+        Assert.That(client.IsEmoting, Is.False);
+    }
+
+    [Test]
+    public void RealmTransition_SubjectRoundTrip_ForeignStopThenNewStartAnnouncesOnlyCurrentEmote()
+    {
+        UseSpatialInterest();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2, emote: new EmoteState("wave", StartSeq: 2, StartTick: 20));
+        simulation.SimulateTick(peers, 0);
+        DrainAllMessages();
+
+        PlaceInRealm(subject, "away", 3, teleport: true);
+        PublishEmoteStopSnapshot(subject, seq: 4, emoteStartTick: 20);
+        PublishEmoteSnapshot(subject, seq: 5, emoteId: "clap", startTick: 50, position: new Vector3(1, 0, 0));
+        PlaceInRealm(subject, "old", 6, teleport: true);
+
+        simulation.SimulateTick(peers, 1);
+        List<OutgoingMessage> messages = DrainAllMessages();
+        Assert.That(messages.Select(m => m.Message.MessageCase), Is.EqualTo(new[]
+        {
+            ServerMessage.MessageOneofCase.Teleported,
+            ServerMessage.MessageOneofCase.EmoteStarted,
+        }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(messages[1].Message.EmoteStarted.Sequence, Is.EqualTo(6u));
+            Assert.That(messages[1].Message.EmoteStarted.PlayerState.PositionXQuantized,
+                Is.EqualTo(0).Within(PlayerState.PositionXQuantizedStep));
+            Assert.That(messages[1].Message.EmoteStarted.EmoteId, Is.EqualTo("clap"));
+            Assert.That(messages[1].Message.EmoteStarted.ServerTick, Is.EqualTo(50u));
+        });
+    }
+
+    [Test]
+    public void RealmTransition_ObserverRoundTripFollowedBySameRealmTeleport_ReseedsOnce()
+    {
+        UseSpatialInterest();
+        PlaceInRealm(observer, "old", 2);
+        PlaceInRealm(subject, "old", 2);
+        simulation.SimulateTick(peers, 0);
+        DrainAllMessages();
+
+        PlaceInRealm(observer, "away", 3, teleport: true);
+        PlaceInRealm(observer, "old", 4, teleport: true);
+        PlaceInRealm(observer, "old", 5, teleport: true);
+        for (uint seq = 6; seq <= RING_CAPACITY * 3; seq++)
+            snapshotBoard.Publish(observer, TestSnapshots.Make(seq: seq));
+        Assert.That(snapshotBoard.TryRead(observer, 3, out _), Is.False);
+        Assert.That(snapshotBoard.TryRead(observer, 5, out _), Is.False);
+
+        simulation.SimulateTick(peers, 1);
         Assert.That(DrainAllMessages().Select(m => m.Message.MessageCase), Is.EqualTo(new[]
         {
             ServerMessage.MessageOneofCase.PlayerLeft,
             ServerMessage.MessageOneofCase.PlayerJoined,
         }));
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
     }
 
     [Test]
@@ -273,7 +541,7 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void RealmTransition_InheritedEmoteSurvivesGenerationChangeAndHistoryEviction()
+    public void RealmTransition_InheritedEmoteSurvivesRealmChangeAndHistoryEviction()
     {
         UseSpatialInterest();
         PlaceInRealm(observer, "old", 2);
@@ -300,14 +568,15 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void RealmTransition_ObserverCleanupAndSlotReuse_UsesNewPeerStateGeneration()
+    public void RealmTransition_ObserverCleanupAndSlotReuse_DiscardsPendingInvalidation()
     {
         UseSpatialInterest();
         PlaceInRealm(observer, "old", 2);
         PlaceInRealm(subject, "old", 2);
         simulation.SimulateTick(peers, 0);
         DrainAllMessages();
-        Assert.That(peers[observer].LastObservedRealmGeneration, Is.EqualTo(1ul));
+        PlaceInRealm(observer, "away", 3, teleport: true);
+        Assert.That(peers[observer].ObserverViewsInvalidated, Is.True);
         peers[observer].ConnectionState = PeerConnectionState.DISCONNECTING;
         peers[observer].TransportState = new PeerTransportState(ConnectionTime: 0, DisconnectionTime: 0);
         timeProvider.MonotonicTime.Returns(6000u);
@@ -316,13 +585,64 @@ public partial class PeerSimulationTests
         Assert.That(simulation.observerViews, Does.Not.ContainKey(observer));
 
         peers[observer] = new PeerState(PeerConnectionState.AUTHENTICATED);
-        Assert.That(peers[observer].LastObservedRealmGeneration, Is.Zero);
+        Assert.That(peers[observer].ObserverViewsInvalidated, Is.False);
         snapshotBoard.SetActive(observer);
         PlaceInRealm(observer, "new", 1);
         PlaceInRealm(subject, "new", 3, teleport: true);
         simulation.SimulateTick(peers, 2);
         Assert.That(DrainSingleMessage().Message.PlayerJoined.Realm, Is.EqualTo("new"));
-        Assert.That(peers[observer].LastObservedRealmGeneration, Is.EqualTo(1ul));
+        simulation.SimulateTick(peers, 3);
+        Assert.That(DrainAllMessages(), Is.Empty);
+    }
+
+    /// <summary>
+    ///     Models the fixed Explorer cache: stops clear the emote flag regardless of the
+    ///     movement sequence, while movement baselines never go backwards. Deltas preserve
+    ///     the cached flag and teleports read the active emote set at receipt.
+    /// </summary>
+    private sealed class EmoteBaselineClient
+    {
+        private bool activeEmote;
+        public uint Sequence { get; private set; }
+        public bool IsEmoting { get; private set; }
+
+        public void Receive(ServerMessage message)
+        {
+            switch (message.MessageCase)
+            {
+                case ServerMessage.MessageOneofCase.PlayerJoined:
+                    Update(message.PlayerJoined.State.Sequence);
+                    break;
+                case ServerMessage.MessageOneofCase.Teleported:
+                    Update(message.Teleported.Sequence);
+                    break;
+                case ServerMessage.MessageOneofCase.EmoteStarted:
+                    activeEmote = true;
+                    Update(message.EmoteStarted.Sequence, allowOverrides: true);
+                    break;
+                case ServerMessage.MessageOneofCase.EmoteStopped:
+                    activeEmote = false;
+                    Update(message.EmoteStopped.Sequence, allowOverrides: true);
+                    IsEmoting = false;
+                    break;
+                case ServerMessage.MessageOneofCase.PlayerStateDelta:
+                    Assert.That(message.PlayerStateDelta.BaselineSeq, Is.EqualTo(Sequence));
+                    Sequence = message.PlayerStateDelta.NewSeq;
+                    break;
+                default:
+                    Assert.Fail($"Unexpected message {message.MessageCase}");
+                    break;
+            }
+        }
+
+        private void Update(uint sequence, bool allowOverrides = false)
+        {
+            if (sequence > Sequence || (allowOverrides && sequence == Sequence))
+            {
+                Sequence = sequence;
+                IsEmoting = activeEmote;
+            }
+        }
     }
 
     /// <summary>

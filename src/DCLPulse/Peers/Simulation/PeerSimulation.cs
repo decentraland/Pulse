@@ -191,7 +191,7 @@ public sealed class PeerSimulation : IPeerSimulation
         if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
             return;
 
-        ResetObserverRealmViews(observerId, observerState, observerSnapshot.RealmGeneration);
+        ResetObserverRealmViews(observerId, observerState);
 
         collector.Clear();
         areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
@@ -201,10 +201,12 @@ public sealed class PeerSimulation : IPeerSimulation
         ProcessCollectedSubjects(observerId, observerState, tickCounter, observerSnapshot.Realm, listener: null);
     }
 
-    private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState, ulong realmGeneration)
+    private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState)
     {
-        if (observerState.LastObservedRealmGeneration != realmGeneration
-            && observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
+        if (!observerState.ObserverViewsInvalidated)
+            return;
+
+        if (observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
             // Retire old identities before reseeding any destination peers, including a
             // return to the same realm after multiple transitions between simulation ticks.
@@ -214,7 +216,7 @@ public sealed class PeerSimulation : IPeerSimulation
             views.Clear();
         }
 
-        observerState.LastObservedRealmGeneration = realmGeneration;
+        observerState.ObserverViewsInvalidated = false;
     }
 
     /// <summary>
@@ -444,7 +446,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private bool RetireChangedSubjectRealm(PeerIndex observerId, PeerIndex subjectId,
         in PeerToPeerView view, in PeerSnapshot latestSnapshot)
     {
-        if (view.LastSentSnapshot.RealmGeneration == latestSnapshot.RealmGeneration)
+        if (string.Equals(view.LastSentSnapshot.Realm, latestSnapshot.Realm, StringComparison.Ordinal))
             return false;
 
         SendPlayerLeft(observerId, subjectId, "subject realm changed");
@@ -579,27 +581,33 @@ public sealed class PeerSimulation : IPeerSimulation
             out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport,
             out bool emoteStartFromEviction);
 
+        bool emoteStartIsEffective = lastEmoteStart.HasValue
+                                     && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
+
         // --- Broadcast teleport (spatial snap first) ---
-        if (lastTeleport is { } tp && view.LastSentTeleportSeq < tp.Seq)
+        if (lastTeleport is { } teleport)
         {
-            SendTeleport(observerId, ref view, entry.Subject, tp);
-            resyncRequests?.Remove(entry.Subject);
-            view.LastSentTeleportSeq = tp.Seq;
-            lastSentState = tp;
-            discreteEventSent = true;
+            PeerSnapshot tp = ResolveEventPose(in teleport, in latestSnapshot, out _);
+            if (view.LastSentTeleportSeq < tp.Seq)
+            {
+                SendTeleport(observerId, ref view, entry.Subject, tp);
+                resyncRequests?.Remove(entry.Subject);
+                view.LastSentTeleportSeq = tp.Seq;
+                lastSentState = tp;
+                discreteEventSent = true;
+            }
         }
 
         // --- Broadcast emote start only if the emote is still active (not stopped in the same batch).
         //     An emote that started and stopped between ticks is invisible to the observer. ---
-        bool emoteStartIsEffective = lastEmoteStart.HasValue
-                                     && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
-
         if (emoteStartIsEffective
             && lastEmoteStart!.Value.Emote is { EmoteId: not null } emote
             && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartSeq == view.LastSentEmote?.StartSeq))
         {
-            PeerSnapshot es = lastEmoteStart.Value;
-            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote, fromEviction: emoteStartFromEviction);
+            PeerSnapshot emoteStart = lastEmoteStart.Value;
+            PeerSnapshot es = ResolveEventPose(in emoteStart, in latestSnapshot, out bool realmRebased);
+            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote,
+                fromEviction: emoteStartFromEviction, fromLatestSnapshotFallback: realmRebased);
             resyncRequests?.Remove(entry.Subject);
             view.LastSentEmote = emote;
 
@@ -612,7 +620,7 @@ public sealed class PeerSimulation : IPeerSimulation
         // --- Phase 2: sync emote stop (skip when the start is still effective —
         //     either just sent, or already synced via dedup — the emote is active) ---
         if (!emoteStartIsEffective)
-            TrySyncEmoteStop(observerId, entry.Subject, ref view, ref lastSentState, lastEmoteStop);
+            TrySyncEmoteStop(observerId, entry.Subject, ref view, ref lastSentState, lastEmoteStop, in latestSnapshot);
 
         // --- Phase 3: resync or delta (skip if discrete events already carried full state) ---
         if (!discreteEventSent)
@@ -622,6 +630,16 @@ public sealed class PeerSimulation : IPeerSimulation
         }
 
         return lastSentState;
+    }
+
+    private static PeerSnapshot ResolveEventPose(in PeerSnapshot eventSnapshot, in PeerSnapshot latestSnapshot,
+        out bool realmRebased)
+    {
+        // A retained subject can leave and return between ticks. Preserve the event's
+        // metadata, but never forward a pose from its temporary realm. This also protects
+        // against the return teleport being evicted while the intermediate scan is running.
+        realmRebased = !string.Equals(eventSnapshot.Realm, latestSnapshot.Realm, StringComparison.Ordinal);
+        return realmRebased ? latestSnapshot : eventSnapshot;
     }
 
     /// <summary>
@@ -710,6 +728,17 @@ public sealed class PeerSimulation : IPeerSimulation
                 emoteStartFromEviction = true;
             }
         }
+
+        // The scan spans separate seqlock reads, so eviction can hide a stop or a newer
+        // start. The captured latest ledger is authoritative about the active emote.
+        if (latestSnapshot.Emote is not { EmoteId: not null, StopReason: null } activeEmote)
+            lastEmoteStart = null;
+        else if (lastEmoteStart?.Emote is not { } scannedEmote
+                 || scannedEmote.StartSeq != activeEmote.StartSeq || scannedEmote.EmoteId != activeEmote.EmoteId)
+        {
+            lastEmoteStart = latestSnapshot;
+            emoteStartFromEviction = true;
+        }
     }
 
     // ── Emote stop detection ────────────────────────────────────────
@@ -718,23 +747,42 @@ public sealed class PeerSimulation : IPeerSimulation
         PeerIndex observerId, PeerIndex subjectId,
         ref PeerToPeerView view,
         ref PeerSnapshot lastSentState,
-        PeerSnapshot? stopSnapshot)
+        PeerSnapshot? stopSnapshot,
+        in PeerSnapshot latestSnapshot)
     {
         if (view.LastSentEmote?.EmoteId == null)
             return;
-        // Explicit stop — either Cancelled (from EmoteStopHandler) or Completed (from EmoteCompleter).
-        // Both are published as real stop snapshots on the subject's worker, so they carry their own seq.
+        PeerSnapshot pose;
+        EmoteStopReason reason;
+        bool fromLatestSnapshotFallback;
+
+        // Prefer the actual stop reason when its event survives in the ring.
         if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
         {
-            SendEmoteStopped(observerId, ref view, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value);
-            view.LastSentEmote = null;
-
-            // Advance the Phase 3 baseline to the stop snapshot — otherwise Phase 3's
-            // SendDelta would diff from the pre-emote baseline and potentially re-send
-            // the same seq already carried by EmoteStopped above.
-            if (stopSnapshot.Value.Seq > lastSentState.Seq)
-                lastSentState = stopSnapshot.Value;
+            PeerSnapshot stop = stopSnapshot.Value;
+            pose = ResolveEventPose(in stop, in latestSnapshot, out fromLatestSnapshotFallback);
+            reason = stopEmote.StopReason.Value;
         }
+        else if (!latestSnapshot.IsEmoting())
+        {
+            // A stop marker is transient and can be evicted before delivery. The idle
+            // ledger still proves that the previously announced emote has ended. Its
+            // original reason may be lost; cancel that client emote with the current pose.
+            pose = latestSnapshot;
+            reason = latestSnapshot.Emote?.StopReason ?? EmoteStopReason.Cancelled;
+            fromLatestSnapshotFallback = true;
+        }
+        else
+            return;
+
+        SendEmoteStopped(observerId, ref view, subjectId, pose, reason,
+            fromLatestSnapshotFallback: fromLatestSnapshotFallback);
+        view.LastSentEmote = null;
+
+        // Advance the Phase 3 baseline to the sent pose, so the following delta does not
+        // repeat the full state's sequence or refer to a foreign-realm baseline.
+        if (pose.Seq > lastSentState.Seq)
+            lastSentState = pose;
     }
 
     // ── Resync / delta ──────────────────────────────────────────────
@@ -817,9 +865,12 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     private void SendTracked(PeerIndex observerId, ref PeerToPeerView view, uint seq, ServerMessage message, PacketMode packetMode,
         bool fromEmoteStartEviction = false,
-        bool fromResync = false)
+        bool fromResync = false,
+        bool fromLatestSnapshotFallback = false)
     {
-        if (seq == view.LastSentSeq && !fromResync)
+        // An emote and teleport using the latest pose may intentionally share a full-state
+        // sequence. Both messages are needed by the client.
+        if (seq == view.LastSentSeq && !fromResync && !fromLatestSnapshotFallback)
         {
             if (fromEmoteStartEviction)
                 logger.LogWarning(
@@ -854,7 +905,7 @@ public sealed class PeerSimulation : IPeerSimulation
     }
 
     private void SendEmoteStarted(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote,
-        bool fromEviction = false)
+        bool fromEviction = false, bool fromLatestSnapshotFallback = false)
     {
         var emoteStarted = new EmoteStarted
         {
@@ -871,13 +922,14 @@ public sealed class PeerSimulation : IPeerSimulation
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
             EmoteStarted = emoteStarted,
-        }, PacketMode.RELIABLE, fromEmoteStartEviction: fromEviction);
+        }, PacketMode.RELIABLE, fromEmoteStartEviction: fromEviction, fromLatestSnapshotFallback: fromLatestSnapshotFallback);
 
         logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
             emote.EmoteId, subjectId, observerId);
     }
 
-    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason)
+    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason,
+        bool fromLatestSnapshotFallback = false)
     {
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
@@ -889,7 +941,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 Sequence = snapshot.Seq,
                 PlayerState = CreatePlayerState(snapshot),
             },
-        }, PacketMode.RELIABLE);
+        }, PacketMode.RELIABLE, fromLatestSnapshotFallback: fromLatestSnapshotFallback);
 
         logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
             subjectId, observerId, reason);

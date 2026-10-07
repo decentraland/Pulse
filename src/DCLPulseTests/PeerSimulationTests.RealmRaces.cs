@@ -111,7 +111,7 @@ public partial class PeerSimulationTests
     }
 
     [Test]
-    public void RealmRace_TierDelayedRoundTrip_RetiresAtOnceAndRejoinsOnTheNextDueTick()
+    public void RealmRace_TierDelayedSubjectRoundTrip_KeepsIdentityAndDeliversTeleportOnTheNextDueTick()
     {
         PlaceInRealm(observer, "old", 2);
         PlaceInRealm(subject, "old", 2);
@@ -131,8 +131,7 @@ public partial class PeerSimulationTests
 
         Assert.That(received, Is.EqualTo(new[]
         {
-            (1u, ServerMessage.MessageOneofCase.PlayerLeft),
-            (4u, ServerMessage.MessageOneofCase.PlayerJoined),
+            (4u, ServerMessage.MessageOneofCase.Teleported),
         }));
     }
 

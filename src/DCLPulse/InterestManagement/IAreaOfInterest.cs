@@ -3,14 +3,14 @@ using Pulse.Peers;
 namespace Pulse.InterestManagement;
 
 /// <summary>
-///     Determines visible subjects, accepting a snapshot and simulation tier for each registration.
+///     Determines visible subjects, accepting a snapshot sequence and simulation tier for each registration.
 ///     Implementations must be thread-safe (called from multiple workers concurrently).
 /// </summary>
 public interface IAreaOfInterest
 {
     /// <summary>
     ///     Queries the visible subjects for the given observer.
-    ///     The implementation fills the <paramref name="collector" /> with accepted snapshots and tiers.
+    ///     The implementation fills the <paramref name="collector" /> with accepted sequences and tiers.
     /// </summary>
     public void GetVisibleSubjects(
         PeerIndex observer,

@@ -147,7 +147,7 @@ public partial class PeerSimulationTests
                 {
                     IdentityRegistration? identity = identityBoard.GetIdentity(subject);
                     if (identity != null && snapshotBoard.TryRead(subject, out PeerSnapshot snapshot))
-                        call.ArgAt<IInterestCollector>(2).Add(subject, PeerViewSimulationTier.TIER_2, in snapshot, identity);
+                        call.ArgAt<IInterestCollector>(2).Add(subject, PeerViewSimulationTier.TIER_2, snapshot.Seq, identity);
                 }
 
                 if (!teleportAfterCollection)

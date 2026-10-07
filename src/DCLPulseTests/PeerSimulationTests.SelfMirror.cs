@@ -56,7 +56,7 @@ public class SelfMirrorTests
                            {
                                IdentityRegistration? identity = identityBoard.GetIdentity(s);
                                if (identity != null && snapshotBoard.TryRead(s, out PeerSnapshot snapshot))
-                                   collector.Add(s, t, in snapshot, identity);
+                                   collector.Add(s, t, snapshot.Seq, identity);
                            }
                        });
 

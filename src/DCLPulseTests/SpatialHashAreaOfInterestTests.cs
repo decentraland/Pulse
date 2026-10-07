@@ -362,10 +362,10 @@ public class SpatialHashAreaOfInterestTests
         bool didTeleport = false;
 
         interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
-            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+            Arg.Any<uint>(), Arg.Any<IdentityRegistration>())).Do(call =>
         {
             PeerIndex accepted = call.ArgAt<PeerIndex>(0);
-            collector.Add(accepted, call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+            collector.Add(accepted, call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<uint>(2),
                 call.ArgAt<IdentityRegistration>(3));
 
             if (didTeleport)
@@ -410,9 +410,9 @@ public class SpatialHashAreaOfInterestTests
         bool didTeleport = false;
 
         interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
-            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+            Arg.Any<uint>(), Arg.Any<IdentityRegistration>())).Do(call =>
         {
-            collector.Add(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+            collector.Add(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<uint>(2),
                 call.ArgAt<IdentityRegistration>(3));
 
             if (didTeleport)
@@ -435,7 +435,7 @@ public class SpatialHashAreaOfInterestTests
         Assert.That(collector.Count, Is.EqualTo(1));
         Assert.That(collector.Entries[0].Subject, Is.EqualTo(subject));
         Assert.That(collector.Entries[0].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_0));
-        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(acceptedSnapshot));
+        Assert.That(collector.Entries[0].Seq, Is.EqualTo(acceptedSnapshot.Seq));
         Assert.That(collector.Entries[0].Identity, Is.SameAs(acceptedIdentity));
     }
 
@@ -506,7 +506,7 @@ public class SpatialHashAreaOfInterestTests
     }
 
     [Test]
-    public void AcceptedSnapshot_LaterPublicationsAndRingEvictionDoNotReplaceIt()
+    public void AcceptedSequence_LaterPublicationsAndRingEvictionDoNotReplaceIt()
     {
         PeerIndex observer = new (0);
         PeerIndex subject = new (1);
@@ -523,7 +523,7 @@ public class SpatialHashAreaOfInterestTests
 
         Assert.That(snapshotBoard.TryRead(subject, accepted.Seq, out _), Is.False);
         Assert.That(collector.Count, Is.EqualTo(1));
-        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(accepted));
+        Assert.That(collector.Entries[0].Seq, Is.EqualTo(accepted.Seq));
         Assert.That(collector.Entries[0].Identity, Is.SameAs(identity));
         Assert.That(collector.Entries[0].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_0));
     }
@@ -576,7 +576,7 @@ public class SpatialHashAreaOfInterestTests
         Assert.That(collector.Count, Is.EqualTo(1));
         Assert.That(collector.Entries[0].Subject, Is.EqualTo(inside));
         Assert.That(collector.Entries[0].Tier, Is.EqualTo(PeerViewSimulationTier.TIER_0));
-        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(accepted));
+        Assert.That(collector.Entries[0].Seq, Is.EqualTo(accepted.Seq));
         Assert.That(collector.Entries[0].Identity, Is.SameAs(identityBoard.GetIdentity(inside)));
     }
 
@@ -642,10 +642,10 @@ public class SpatialHashAreaOfInterestTests
         bool didTeleport = false;
 
         interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
-            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+            Arg.Any<uint>(), Arg.Any<IdentityRegistration>())).Do(call =>
         {
             PeerIndex accepted = call.ArgAt<PeerIndex>(0);
-            collector.Add(accepted, call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+            collector.Add(accepted, call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<uint>(2),
                 call.ArgAt<IdentityRegistration>(3));
 
             if (didTeleport)
@@ -670,7 +670,7 @@ public class SpatialHashAreaOfInterestTests
     }
 
     [Test]
-    public void Listener_SubjectTeleportsAfterAcceptance_FirstObservedRealmSnapshotWins()
+    public void Listener_SubjectTeleportsAfterAcceptance_FirstObservedRealmSequenceWins()
     {
         PeerIndex observer = new (0);
         PeerIndex subject = new (1);
@@ -689,9 +689,9 @@ public class SpatialHashAreaOfInterestTests
         bool didTeleport = false;
 
         interleavingCollector.When(c => c.Add(Arg.Any<PeerIndex>(), Arg.Any<PeerViewSimulationTier>(),
-            Arg.Any<PeerSnapshot>(), Arg.Any<IdentityRegistration>())).Do(call =>
+            Arg.Any<uint>(), Arg.Any<IdentityRegistration>())).Do(call =>
         {
-            collector.Add(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<PeerSnapshot>(2),
+            collector.Add(call.ArgAt<PeerIndex>(0), call.ArgAt<PeerViewSimulationTier>(1), call.ArgAt<uint>(2),
                 call.ArgAt<IdentityRegistration>(3));
 
             if (didTeleport)
@@ -711,7 +711,7 @@ public class SpatialHashAreaOfInterestTests
 
         Assert.That(didTeleport, Is.True);
         Assert.That(collector.Count, Is.EqualTo(1));
-        Assert.That(collector.Entries[0].Snapshot, Is.EqualTo(accepted));
+        Assert.That(collector.Entries[0].Seq, Is.EqualTo(accepted.Seq));
     }
 
     [Test]

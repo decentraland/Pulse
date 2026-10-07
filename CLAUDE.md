@@ -126,6 +126,8 @@ Standard protobuf `optional` fields provide per-field presence natively — unch
 
 **Interest management** on the server limits which players receive updates about which other players. Per-observer fan-out is the primary bandwidth concern.
 
+**AoI consistency:** Before changing interest entries, snapshot resolution or eviction fallback, or collector deduplication, read [docs/interest-snapshot-consistency.md](docs/interest-snapshot-consistency.md) for the contract, overwrite mechanism, and measured tradeoffs.
+
 ---
 
 ## Message Architecture

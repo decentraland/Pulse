@@ -528,6 +528,19 @@ Count of ticks that exceeded `BaseTickMs`. Rendered as a rate row (per-second), 
 
 **Expected**: 0. Any sustained rate is an SLO breach — the simulation is not keeping tick cadence.
 
+### Interest Snapshot Evictions
+
+Count of interest entries whose selected sequence was evicted from snapshot history before delivery. The normal path reads the exact sequence accepted by interest management. An eviction triggers a hard fallback: read the latest snapshot and repeat the observer realm/parcel comparison before delivery. This fallback is undesired and should normally stay unused.
+
+Each affected observer query increments the counter once, so one evicted publication can affect several observers. Historical event-scan misses, evicted resync baselines, disconnected subjects and recycled peer slots are excluded. It is a count of hard fallback attempts, not unique lost snapshots or messages.
+
+| Signal | Meaning |
+|---|---|
+| Zero increases | Normal — selected sequences remain available until delivery |
+| Any increase | The hard fallback ran. Compare `Peers:SnapshotHistoryCapacity` with publisher bursts and worker delay between interest selection and delivery; cross-check Tick Duration and Incoming Queue |
+
+**Prometheus**: `dcl_pulse_interest_snapshot_evicted_total`, an unlabelled counter. The Grafana **Interest Snapshot Evictions** panel shows `round(sum(increase(dcl_pulse_interest_snapshot_evicted_total[$__rate_interval])))`. `increase` extrapolates between scrape samples; rounded panel values are an estimate of events in the window.
+
 ### Drain Cycle (µs)
 
 Outbound drain-cycle duration on the ENet thread, non-empty cycles only (empty cycles are not recorded). Upper-bounds how long an outgoing message can wait for the ENet thread to service the queue.

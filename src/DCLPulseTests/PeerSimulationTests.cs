@@ -82,7 +82,7 @@ public partial class PeerSimulationTests
                                IdentityRegistration? identity = identityBoard.GetIdentity(s);
                                if (identity != null && snapshotBoard.TryRead(s, out PeerSnapshot snapshot)
                                    && string.Equals(snapshot.Realm, observerSnapshot.Realm, StringComparison.Ordinal))
-                                   collector.Add(s, t, in snapshot, identity);
+                                   collector.Add(s, t, snapshot.Seq, identity);
                            }
                        });
 

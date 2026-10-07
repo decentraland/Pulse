@@ -199,7 +199,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
         AddSelfMirror(observerId, in observerSnapshot);
 
-        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: false);
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, observerSnapshot.Realm, listener: null,
+            positionalOnly: false);
     }
 
     private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState)
@@ -234,7 +235,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
         PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
 
-        ProcessCollectedSubjects(observerId, observerState, tickCounter, positionalOnly: true);
+        ProcessCollectedSubjects(observerId, observerState, tickCounter, observerRealm: null, listener,
+            positionalOnly: true);
     }
 
     /// <summary>
@@ -244,7 +246,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     periodically sweep views whose subjects left the interest set.
     /// </summary>
     private void ProcessCollectedSubjects(PeerIndex observerId, PeerState observerState, uint tickCounter,
-        bool positionalOnly)
+        string? observerRealm, SceneListenerState? listener, bool positionalOnly)
     {
         if (!observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
@@ -254,7 +256,8 @@ public sealed class PeerSimulation : IPeerSimulation
 
         string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
-        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, positionalOnly);
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter,
+            observerRealm, listener, positionalOnly);
 
         observerState.ResyncRequests?.Clear();
 
@@ -278,7 +281,7 @@ public sealed class PeerSimulation : IPeerSimulation
 
         IdentityRegistration? identity = identityBoard.GetIdentity(observerId);
         if (identity != null)
-            collector.Add(observerId, selfMirrorTier, in observerSnapshot, identity);
+            collector.Add(observerId, selfMirrorTier, observerSnapshot.Seq, identity);
     }
 
     // ── Per-subject orchestration ───────────────────────────────────
@@ -289,6 +292,8 @@ public sealed class PeerSimulation : IPeerSimulation
         Dictionary<PeerIndex, PeerToPeerView> views,
         Dictionary<PeerIndex, uint>? resyncRequests,
         uint tickCounter,
+        string? observerRealm,
+        SceneListenerState? listener,
         bool positionalOnly)
     {
         foreach (ref readonly InterestEntry entry in CollectionsMarshal.AsSpan(collector.Entries))
@@ -315,12 +320,14 @@ public sealed class PeerSimulation : IPeerSimulation
                     StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            if (!TryResolveInterestSnapshot(observerId, in entry, views, observerRealm, listener,
+                    out PeerSnapshot latestSnapshot))
+                continue;
+
             bool isNew = !views.TryGetValue(entry.Subject, out PeerToPeerView view);
 
             if (!isNew && DetectAndHandleAliasing(observerId, entry.Subject, entry.Identity, in view, views))
                 isNew = true;
-
-            PeerSnapshot latestSnapshot = entry.Snapshot;
 
             if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, in view, in latestSnapshot))
             {
@@ -360,6 +367,51 @@ public sealed class PeerSimulation : IPeerSimulation
             views[entry.Subject] = view;
         }
     }
+
+    private bool TryResolveInterestSnapshot(PeerIndex observerId, in InterestEntry entry,
+        Dictionary<PeerIndex, PeerToPeerView> views, string? observerRealm, SceneListenerState? listener,
+        out PeerSnapshot snapshot)
+    {
+        bool retained = snapshotBoard.TryRead(entry.Subject, entry.Seq, out snapshot);
+        if (!IsSubjectRegistrationActive(entry.Subject, entry.Identity))
+            return false;
+
+        if (retained)
+            return true;
+
+        PulseMetrics.Simulation.INTEREST_SNAPSHOT_EVICTED.Add(1);
+        return TryResolveEvictedInterestSnapshotHardFallback(observerId, in entry, views, observerRealm, listener,
+            out snapshot);
+    }
+
+    private bool TryResolveEvictedInterestSnapshotHardFallback(PeerIndex observerId, in InterestEntry entry,
+        Dictionary<PeerIndex, PeerToPeerView> views, string? observerRealm, SceneListenerState? listener,
+        out PeerSnapshot snapshot)
+    {
+        // Undesired hard fallback: the AoI-approved sequence was overwritten. Resolve the
+        // latest state and restore the previous simulation guard only on this measured path.
+        if (!snapshotBoard.TryRead(entry.Subject, out snapshot)
+            || !IsSubjectRegistrationActive(entry.Subject, entry.Identity))
+            return false;
+
+        if (IsInsideObserverAoiForHardFallback(in snapshot, observerRealm, listener))
+            return true;
+
+        if (views.Remove(entry.Subject))
+            SendPlayerLeft(observerId, entry.Subject, "evicted interest snapshot outside observer AoI");
+
+        return false;
+    }
+
+    private static bool IsInsideObserverAoiForHardFallback(in PeerSnapshot subject, string? observerRealm,
+        SceneListenerState? listener) =>
+        // Preserve the old guard: player realm only; listener realm plus announced parcel.
+        // Distance and tier remain the interest query's decision, even in this hard fallback.
+        listener == null
+            ? string.Equals(subject.Realm, observerRealm, StringComparison.Ordinal)
+            : subject.Realm != null
+              && listener.ParcelsByRealm.TryGetValue(subject.Realm, out HashSet<int>? parcels)
+              && parcels.Contains(subject.Parcel);
 
     private bool IsSubjectRegistrationActive(PeerIndex subjectId, IdentityRegistration identity) =>
         snapshotBoard.IsActive(subjectId) && ReferenceEquals(identityBoard.GetIdentity(subjectId), identity);

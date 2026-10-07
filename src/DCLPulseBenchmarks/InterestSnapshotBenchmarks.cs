@@ -2,6 +2,7 @@ using BenchmarkDotNet.Attributes;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using Pulse.InterestManagement;
+using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Numerics;
@@ -11,16 +12,18 @@ using System.Runtime.InteropServices;
 namespace DCLPulseBenchmarks;
 
 /// <summary>
-///     Compares interest selection plus consumption of its target state before and after snapshot
-///     capture. Both paths walk the same dense, static, single-realm grid. The legacy reference
+///     Compares interest selection plus consumption before and after retaining an accepted sequence.
+///     Both paths walk the same dense, static, single-realm grid. The legacy reference
 ///     reproduces the old ID/tier-only list, no deduplication, and the second latest-snapshot read
 ///     with its realm guard. The accepted path uses the production collector, including deduplication,
-///     identity fencing, enlarged entries, and the simulation's active/registration delivery veto.
+///     identity fencing, compact sequence entries, and the simulation's active/registration veto.
+///     Consumption reads that exact sequence; only eviction permits the latest-state realm guard.
 ///     <para />
 ///     This is a warmed, single-threaded microbenchmark. There are no concurrent writers, worker
 ///     scheduling, historical scans, profile lookups, or network encoding. Consumption reads pose,
 ///     sequence, animation, tier, and identity fields into an observable checksum. It does not measure
-///     the complete simulation tick or prove concurrent correctness.
+///     the complete simulation tick or prove concurrent correctness. Targets are retained throughout
+///     this static run, so it measures the normal path and excludes hard-fallback frequency and cost.
 ///     <para />
 ///     Both lists are reserved before measurement, and setup warms the production collector's
 ///     deduplication storage. MemoryDiagnoser reports steady-state allocation; setup prints entry
@@ -75,9 +78,9 @@ public class InterestSnapshotBenchmarks
             if (!acceptedBySubject.TryGetValue(entry.Subject, out InterestEntry accepted)
                 || accepted.Tier.Value != entry.Tier.Value
                 || !current.SnapshotBoard.TryRead(entry.Subject, out PeerSnapshot target)
-                || accepted.Snapshot != target
+                || accepted.Seq != target.Seq
                 || !ReferenceEquals(accepted.Identity, current.IdentityBoard.GetIdentity(entry.Subject)))
-                throw new InvalidOperationException("The benchmark paths must agree on each subject, tier, snapshot, and identity.");
+                throw new InvalidOperationException("The benchmark paths must agree on each subject, tier, sequence, and identity.");
         }
 
         // A second pass establishes the steady-state buffers used by both benchmark methods.
@@ -139,7 +142,21 @@ public class InterestSnapshotBenchmarks
                 || !ReferenceEquals(current.IdentityBoard.GetIdentity(entry.Subject), entry.Identity))
                 continue;
 
-            checksum += ConsumeAcceptedEntry(in entry);
+            if (!current.SnapshotBoard.TryRead(entry.Subject, entry.Seq, out PeerSnapshot target))
+            {
+                if (!IsRegistered(current, in entry))
+                    continue;
+
+                PulseMetrics.Simulation.INTEREST_SNAPSHOT_EVICTED.Add(1);
+                if (!current.SnapshotBoard.TryRead(entry.Subject, out target)
+                    || !string.Equals(target.Realm, observerSnapshot.Realm, StringComparison.Ordinal))
+                    continue;
+            }
+
+            if (!IsRegistered(current, in entry))
+                continue;
+
+            checksum += ConsumeSnapshot(in target, entry.Tier.Value, entry.Identity.Wallet.Length);
         }
 
         return checksum;
@@ -168,11 +185,9 @@ public class InterestSnapshotBenchmarks
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static ulong ConsumeAcceptedEntry(in InterestEntry entry) =>
-        entry.Snapshot.Seq + (ulong)entry.Snapshot.ServerTick + entry.Snapshot.PositionX
-        + entry.Snapshot.PositionY + entry.Snapshot.PositionZ + entry.Snapshot.RotationY
-        + (uint)entry.Snapshot.AnimationFlags + entry.Snapshot.MovementBlend
-        + entry.Tier.Value + (uint)entry.Identity.Wallet.Length;
+    private static bool IsRegistered(BenchmarkState current, in InterestEntry entry) =>
+        current.SnapshotBoard.IsActive(entry.Subject)
+        && ReferenceEquals(current.IdentityBoard.GetIdentity(entry.Subject), entry.Identity);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ulong ConsumeSnapshot(in PeerSnapshot snapshot, byte tier, int walletLength) =>

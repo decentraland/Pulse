@@ -73,6 +73,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private readonly BucketHistogram tickDurationUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
     private readonly BucketHistogram outgoingDrainCycleUs = new (PulseMetrics.Simulation.DURATION_BUCKETS_US);
     private long tickOverruns;
+    private long interestSnapshotEvicted;
 
     // Per-outcome resync baseline-gap histograms — indexed by (int)ResyncOutcome.
     private readonly BucketHistogram[] resyncSeqGap = CreateResyncSeqGapHistograms();
@@ -214,6 +215,7 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 DeltaStalenessTier2Ms = deltaStalenessTier2.Snapshot(),
                 TickDurationUs = tickDurationUs.Snapshot(),
                 TotalTickOverruns = Interlocked.Read(ref tickOverruns),
+                TotalInterestSnapshotEvicted = Interlocked.Read(ref interestSnapshotEvicted),
                 ResyncSeqGap = SnapshotResyncSeqGap(),
             },
             Clusters = new MetricsSnapshot.ClustersSnapshot
@@ -397,6 +399,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.sim.tick_overruns":
                 Interlocked.Add(ref tickOverruns, value);
+                break;
+            case "pulse.sim.interest_snapshot_evicted":
+                Interlocked.Add(ref interestSnapshotEvicted, value);
                 break;
             case "pulse.transport.outgoing_drain_cycle_us":
                 outgoingDrainCycleUs.Record(value);

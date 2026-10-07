@@ -87,6 +87,7 @@ internal static class PrometheusFormatter
         WriteHistogramSeries(writer, "dcl_pulse_tick_duration_us", snap.Simulation.TickDurationUs, labels: null);
 
         WriteCounter(writer, "dcl_pulse_tick_overruns_total", "Simulation ticks that exceeded the base tick budget", snap.Simulation.TotalTickOverruns);
+        WriteCounter(writer, "dcl_pulse_interest_snapshot_evicted_total", "Interest target snapshots evicted before delivery, counted per hard fallback attempt across observer queries", snap.Simulation.TotalInterestSnapshotEvicted);
 
         WriteHistogramHeader(writer, "dcl_pulse_resync_seq_gap", "Snapshot seqs a resync request's client baseline trailed the subject's latest publish, by how the request was served");
 

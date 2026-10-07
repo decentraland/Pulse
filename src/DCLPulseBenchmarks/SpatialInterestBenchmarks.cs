@@ -20,10 +20,10 @@ namespace DCLPulseBenchmarks;
 ///     "1W" methods are single-threaded baselines.
 ///     "4W" methods model the production setup: 4 parallel workers, each owning
 ///     a peer stripe (PeerIndex % 4 == workerIndex), as in PeersManager.
-///     Every peer here shares one realm. All implementations return the accepted snapshot and
-///     identity registration and validate realm membership using that snapshot.
+///     Every peer here shares one realm. All implementations return the accepted sequence and
+///     identity registration and validate realm membership using the snapshot they read.
 ///     Read methods stop at filling the collector; <see cref="InterestSnapshotBenchmarks" /> also
-///     measures consumption of the captured state versus a second board read.
+///     measures retrieval of the accepted sequence versus reading the latest state.
 /// </summary>
 [MemoryDiagnoser]
 public class SpatialInterestBenchmarks
@@ -566,7 +566,7 @@ internal sealed class LinearScanAoi : IAreaOfInterest
             PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
                 distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
 
-            collector.Add(subject, tier, in subjectSnapshot, identity);
+            collector.Add(subject, tier, subjectSnapshot.Seq, identity);
         }
     }
 
@@ -587,7 +587,7 @@ internal sealed class LinearScanAoi : IAreaOfInterest
                 || !listener.ParcelsByRealm.TryGetValue(snapshot.Realm, out HashSet<int>? parcels)
                 || !parcels.Contains(snapshot.Parcel)) continue;
 
-            collector.Add(subject, PeerViewSimulationTier.TIER_0, in snapshot, identity);
+            collector.Add(subject, PeerViewSimulationTier.TIER_0, snapshot.Seq, identity);
         }
     }
 }
@@ -704,7 +704,7 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
                 PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
                     distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
 
-                collector.Add(subject, tier, in subjectSnapshot, identity);
+            collector.Add(subject, tier, subjectSnapshot.Seq, identity);
             }
         }
     }
@@ -728,7 +728,7 @@ internal sealed class ConcurrentDictAoi : IAreaOfInterest
                     || !listener.ParcelsByRealm.TryGetValue(snapshot.Realm, out HashSet<int>? parcels)
                     || !parcels.Contains(snapshot.Parcel)) continue;
 
-                collector.Add(subject, PeerViewSimulationTier.TIER_0, in snapshot, identity);
+            collector.Add(subject, PeerViewSimulationTier.TIER_0, snapshot.Seq, identity);
             }
         }
     }

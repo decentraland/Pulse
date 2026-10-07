@@ -1,10 +1,10 @@
-# AoI snapshot consistency implementation plan
+# AoI snapshot consistency implementation history and sequence plan
 
-Interest management will return the exact subject snapshot it accepted. Simulation will deliver that snapshot without reading the subject's latest state again or repeating realm and parcel eligibility checks. This closes the gap between interest selection and state delivery while retaining the existing worker isolation and snapshot history.
+The initial implementation returned a copy of the exact subject snapshot accepted by interest management. Its contract and results below describe commit `85476d3`. The sequence follow-up retains the accepted sequence instead, with a measured hard fallback on eviction; its plan follows the initial results.
 
 Branch: `fix/interest-snapshot-consistency`. Baseline commit: `e42f167` (`fix: simplify realm view lifecycle`). Baseline validation: 951 tests passed, 14 skipped.
 
-## Contract and behavior
+## Initial snapshot-copy contract and behavior
 
 - `InterestEntry` contains `Subject`, `Tier`, a value copy of `PeerSnapshot` named `Snapshot`, and the existing immutable `IdentityRegistration` named `Identity`.
 - `IInterestCollector.Add` takes `(PeerIndex subject, PeerViewSimulationTier tier, in PeerSnapshot snapshot, IdentityRegistration identity)`. The reusable collector accepts each subject once per query; the first accepted snapshot and registration win.
@@ -98,3 +98,55 @@ dotnet run --project src/DCLPulseBenchmarks/DCLPulseBenchmarks.csproj --configur
 ```
 
 The implementation is committed separately from the baseline; no push or PR is part of this task.
+
+## Bitmap experiment (reverted)
+
+A reusable bitmap sized from `SnapshotBoard.MaxPeers` was tested as a replacement for the collector's `HashSet<uint>`. Each slot occupied one bit; `Clear` reset the bitmap for the next query. First acceptance retained the snapshot, tier, identity, and transport tag. At 4,095 slots the bitmap payload was 512 bytes. The bitmap, capacity wiring, dedicated tests, and benchmark variants were reverted at the user's request in favor of the simpler HashSet implementation. The measurements below record the experiment.
+
+Bitmap verification: 228 affected tests passed; the full suite passed with 999 tests and 14 skipped. An initial full run encountered an unrelated HTTP test endpoint port collision and passed on retry. Release solution build and whitespace checks passed.
+
+The experimental benchmark compared concrete collector calls with identical entries and consumption, avoiding AoI interface dispatch differences between collector implementations. Collector-only means:
+
+| Peer count | Bitmap collection and consumption | HashSet collection and consumption |
+| --- | --- | --- |
+| 128 | 2.797 us | 2.849 us |
+| 512 | 11.736 us | 12.469 us |
+| 4095 | 92.462 us | 98.680 us |
+
+Means were 2–6% lower with the bitmap; the 4,095-peer HashSet confidence interval was wide, so that case does not establish a precise speedup. Complete accepted query and consumption measured 3.848/15.326/143.803 us, versus legacy 1.097/4.723/47.893 us. A longer rerun with five warmups and twelve 250 ms iterations still measured ratios of 3.64/3.18/3.03. The bitmap reduced deduplication storage but did not materially resolve the overall slowdown. Earlier benchmark limits still apply.
+
+## Accepted-sequence follow-up
+
+The initial read-only evaluation proposed deferring an evicted target rather than replacing it. The chosen implementation uses the previous comparison logic as an explicitly undesired hard fallback, with an exported counter to measure whether it occurs. It retains the simpler HashSet and is committed separately from the snapshot-copy implementation.
+
+### Contract
+
+The current contract, overwrite analysis, fallback limits, and regression obligations are defined in [Interest snapshot consistency](../../interest-snapshot-consistency.md). This plan retains implementation history and measured results. Operator metric semantics remain in [Interest Snapshot Evictions](../../metrics.md#interest-snapshot-evictions).
+
+### Execution
+
+- [x] Add regression tests first and run them against the snapshot-copy implementation. RED: 14 failed and 4 passed across 16 simulation cases and 2 metric cases; add one further multi-realm listener lifecycle case.
+- [x] Interest subagent migrates the contract and retained-sequence tests; simulation subagent implements exact resolution, hard fallback, and lifecycle/resync regression cases.
+- [x] Dashboard-curator subagent wires the unlabelled counter through collection and Prometheus export, documents it, and updates the ignored local Grafana dashboard. Dashboard lint: zero errors and warnings.
+- [x] Parent migrates benchmarks and architecture documentation. Focused integration: 240 passed. Release solution build passed.
+- [x] Run the full suite and benchmark the healthy retained-target path against the existing legacy reference; record entry sizes and benchmark limits.
+- [x] Independent subagent reviews simulation, metrics, tests, and benchmark fidelity; no actionable findings.
+- [x] Commit the sequence follow-up after user review and authorization. The dashboard export remains ignored and requires operator import into Grafana.
+
+### Follow-up verification
+
+Full suite: 1,011 passed, 14 skipped, zero failed. Focused integration: 240 passed. Release solution build succeeded; existing nullable warnings and the benchmark dependency advisory remain outside this change. Dashboard lint reports zero errors and warnings; whitespace checks pass. Independent review covered exact resolution, registration fences, hard fallback, bounded history/resync, changed eviction expectations, metric export, and benchmark fidelity.
+
+Measured entry size: 24 bytes, down from 192 bytes for the copied snapshot. HashSet deduplication remains unchanged. The warmed query/consumption benchmark used five warmups and twelve 250 ms iterations with one launch:
+
+| Peer count | Legacy query and consumption | Accepted sequence query and consumption | Reported ratio |
+| --- | --- | --- | --- |
+| 128 | 1.129 us | 2.029 us | 1.80 |
+| 512 | 4.665 us | 8.293 us | 1.78 |
+| 4095 | 46.421 us | 86.899 us | 1.87 |
+
+The static single-threaded run retains every target and measures neither fallback frequency/cost nor full simulation throughput. The 4,095-peer accepted mean has a 99.9% confidence interval of 78.975–94.823 us. MemoryDiagnoser reports zero bytes at 128/512 peers and 1 byte per operation for both paths at 4,095, so this run does not prove absolute zero allocation. Results are saved locally under `BenchmarkDotNet.Artifacts/results/DCLPulseBenchmarks.InterestSnapshotBenchmarks-report-github.md`.
+
+```powershell
+dotnet run --project src/DCLPulseBenchmarks/DCLPulseBenchmarks.csproj --configuration Release --no-build --no-restore -- --filter '*InterestSnapshotBenchmarks.*QueryAndConsume*' --warmupCount 5 --iterationCount 12 --launchCount 1 --iterationTime 250
+```

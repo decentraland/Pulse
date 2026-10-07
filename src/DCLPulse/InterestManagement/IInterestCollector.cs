@@ -10,7 +10,7 @@ namespace Pulse.InterestManagement;
 /// </summary>
 public interface IInterestCollector
 {
-    public void Add(PeerIndex subject, PeerViewSimulationTier tier, in PeerSnapshot snapshot, IdentityRegistration identity);
+    public void Add(PeerIndex subject, PeerViewSimulationTier tier, uint seq, IdentityRegistration identity);
 
     public void Clear();
 }
@@ -21,11 +21,11 @@ public interface IInterestCollector
 public readonly record struct InterestEntry(
     PeerIndex Subject,
     PeerViewSimulationTier Tier,
-    PeerSnapshot Snapshot,
+    uint Seq,
     IdentityRegistration Identity);
 
 /// <summary>
-///     Reusable collector that retains the first accepted snapshot and registration for each subject.
+///     Reusable collector that retains the first accepted sequence and registration for each subject.
 /// </summary>
 public sealed class InterestCollector : IInterestCollector
 {
@@ -39,10 +39,10 @@ public sealed class InterestCollector : IInterestCollector
     public int Count => Entries.Count;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Add(PeerIndex subject, PeerViewSimulationTier tier, in PeerSnapshot snapshot, IdentityRegistration identity)
+    public void Add(PeerIndex subject, PeerViewSimulationTier tier, uint seq, IdentityRegistration identity)
     {
         if (subjects.Add(subject.Value))
-            Entries.Add(new InterestEntry(subject, tier, snapshot, identity));
+            Entries.Add(new InterestEntry(subject, tier, seq, identity));
     }
 
     public void Clear()

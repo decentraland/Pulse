@@ -74,7 +74,7 @@ public partial class PeerSimulationTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public void InterestSnapshot_AcceptedEventEvictedAfterCollection_UsesCapturedEvent(bool teleport)
+    public void InterestSnapshot_AcceptedEventEvictedAfterCollection_UsesLatestHardFallbackState(bool teleport)
     {
         PrepareCapturedInterest(previouslyVisible: true);
         PublishInterestSnapshot(3, "old", new Vector3(2, 0, 0), teleport: teleport,
@@ -92,19 +92,18 @@ public partial class PeerSimulationTests
         OutgoingMessage message = DrainSingleMessage();
         Assert.Multiple(() =>
         {
-            Assert.That(message.Message.MessageCase, Is.EqualTo(teleport
-                ? ServerMessage.MessageOneofCase.Teleported
-                : ServerMessage.MessageOneofCase.EmoteStarted));
-            Assert.That(teleport ? message.Message.Teleported.Sequence : message.Message.EmoteStarted.Sequence, Is.EqualTo(3u));
-            Assert.That(teleport ? message.Message.Teleported.State.PositionXQuantized
-                : message.Message.EmoteStarted.PlayerState.PositionXQuantized,
-                Is.EqualTo(2).Within(PlayerState.PositionXQuantizedStep));
-            Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Seq, Is.EqualTo(3u));
+            // Sequence-only collection cannot preserve an event already overwritten by
+            // delivery; the hard fallback uses the latest idle ledger and current pose.
+            Assert.That(message.Message.MessageCase, Is.EqualTo(ServerMessage.MessageOneofCase.PlayerStateDelta));
+            Assert.That(message.Message.PlayerStateDelta.NewSeq, Is.EqualTo(4u + RING_CAPACITY));
+            Assert.That(message.Message.PlayerStateDelta.PositionXQuantized,
+                Is.EqualTo(9).Within(PlayerState.PositionXQuantizedStep));
+            Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Seq, Is.EqualTo(4u + RING_CAPACITY));
         });
     }
 
     [Test]
-    public void InterestSnapshot_AcceptedStopEvictedAfterCollection_PreservesCapturedReason()
+    public void InterestSnapshot_AcceptedStopEvictedAfterCollection_UsesLatestHardFallbackReason()
     {
         PrepareCapturedInterest(previouslyVisible: true);
         PublishInterestSnapshot(3, "old", new Vector3(2, 0, 0),
@@ -127,9 +126,9 @@ public partial class PeerSimulationTests
         EmoteStopped stopped = DrainSingleMessage().Message.EmoteStopped;
         Assert.Multiple(() =>
         {
-            Assert.That(stopped.Sequence, Is.EqualTo(4u));
-            Assert.That(stopped.Reason, Is.EqualTo(EmoteStopReason.Completed));
-            Assert.That(stopped.PlayerState.PositionXQuantized, Is.EqualTo(2).Within(PlayerState.PositionXQuantizedStep));
+            Assert.That(stopped.Sequence, Is.EqualTo(5u + RING_CAPACITY));
+            Assert.That(stopped.Reason, Is.EqualTo(EmoteStopReason.Cancelled));
+            Assert.That(stopped.PlayerState.PositionXQuantized, Is.EqualTo(9).Within(PlayerState.PositionXQuantizedStep));
         });
     }
 

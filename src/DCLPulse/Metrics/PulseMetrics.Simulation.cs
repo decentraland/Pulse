@@ -53,5 +53,11 @@ public static partial class PulseMetrics
 
         public static readonly Counter<long> TICK_OVERRUNS =
             METER.CreateCounter<long>("pulse.sim.tick_overruns");
+
+        /// <summary>
+        ///     Interest targets evicted before delivery, recorded per hard fallback attempt across observer queries.
+        /// </summary>
+        public static readonly Counter<long> INTEREST_SNAPSHOT_EVICTED =
+            METER.CreateCounter<long>("pulse.sim.interest_snapshot_evicted");
     }
 }

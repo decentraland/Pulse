@@ -14,7 +14,7 @@ namespace Pulse.InterestManagement;
 ///     <para />
 ///     Realm grids supply candidates. A retained cell set can outlive a teleport, so each candidate's
 ///     snapshot is checked against the queried realm and spatial limits before acceptance. Accepted
-///     snapshots carry the same identity registration observed before and after their read.
+///     sequences carry the same identity registration observed before and after their snapshot read.
 ///     <para />
 ///     Thread-safe: all reads are lock-free. The grids are updated by workers on the write path.
 /// </summary>
@@ -101,7 +101,7 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
             PeerViewSimulationTier tier = distSq <= tier0Sq ? PeerViewSimulationTier.TIER_0 :
                 distSq <= tier1Sq ? PeerViewSimulationTier.TIER_1 : PeerViewSimulationTier.TIER_2;
 
-            collector.Add(subject, tier, in subjectSnapshot, identity);
+            collector.Add(subject, tier, subjectSnapshot.Seq, identity);
         }
     }
 
@@ -122,7 +122,7 @@ public sealed class SpatialHashAreaOfInterest : IAreaOfInterest
             if (!string.Equals(subjectSnapshot.Realm, realm, StringComparison.Ordinal) || !parcels.Contains(subjectSnapshot.Parcel))
                 continue;
 
-            collector.Add(subject, PeerViewSimulationTier.TIER_0, in subjectSnapshot, identity);
+            collector.Add(subject, PeerViewSimulationTier.TIER_0, subjectSnapshot.Seq, identity);
         }
     }
 

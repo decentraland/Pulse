@@ -251,7 +251,8 @@ public partial class PeerSimulationTests
         });
     }
 
-    private void PrepareCapturedInterest(bool previouslyVisible, bool resyncWithDelta = false, bool sceneListener = false)
+    private void PrepareCapturedInterest(bool previouslyVisible, bool resyncWithDelta = false, bool sceneListener = false,
+        ILogger<PeerSimulation>? simulationLogger = null)
     {
         UseSpatialInterest();
         IAreaOfInterest spatial = areaOfInterest;
@@ -271,7 +272,7 @@ public partial class PeerSimulationTests
             });
         simulation = new PeerSimulation(areaOfInterest, snapshotBoard, realmGrids, identityBoard, messagePipe,
             SimulationSteps, timeProvider, Substitute.For<ITransport>(), profileBoard, peerIndexAllocator,
-            Substitute.For<ILogger<PeerSimulation>>(), resyncWithDelta: resyncWithDelta);
+            simulationLogger ?? Substitute.For<ILogger<PeerSimulation>>(), resyncWithDelta: resyncWithDelta);
         PlaceInRealm(observer, "old", 2);
         PlaceInRealm(subject, "old", 2);
         if (sceneListener)

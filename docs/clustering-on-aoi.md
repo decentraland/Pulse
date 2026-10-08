@@ -17,7 +17,7 @@ Requirements for the new layer:
 
 ## 2. What Pulse AoI provides
 
-- **`RealmSpatialGrids`** — one `SpatialGrid` per realm, created on a realm's first occupant and dropped with its last, plus the per-peer record of which realm and cell each slot occupies. Realm isolation is structural: a grid holds one realm's peers and nothing else, so no consumer compares realms. Written incrementally on every snapshot publish under one shared write lock; lock-free reads.
+- **`RealmSpatialGrids`** — one `SpatialGrid` per realm, created on a realm's first occupant and dropped with its last, plus the per-peer record of which realm and cell each slot occupies. Written incrementally on every snapshot publish under one shared write lock; lock-free reads. Retained occupant sets can outlive movement or a realm change. Clustering attributes a peer to the first grid that collects it in a pass; a concurrent teleport or slot reuse can temporarily retain its previous cell/realm assignment until a later stable pass. Unions remain confined to the realm of each collected grid. Interest management separately validates the snapshot's realm before accepting visibility.
 - **`SpatialGrid`** — cell index for one realm, 100-unit XZ cells (`SpatialHashAreaOfInterest:CellSize`; the options class default is still 50), packed int64 keys. Occupant sets are copy-on-write, so a reader that holds one keeps iterating a consistent cell.
 - **`SpatialHashAreaOfInterest`** — resolves the observer's realm grid once, then scans neighboring cells within it, `MaxRadius` 100, distance tiers driving 50/100/200 ms update rates.
 - **`SnapshotBoard`** — seqlock latest state per peer (position, parcel, realm); single writer per slot, lock-free reads from any thread.

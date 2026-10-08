@@ -51,7 +51,7 @@ public struct PeerToPeerView
     public uint LastSentSeq;
 
     /// <summary>
-    ///     Wallet announced for this view at <c>PlayerJoined</c> time.
+    ///     Diagnostic copy of the announced wallet, including the synthetic self-mirror wallet.
     /// </summary>
     public string? LastSentWalletId;
 

@@ -150,3 +150,23 @@ The static single-threaded run retains every target and measures neither fallbac
 ```powershell
 dotnet run --project src/DCLPulseBenchmarks/DCLPulseBenchmarks.csproj --configuration Release --no-build --no-restore -- --filter '*InterestSnapshotBenchmarks.*QueryAndConsume*' --warmupCount 5 --iterationCount 12 --launchCount 1 --iterationTime 250
 ```
+
+## PR review follow-up
+
+Review on 2026-10-08 identified ten non-blocking findings. The follow-up removes the redundant observer-mode argument, marks the announced wallet as diagnostic, shares the production accepted-sequence reader with the benchmark, and removes benchmark fallback/counter side effects. Clustering comments now describe first-collected grid attribution under weakly consistent reads. The standing consistency document describes the current contract without branch/date or development-history dependencies.
+
+Historical event loss is distinct from accepted-target eviction. The existing subject round-trip case already covers both teleports being overwritten; additional same-realm and round-trip cases assert that the retained target becomes a delta and records no target eviction. A sequence gap does not prove a teleport, so the implementation does not invent a snap from missing history.
+
+The reseeding registration guard remains: alias retirement emits a message and calls the logger between target resolution and seeding. Two deterministic disconnect/recycle cases passed with the guard and failed with an extra stale `PlayerJoined` when it was temporarily removed. The post-history and resync-baseline fences protect separate shared reads. The explicitly requested hard fallback retains its previous realm-only player or realm/parcel listener check; using the full interest eligibility predicate would change the player distance/tier contract. HashSet deduplication remains the chosen implementation.
+
+Dashboard-curator confirmed its original create flow and reviewed panel 97, `Interest Snapshot Evictions`, against the actual local export and PR-head formatter. Strict lint reports zero errors and warnings; live import remains an operator step.
+
+Verification: 244 focused cases and the full suite passed (1,015 passed, 14 skipped). Release solution build, documentation links, and whitespace checks passed. The benchmark rerun used the same five warmups and twelve 250 ms iterations:
+
+| Peer count | Legacy query and consumption | Accepted sequence query and consumption | Reported ratio |
+| --- | --- | --- | --- |
+| 128 | 1.072 us | 1.863 us | 1.74 |
+| 512 | 4.497 us | 7.732 us | 1.72 |
+| 4095 | 48.820 us | 76.727 us | 1.59 |
+
+These ratios mean roughly 59–74% more query/consumption time than legacy, not a throughput improvement. The 4,095-peer accepted mean has a 99.9% confidence interval of 71.226–82.227 us; the baseline is also variable. Cross-run differences do not isolate the effect of extraction or inlining. MemoryDiagnoser again reports zero bytes at 128/512 peers and 1 byte for both paths at 4,095. This retained-target microbenchmark excludes full fan-out, encoding, transport, concurrent writers and scheduling; peak-density tick-budget headroom remains unestablished.

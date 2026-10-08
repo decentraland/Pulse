@@ -11,7 +11,7 @@ internal enum InterestSnapshotReadResult : byte
 }
 
 /// <summary>
-///     Reads an accepted sequence with connection-registration fences.
+///     Reads an accepted sequence and rejects inactive or changed registrations.
 /// </summary>
 internal static class InterestSnapshotReader
 {
@@ -19,11 +19,9 @@ internal static class InterestSnapshotReader
     public static InterestSnapshotReadResult Read(SnapshotBoard snapshots, IdentityBoard identities,
         in InterestEntry entry, out PeerSnapshot snapshot)
     {
-        snapshot = default;
-        if (!IsRegistrationActive(snapshots, identities, entry.Subject, entry.Identity))
-            return InterestSnapshotReadResult.Inactive;
-
         bool retained = snapshots.TryRead(entry.Subject, entry.Seq, out snapshot);
+        // Interest already captured the registration. TryRead rejects inactive slots;
+        // this final veto also rejects disconnects and slot reuse during the read.
         if (!IsRegistrationActive(snapshots, identities, entry.Subject, entry.Identity))
             return InterestSnapshotReadResult.Inactive;
 

@@ -18,7 +18,7 @@ namespace DCLPulseBenchmarks;
 ///     identity fencing, compact sequence entries, and the simulation's active/registration veto.
 ///     Consumption calls the production accepted-sequence reader and requires a retained target.
 ///     <para />
-///     This is a warmed, single-threaded microbenchmark. There are no concurrent writers, worker
+///     This is a warmed, single-threaded microbenchmark. There are no tier skips, concurrent writers, worker
 ///     scheduling, historical scans, profile lookups, or network encoding. Consumption reads pose,
 ///     sequence, animation, tier, and identity fields into an observable checksum. It does not measure
 ///     the complete simulation tick or prove concurrent correctness. Targets are retained throughout
@@ -28,6 +28,11 @@ namespace DCLPulseBenchmarks;
 ///     deduplication storage. MemoryDiagnoser reports steady-state allocation; setup prints entry
 ///     sizes and retained list capacity separately, since retaining a larger buffer is not a
 ///     per-operation allocation. The production collector's deduplication storage is additional.
+///     <para />
+///     A reverted bitmap experiment on the superseded full-snapshot variant reduced collection
+///     and consumption means by only 2–6%; complete query and consumption still cost about 3x
+///     legacy time. The largest case was noisy. The simpler HashSet was retained; those results
+///     do not measure this accepted-sequence variant.
 /// </summary>
 [MemoryDiagnoser]
 public class InterestSnapshotBenchmarks

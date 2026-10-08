@@ -315,6 +315,8 @@ public sealed class PeerSimulation : IPeerSimulation
                     StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            // Resolve before tier pacing: eviction can retire the view, and inactive
+            // or recycled entries must not refresh its stale-view deadline.
             if (!TryResolveInterestSnapshot(observerId, in entry, views, observerRealm, listener,
                     out PeerSnapshot latestSnapshot))
                 continue;

@@ -10,6 +10,57 @@ namespace DCLPulseTests;
 
 public partial class PeerSimulationTests
 {
+    [TestCase(30f)]
+    [TestCase(60f)]
+    public void InterestSequence_EvictedTargetOutsideRealmOnSkippedTier_RetiresView(float distance)
+    {
+        PrepareCapturedInterest(previouslyVisible: true);
+        var globalPosition = new Vector3(distance, 0, 0);
+        PublishInterestSnapshot(3, "old", new Vector3(2, 0, 0), globalPosition: globalPosition);
+        InterleaveAfterSpatialCollection(() => EvictAcceptedInterest(3, "new", globalPosition: globalPosition));
+        (MeterListener listener, List<long> evictions) = CaptureHistogram("pulse.sim.interest_snapshot_evicted");
+        using MeterListener evictionListener = listener;
+
+        simulation.SimulateTick(peers, 1);
+
+        AssertEvictionRejection(previouslyVisible: true, evictions);
+        simulation.SimulateTick(peers, 2);
+        Assert.That(DrainAllMessages(), Is.Empty);
+        Assert.That(evictions, Is.EqualTo(new[] { 1L }));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void InterestSequence_RegistrationChangesOnSkippedTier_DoesNotStampStaleView(bool recycle)
+    {
+        PrepareCapturedInterest(previouslyVisible: true);
+        var globalPosition = new Vector3(60, 0, 0);
+        PublishInterestSnapshot(3, "old", new Vector3(2, 0, 0), globalPosition: globalPosition);
+        InterleaveAfterSpatialCollection(() =>
+        {
+            snapshotBoard.ClearActive(subject);
+            if (!recycle)
+                return;
+
+            identityBoard.Remove(subject);
+            identityBoard.Set(subject, "0xSUBJECT_WALLET");
+            snapshotBoard.SetActive(subject);
+            PublishInterestSnapshot(3, "old", new Vector3(9, 0, 0), globalPosition: globalPosition);
+        });
+        (MeterListener listener, List<long> evictions) = CaptureHistogram("pulse.sim.interest_snapshot_evicted");
+        using MeterListener evictionListener = listener;
+
+        simulation.SimulateTick(peers, 1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(DrainAllMessages(), Is.Empty);
+            Assert.That(evictions, Is.Empty);
+            Assert.That(simulation.observerViews[observer][subject].LastSeenTick, Is.Zero);
+            Assert.That(simulation.observerViews[observer][subject].LastSentSnapshot.Seq, Is.EqualTo(2u));
+        });
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void InterestSequence_EvictedTeleportHistoryWithRetainedTarget_IsNotTargetEviction(bool realmRoundTrip)

@@ -20,12 +20,12 @@ public class ClusterAssignmentRecoveryTests
     public void SetUp()
     {
         board = new ClusterBoard();
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [WALLET] = new ("C1", "realm-a", SESSION),
         });
         publisher = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
-            Options.Create(new NatsOptions()), new SnapshotBoard(10, 4), board);
+            Options.Create(new NatsOptions()), new SnapshotBoard(10, 4), board, TestRoomRecovery.Identities(board));
     }
 
     [TearDown]
@@ -81,14 +81,14 @@ public class ClusterAssignmentRecoveryTests
     [Test]
     public void Lookup_AfterDeparture_DoesNotReturnRetainedAssignment()
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>());
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>());
         Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", SESSION), Is.Null);
     }
 
     [Test]
     public void Lookup_AfterTakeover_RejectsOldSessionAndReturnsNewRoom()
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [WALLET] = new ("C2", "realm-b", OTHER_SESSION),
         });

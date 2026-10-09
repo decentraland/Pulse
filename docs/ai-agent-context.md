@@ -1,217 +1,50 @@
-# AI Agent Context
+# Pulse architecture
 
-**Service Purpose:** Authoritative avatar synchronization server for Decentraland. Relays avatar state (position, rotation, animation, emotes, teleports) between players within a single Archipelago island over UDP/ENet. One Pulse instance = one island.
+One Pulse instance serves the entire current userbase, with realm-scoped grids and clusters inside that process. Clients also connect to LiveKit for voice and other comms; Pulse neither simulates scene entities nor mints LiveKit credentials. ENet uses UDP behind an AWS NLB; WebTransport shares the peer allocator and simulation. Cluster membership does not imply mutual visibility.
 
-**Role in the real-time layer:** Pulse is one of two parallel connections a client maintains (the other is LiveKit). It handles high-frequency avatar state only — it has no awareness of scene entities, voice, or CRDT. The client's Pulse address is currently hardcoded; Archipelago does not yet return a dynamic Pulse endpoint.
+## Transport and authentication
 
----
+Channel 0 carries reliable control/events; channel 1 carries unreliable sequenced movement/deltas. ENet packet flags enforce these semantics. Channel 2 is declared unsequenced and currently unused.
 
-## Transport
+Authentication validates the Decentraland ECDSA chain locally: signer/delegation, ephemeral expiry, connection signature, timestamp window and server ID. The wallet identifies the user; the final signing address identifies the session (wallet itself without delegation). A duplicate wallet evicts its incumbent connection.
 
-**Protocol:** UDP / ENet on port 7777
-**Load balancer:** AWS NLB (L4) — mandatory, ALB does not support UDP. Sticky 5-tuple routing ensures a client always reaches the same Pulse instance.
+`PENDING_AUTH` becomes `AUTHENTICATED` after validation. Server-requested disconnects pass through `PENDING_DISCONNECT` until the transport event establishes `DISCONNECTING`; inbound packets are skipped meanwhile. Auth failures flush the rejection before disconnect, while auth timeout disconnects immediately. Limits and rejection reasons live in [hardening](hardening.md).
 
-**ENet channels:**
+Optional `HandshakeRequest.PlayerInitialState` is validated before authentication completes. It must supply a valid realm; omitting the seed leaves the peer invisible until its first teleport sets one. A resumed emote backdates `StartTick` by its elapsed offset, clamped against underflow.
 
-| Channel | Reliability | Use |
-| --- | --- | --- |
-| 0 | Reliable ordered | Handshake, emotes, teleports, resync responses, join/leave events |
-| 1 | Unreliable sequenced | High-frequency position/animation deltas (~20 msg/s at Tier 0) |
-| 2 | Unreliable unsequenced | Declared (`ENetChannel.UNRELIABLE_UNSEQUENCED`), no message currently targets it |
+## Shared state and lifetime
 
----
+- `IdentityBoard` atomically publishes one immutable wallet/session registration per slot and keeps the wallet's current binding. Registration changes on every reconnect, even with identical wallet/session. Value-checked cleanup preserves a replacement's binding.
+- `SnapshotBoard` is a single-writer, seqlock-protected ring per subject. Nullable realm/emote ledger fields inherit prior state; stop markers last only their event snapshot. `PeerSnapshotPublisher` coordinates handler publications with spatial-index updates, removing the old realm placement before a realm-changing publish.
+- `RealmSpatialGrids` holds one grid per occupied realm. Copy-on-write cell sets supply candidates; [interest snapshot consistency](interest-snapshot-consistency.md) defines eligibility, deduplication and target resolution.
+- `ProfileBoard` holds profile versions. Slot cleanup clears the boards before allocator release.
 
-## Authentication
+`PeerIndex` is a recycled server slot with a transport routing tag, not a persistent player identity. Allocation -> pending recycle -> cleanup -> release gives observers a grace window. Visibility teardown clears active state and grid membership on the owning worker's disconnect event; identity/profile cleanup and slot release follow later.
 
-Local ECDSA auth chain validation — no network call per connection.
+Stale views expire by simulation ticks, while recycle grace and transport timeouts use wall time. The nominal sweep bound is `(VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL) * BaseTickMs` (about four seconds at the inspected defaults); sustained tick overruns can exceed recycle grace. Registration checks protect aliasing. Same-wallet reconnects can briefly leave old and new views until stale retirement. Silent disconnects also wait for transport timeout. A restart drops live connections; there is no graceful drain. Dense AoI fan-out remains O(N²), with no shedding.
 
-```
-PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
-```
+## Synchronization
 
-- Client sends `{ authChain, timestamp, connectSig }` on channel 0 immediately after ENet connect
-- Server validates locally: chain structure → ephemeral key expiry → connectSig → timestamp within 60s → server_id match
-- `PENDING_AUTH` deadline: 30 seconds. Non-handshake packets silently dropped.
-- Auth failure: `HANDSHAKE_REJECT { reason }` then `enet_peer_disconnect_later`
-- Server-initiated disconnects (handshake reject, `PeerDefense` kick) sit in `PENDING_DISCONNECT` — transport disconnect requested, ENet event pending, inbound packets skipped — before `DISCONNECTING`
-- `player_id = chain[0].payload` (Ethereum wallet address)
+Simulation resolves the interest-approved target, scans history only through that target, collapses each discrete event type to its latest occurrence, then sends events and state. An emote started and stopped within a batch is invisible to the observer. Teleport and emote start suppress that tick's unreliable delta; emote stop permits it. `EmoteCompleter` publishes one-shot completion on the subject's worker.
 
-### Hardening layers
+Deltas compare against the observer's last sent snapshot, without unreliable ACK tracking. Clients request resync on a sequence gap. Full state is the default response; optional targeted deltas require a retained baseline earlier than the resolved target. Equal, future or evicted baselines receive full state. Self mirror bypasses spatial collection but still requires a realm.
 
-Defense-in-depth, all local, all fail-closed. Each has a dedicated class under `Transport/Hardening/` or `Messaging/Hardening/`:
+`PlayerJoined` announces identity, profile, full state and realm. A different accepted realm
+retires/rejoins the subject; an observer changing realm retires and reseeds all views. An A → B → A
+round trip before view expiry may retain the A view and deliver a teleport, or a delta if the
+markers were overwritten. Subjects outside interest follow stale-view grace, except for the
+immediate rejection path defined in the consistency contract.
 
-- **Pre-auth admission** (`PreAuthAdmission`) — global `PreAuthBudget` reserves capacity for AUTHENTICATED peers; per-source-IP `MaxConcurrentPreAuthPerIP` prevents single-IP floods.
-- **Handshake replay cache** (`HandshakeReplayPolicy`) — sliding-window `(wallet, timestamp)` rejection within `PendingAuthCleanTimeoutMs`. Sweeps opportunistically at 50% capacity.
-- **Handshake attempt cap** (`HandshakeAttemptPolicy`) — per-peer counter bounds repeated ECDSA recoveries.
-- **Field validation** (`FieldValidator`) — bounds / NaN / Infinity / length checks on all client-supplied fields; violation disconnects with a specific `DisconnectReason`.
-- **Movement input rate limit** (`MovementInputRateLimiter`) — per-peer token bucket (`MaxHz` sustained refill + `BurstCapacity` for UDP-jitter tolerance); violation → instant disconnect with `INPUT_RATE_EXCEEDED`.
-- **Discrete event rate limit** (`DiscreteEventRateLimiter`) — token bucket on `EmoteStart` / `EmoteStop` / `Teleport`; discard-on-violation, not backpressure.
-- Both rate limiters share `TokenBucketRateLimiter`, which owns the bucket math; subclasses provide config + a `PeerThrottleState` slot getter/setter.
+Reliable emote events carry full state. `server_tick` is monotonic milliseconds, shared by movement and events; ENet RTT/2 estimates one-way latency. Delta state flags are always present because boolean transitions drive animation.
 
----
+## Scene listeners
 
-## State Synchronization
+A listener authenticates with one entry per announced realm and inclusive parcel rectangles. It receives positional/emote events, omits profile announcements, and never registers as a visible subject or cluster member. Only resync and listener-update messages remain accepted.
 
-**Sliding window / time-based assumption.** No ACK tracking for the unreliable channel. Server diffs `current` vs `last_sent_snapshot` per observer and sends the result. If the client can't apply a delta it sends `RESYNC_REQUEST`.
+`SceneListener:MaxParcels` is one cumulative budget: per-realm charges plus nominal rectangle areas. Whitelisted source IPs bypass this budget; realm uniqueness/length and rectangle validation still apply. A valid update replaces the complete set on the next tick and rechecks the live whitelist. Updates use the discrete-event bucket; malformed updates disconnect without partial application. Newly eligible subjects join; removed subjects follow stale-view grace.
 
-**3-tier spatial LOD** (base tick 50 ms, cadences from `PeerOptions.SimulationSteps = {50, 100, 200}`):
+## Protocol and operations
 
-| Tier | Distance | Update frequency |
-| --- | --- | --- |
-| 0 | ≤ 20m | Every tick (~20/s) |
-| 1 | ≤ 50m | Every 2nd tick (~10/s) |
-| 2 | ≤ 100m | Every 4th tick (~5/s) |
+Message envelopes and fields are authoritative in the sibling protocol repository's `decentraland/pulse/*.proto`. Standard protobuf `optional` fields encode delta presence. Quantized values are uint32 varints; `protoc-gen-bitwise` adds float accessors and step constants, including power-law velocity encoding.
 
-Players outside 100m (`SpatialHashAreaOfInterestOptions.MaxRadius`) receive no updates.
-
-**Realm partitioning.** Each realm has its own `SpatialGrid`, held by `RealmSpatialGrids`; `PeerSnapshot.Realm` selects the grid a peer is written into. Grid occupants are candidates: a reader can retain a copy-on-write cell set after a peer moves. Interest management therefore checks each selected snapshot's realm as well as distance, or the announced realm/parcel pair for a scene listener. A peer with no realm occupies no grid, sees nobody, and is invisible to others. Cross-realm teleports vacate the old grid before publishing and entering the destination grid. The subject's realm is announced with `PlayerJoined`. A visible subject changing between two realms observed by a listener is retired and rejoined; an observer changing realm retires and reseeds all its views. A subject that leaves the interest set receives no further state updates and its view follows the ordinary stale-view grace, except when the eviction hard fallback rejects its latest realm/parcel and retires it immediately.
-
-**Snapshot history:** Server keeps a small rolling ring of snapshots per subject (`SnapshotBoard`). `RESYNC_REQUEST` default response is `STATE_FULL`. When `Peers.ResyncWithDelta` is enabled, a targeted delta requires a retained baseline earlier than the resolved target; equal, future, or evicted baselines receive that target's full state.
-
-**SnapshotBoard ledger.** Each snapshot carries positional/animation state plus nullable columns (`EmoteState`, `Realm`, …) that `Publish` carries forward from the previous slot when the incoming snapshot leaves them null — the latest ring entry is always self-sufficient. New per-peer state should extend this ledger (nullable `PeerSnapshot` column + carry-forward) rather than spawn parallel shared boards.
-
-**Other per-peer boards.** `IdentityBoard` (`PeerIndex ↔ Wallet`, canonical identity source) and `ProfileBoard` (per-peer profile version, drives `ProfileAnnouncement` fan-out). Both are zeroed on cleanup.
-
-**AoI implementation.** `SpatialHashAreaOfInterest` queries neighboring cells for players and covering cells plus parcel membership for listeners. Interest entries retain the accepted sequence, tier, and identity registration; simulation resolves that sequence. Read [Interest snapshot consistency](interest-snapshot-consistency.md) before changing eligibility, snapshot resolution, eviction handling, or deduplication. It defines the normal contract and the measured hard fallback, including connection lifetime and event-loss limits.
-
-**Simulation tick** (per worker, per peer it owns): resolve the accepted target and scan earlier snapshots since `lastSentSeq`, collapsing to the last teleport / emote-start / emote-stop. The retained target is processed directly from the resolved value. An evicted target uses the measured latest-state hard fallback; its original teleport, emote, or stop reason may then be lost. Historical reads are bounded by the resolved target and checked against its connection registration. Broadcast discrete events; suppress the unreliable delta on teleport or emote-start (avoids baseline races); otherwise compute and send `PlayerStateDelta`. Views retain the registration so a reused slot reseeds identity and sequence baselines even when its wallet is unchanged.
-
-**Stale-view sweep.** Every `SWEEP_CHECK_INTERVAL` (20 ticks, ~1 s) `PeerSimulation.SweepStaleViews` prunes observer views for subjects unstamped for more than `VIEW_STALE_TICKS` (60 ticks, 3 s) and emits `PlayerLeft` — so a view is swept 3.05–4.0 s after it was last stamped. Bounds memory and closes the same-wallet-reconnect "two views" window.
-
-**Self-mirror.** When `Peers.SelfMirrorEnabled=true`, each peer receives its own state as if from another peer under `SELF_MIRROR_WALLET_ID` at tier `SelfMirrorTier`. Client-side animation testing aid. The self-mirror is injected outside the AoI, so it re-applies the same realm invariant itself: a peer with no realm yet (legacy connect, before its first teleport) is not mirrored until a realm is set.
-
----
-
-## Message Reference
-
-Proto-level names: see the `ClientMessage` / `ServerMessage` `oneof message` in `decentraland/pulse/*.proto`. The tables below use on-wire message names.
-
-### Client → Server
-
-| Message | Channel | Description |
-| --- | --- | --- |
-| `Handshake` | 0 (reliable) | Auth chain + timestamp + connectSig. First packet after transport connect. |
-| `Input` (`MovementInput`) | 1 (unreliable sequenced) | Full continuous state: position, velocity, rotation, blend values, head IK, state flags (u16 bitmask). Sent ~20/s while moving; paused during emotes. |
-| `Resync` (`ResyncRequest`) | 0 (reliable) | Sent when a `PlayerStateDelta` can't be applied (seq gap). Carries `SubjectId, KnownSeq`. |
-| `ProfileAnnouncement` (`ProfileVersionAnnouncement`) | 0 (reliable) | Client announces a new profile version; server rebroadcasts to observers as `PlayerProfileVersionsAnnounced`. |
-| `EmoteStart` | 0 (reliable) | `EmoteId, DurationMs (optional), PlayerState`. Client stops sending `Input` while emoting. |
-| `EmoteStop` | 0 (reliable) | Looping emotes only — one-shot emote expiry is computed lazily at observation time from the cached duration, not by a server-side timer. |
-| `Teleport` (`TeleportRequest`) | 0 (reliable) | Client-initiated teleport (`ParcelIndex, Position, Realm`). Server validates and rebroadcasts as `Teleported`. |
-
-### Server → Client
-
-| Message | Channel | Description |
-| --- | --- | --- |
-| `Handshake` | 0 (reliable) | Auth accept/reject response. On reject, followed by `enet_peer_disconnect_later`. |
-| `PlayerJoined` | 0 (reliable, broadcast) | A peer entered the observer's interest set. Carries `UserId, ProfileVersion, State` and the subject's `Realm` (the AoI partition it belongs to). |
-| `PlayerLeft` | 0 (reliable, broadcast) | A peer left the observer's interest set (distance, the subject's or the observer's realm change, disconnect, or stale-view sweep). After a realm change, a `PlayerJoined` follows if the peer is still visible in its new realm. |
-| `PlayerStateFull` | 0 (reliable) | Full snapshot of a subject. Sent on zone entry or in response to `Resync`. |
-| `PlayerStateDelta` | 1 (unreliable sequenced) | Delta from `last_sent_snapshot`. Optional-field presence suppresses unchanged fields. State flags always present. |
-| `PlayerProfileVersionsAnnounced` | 0 (reliable, broadcast) | Fan-out of `ProfileAnnouncement` to observers. |
-| `EmoteStarted` | 0 (reliable, broadcast) | `SubjectId, Sequence, ServerTick, EmoteId, PlayerState`. Full `PlayerState` sent reliably because no further position updates arrive during the emote. |
-| `EmoteStopped` | 0 (reliable, broadcast) | `SubjectId, Sequence, ServerTick, Reason, PlayerState`. Reason = completed (one-shot duration expired) or cancelled (client `EmoteStop`). `PlayerState` lets the client snap to the correct position on resume. |
-| `Teleported` | 0 (reliable, broadcast) | Authoritative position + `ServerTick` + the subject's `Realm`, always the one the observer already knows it in — a realm change is sent as `PlayerLeft` / `PlayerJoined` instead. Client clears interpolation buffer and snaps. |
-
----
-
-## Serialization
-
-Custom `protoc` plugin (`protoc-gen-bitwise`) generates quantized-accessor partials (`*.Bitwise.cs`) from `.proto` files.
-
-- Quantized fields are plain `uint32` on the wire (ordinary protobuf varints), annotated with `bits`, `min`, `max`; generated float `{Field}Quantized` accessors encode via `encoded = round((clamp(v, min, max) - min) / (max - min) * (2^bits - 1))` (power-law variant for velocity-style fields)
-- `optional` proto fields → native protobuf per-field presence (unchanged fields stay off the wire; no plugin-generated mask)
-- Static `Quantize` helpers (`src/Protocol/Generated/Quantize.cs`) implement the encoding
-
----
-
-## Scaling
-
-One Pulse instance per island. Island count grows with concurrent players (Archipelago creates new islands as needed). A single instance also shards across realms internally — see "Realm partitioning" above.
-
-```
-AWS NLB (L4 · UDP · sticky 5-tuple)
-        │
-   Target Group
-   ┌────┼────┐
-Pulse-A  Pulse-B  Pulse-C ...
-≤4095    ≤4095    ≤4095 peers (`MaxPeers`, ENet-bounded)
-```
-
-**Worker-shard isolation.** Within a single instance, `PeersManager` shards peers across workers by `PeerIndex.Value % workerCount`. Each worker owns its own `peerStates` and `observerViews` and is the only thread that touches them. Cross-worker coordination goes through a single channel: the ENet thread writes `MessagePipe.incomingChannel`, `PeersManager` fans out to `workerChannels[shard]`, each worker drains its own channel sequentially. No ad-hoc cross-worker state migration.
-
-**Peer lifecycle & slot recycling.** `PeerIndexAllocator` runs a three-phase lifecycle: `Allocate` → `MarkPending` (on ENet disconnect) → `Release` (after per-peer board cleanup). The grace window is `DisconnectionCleanTimeoutMs` (5 s), which at the defaults leaves a 1 s margin over the sweep's worst case of `(VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL) × BaseTickMs` = 4 s, so observers normally emit `PlayerLeft` before the slot is reusable. That is a margin under nominal tick pacing, not a guarantee — the sweep counts simulation ticks while the grace window is wall clock, and the worker loop never skips ticks to catch up (`nextTickTime = now + BaseTickMs`), so sustained tick overrun beyond ~62.5 ms, or a `Peers:SimulationSteps[0]` above 62 ms, stretches or inverts the ordering; `PeerSimulation.DetectAndHandleAliasing` is the last-resort guarantee. Disconnect teardown is two-phase: visibility teardown (`SnapshotBoard.ClearActive` + `SpatialGrid.Remove`) runs on the owning worker as it handles the lifecycle `Disconnected` event, so the subject drops out of every AoI query on the next tick; identity/profile wipe, `observerViews` removal, `peers` removal and `PeerIndexAllocator.Release` wait for `CleanupDisconnectedPeer` at the end of that window. Detecting a lost connection is bounded by ENet's `PeerTimeoutMs` (5 s), a flat deadline — it is passed as both `timeoutMinimum` and `timeoutMaximum` — so `PlayerLeft` reaches observers ≈4 s after a graceful disconnect and ≈8–9 s after a lost connection. A mid-session wallet-mismatch check in `PeerSimulation` is the fallback when a slot aliases and an observer still holds the old wallet.
-
-**Fan-out ceiling:** At dense events where all peers are within Tier 0, fan-out is O(N²) per tick. No shedding mechanism exists.
-
----
-
-## Observability
-
-- **Instruments:** `PulseMetrics` (counters / gauges via `System.Diagnostics.Metrics`), zero-alloc `Interlocked` updates on the hot path.
-- **Collector:** `MeterListenerMetricsCollector` subscribes and snapshots on demand.
-- **Prometheus:** `PrometheusFormatter` emits text-exposition format; `HttpService` serves `/metrics` with bearer-token auth.
-- **Console dashboard:** `ConsoleDashboard` (TUI on a dedicated thread) polls snapshots every 500 ms — rates, percentiles, sparklines, per-hardening counters.
-
----
-
-## Technology Stack
-
-- Runtime: .NET 10
-- Language: C#
-- Transport: ENet (native, via managed wrapper)
-- Serialization: Standard protobuf + `protoc-gen-bitwise` quantized accessors (`Quantize` helpers)
-- Crypto: Local ECDSA validation (no network call)
-- Infrastructure: AWS NLB (L4, UDP)
-- SDK: Installed at `~/.dotnet` (user-local)
-
-**Native dependency:** ECDSA verification uses the `Decentraland.RustEthereum` NuGet package fetched from the [`decentraland/rust-ethereum`](https://github.com/decentraland/rust-ethereum) GitHub Release. Version is pinned in `src/Directory.Build.props` (`<RustEthereumVersion>`). `dotnet restore` auto-populates the gitignored `packages/` local feed via `src/Directory.Build.targets`, which invokes `tools/fetch-rust-eth.{sh,ps1}` when the matching nupkg is missing.
-
-**Build:**
-```bash
-DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false
-```
-
-**Tests:**
-```bash
-DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false
-```
-
-The solution file is `src/DCLPulse/DCLPulse.sln` — always pass it explicitly (not in repo root). Use `-p:GenerateProto=false` unless explicitly regenerating proto files.
-
----
-
-## Code Conventions
-
-See `DCLPulse.sln.DotSettings` (Rider settings, checked in).
-
-- Instance fields: `camelCase`, no prefix — `messagePipe`, `workerCount`
-- Constants / static readonly: `UPPER_SNAKE_CASE` — `SECTION_NAME`, `RELIABLE`
-- Types: `PascalCase` — `PeersManager`, `ENetChannel`
-- Local variables / parameters: `camelCase`
-- Primary constructors for DI when trivial; regular constructors when initialization is complex
-- File-scoped namespaces: `namespace Pulse.X;`
-- `var` when type is clear from context
-
-**Tests:** Use NSubstitute. Do not mention line numbers in comments.
-
----
-
-## Design Decisions
-
-- **No movement lock during emotes.** Client is responsible for not sending `Input` while emoting. Server relays emote events, not a movement authority.
-- **No server-side scene simulation.** Server relays and validates client-reported positions only. Cannot compute positions independently.
-- **Client drives resync.** Server never proactively sends `PlayerStateFull` when baseline goes stale — client detects the seq gap and sends `Resync`.
-- **Unreliable channel for movement input.** Avoids head-of-line blocking. A retransmitted stale position is worse than a dropped one.
-- **`state_flags` always present in `PlayerStateDelta`.** Boolean transitions (jump, land, fall) drive animation events; missing one is more expensive than the 2 bytes.
-- **`server_tick` unified clock.** Millisecond wall time from `MonotonicTimeProvider`, stamped by handlers on every snapshot. Used across all messages for animation scrubbing, dead reckoning, and `EmoteCompleter` expiry checks. ENet `peer->roundTripTime / 2` provides the one-way latency estimate. Not a simulation-tick counter.
-- **Emote state inlined into `PeerSnapshot`.** `EmoteState` (emote ID, start tick, duration, stop reason) is a nullable column on the snapshot ring, not a separate board. One-shot expiry is finalized by `EmoteCompleter` on the owning worker's loop, which publishes a `Completed` stop snapshot when `now - StartTick >= DurationMs`; observers pick it up through the normal intermediate-snapshot scan.
-- **`PeerIndex` is not an identity.** It's ENet's recycled slot ID (index into the host's peer table). Stable identity is the wallet address resolved during auth and held by `IdentityBoard`. Observer-side state keyed by `PeerIndex` must be invalidated synchronously when the underlying peer disconnects, or it aliases the next peer that lands on that slot.
-
----
-
-## Known Architectural Issues
-
-- **Pulse address is hardcoded in the client.** No dynamic assignment from Archipelago. Cannot route different islands to different Pulse instances at the application level; NLB handles it by sticky 5-tuple but Pulse has no awareness of island boundaries.
-- **Pulse and Hammurabi are blind to each other.** Pulse knows avatar positions; Hammurabi owns scene entity state. No interface between them — position-based server-side logic (collision, triggers) is not enforceable.
-- **No graceful drain on deploy.** All ENet connections drop simultaneously on instance restart.
-- **Client-reported positions are fully trusted.** No server validation against scene geometry.
+For cluster/feed behavior read [clustering](clustering-on-aoi.md) and [assignment recovery](cluster-assignment-recovery.md). Use [metrics](metrics.md) for instruments/export, [feature flags](feature-flags.md) for runtime IP configuration, and [README](../README.md) for builds, bots and deployments. Code rules live in [CLAUDE.md](../CLAUDE.md).

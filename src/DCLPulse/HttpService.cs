@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Pulse.Clusters;
 using Pulse.FeatureFlags;
 using Pulse.Metrics;
 using System.Net;
@@ -11,7 +12,8 @@ public sealed class HttpService(
     IOptions<HttpServiceOptions> options,
     IMetricsCollector metricsCollector,
     MetricsBearerToken metricsBearerToken,
-    PulseFlagsConfigurationProvider featureFlagsProvider) : BackgroundService
+    PulseFlagsConfigurationProvider featureFlagsProvider,
+    ClusterBoard clusterBoard) : BackgroundService
 {
     private static readonly string COMMIT_HASH = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
 
@@ -88,7 +90,7 @@ public sealed class HttpService(
     /// </summary>
     private byte[] BuildAboutResponse() =>
         JsonSerializer.SerializeToUtf8Bytes(
-            new AboutResponse(COMMIT_HASH, featureFlagsProvider.AppliedOverrides), ABOUT_JSON);
+            new AboutResponse(COMMIT_HASH, featureFlagsProvider.AppliedOverrides, clusterBoard.RoomRecoveryStatus), ABOUT_JSON);
 
     private bool AuthorizeMetrics(HttpListenerRequest request)
     {
@@ -110,5 +112,6 @@ public sealed class HttpService(
     /// </summary>
     private readonly record struct AboutResponse(
         string CommitHash,
-        IReadOnlyDictionary<string, string?> FeatureFlagOverrides);
+        IReadOnlyDictionary<string, string?> FeatureFlagOverrides,
+        RoomRecoveryStatus RoomRecovery);
 }

@@ -138,6 +138,9 @@ public readonly record struct MetricsSnapshot
         public HistogramSnapshot TickDurationUs { get; init; }
         public long TotalTickOverruns { get; init; }
 
+        /// <summary>Interest target eviction fallback attempts across observer queries.</summary>
+        public long TotalInterestSnapshotEvicted { get; init; }
+
         /// <summary>
         ///     Resync baseline-gap histograms indexed by <c>(int)ResyncOutcome</c> — labels in
         ///     <c>ResyncOutcomes.LABELS</c>. Null on a snapshot no collector populated, such as a

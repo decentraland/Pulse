@@ -19,10 +19,8 @@ public struct PeerToPeerView
 
     /// <summary>
     ///     Tick counter of the last tick on which this view's subject was in the observer's
-    ///     interest set. It means "still visible as of this tick", not "last updated on this tick":
-    ///     an already-existing view is re-stamped before the tier gate and before the snapshot
-    ///     read, so a coarsely tiered or quiet subject never looks stale. A view created on this
-    ///     tick is stamped after both, once it has been seeded.
+    ///     interest set with a live registration. It means "still visible as of this tick",
+    ///     not "last updated on this tick": a quiet or coarsely tiered subject is also stamped.
     /// </summary>
     public uint LastSeenTick;
 
@@ -53,12 +51,12 @@ public struct PeerToPeerView
     public uint LastSentSeq;
 
     /// <summary>
-    ///     Wallet the observer currently believes owns this PeerIndex. Captured at
-    ///     <c>PlayerJoined</c> time. If <see cref="Simulation.IdentityBoard" /> now reports a
-    ///     different wallet for the same PeerIndex, the slot has been aliased — emit
-    ///     <c>PlayerLeft</c> and re-announce as new. Defense-in-depth: the transport-level
-    ///     <see cref="PeerIndexAllocator" /> prevents aliasing by holding pending slots through
-    ///     a grace period, but the simulation should not silently trust that invariant.
+    ///     Diagnostic copy of the announced wallet, including the synthetic self-mirror wallet.
     /// </summary>
     public string? LastSentWalletId;
+
+    /// <summary>
+    ///     The slot registration captured when this view was seeded.
+    /// </summary>
+    public Simulation.IdentityRegistration? LastSentIdentity;
 }

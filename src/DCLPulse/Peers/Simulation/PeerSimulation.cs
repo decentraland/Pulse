@@ -4,6 +4,7 @@ using Pulse.InterestManagement;
 using Pulse.Messaging;
 using Pulse.Metrics;
 using Pulse.Transport;
+using System.Runtime.InteropServices;
 using static Pulse.Messaging.MessagePipe;
 
 namespace Pulse.Peers.Simulation;
@@ -32,7 +33,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     How many ticks a view may go unstamped before <see cref="SweepStaleViews" /> evicts it —
     ///     3 s at a 50 ms base tick. Tier period and publish rate do not enter into it:
     ///     <see cref="PeerToPeerView.LastSeenTick" /> is re-stamped on every tick the subject is
-    ///     collected, ahead of the tier gate and the snapshot read, so only a subject that
+    ///     collected with a live registration, including skipped tier ticks, so only a subject that
     ///     actually left the interest set goes stale.
     /// </summary>
     private const uint VIEW_STALE_TICKS = 60;
@@ -191,7 +192,7 @@ public sealed class PeerSimulation : IPeerSimulation
         if (!snapshotBoard.TryRead(observerId, out PeerSnapshot observerSnapshot))
             return;
 
-        ResetObserverRealmViews(observerId, observerState, observerSnapshot.RealmGeneration);
+        ResetObserverRealmViews(observerId, observerState);
 
         collector.Clear();
         areaOfInterest.GetVisibleSubjects(observerId, in observerSnapshot, collector);
@@ -201,10 +202,12 @@ public sealed class PeerSimulation : IPeerSimulation
         ProcessCollectedSubjects(observerId, observerState, tickCounter, observerSnapshot.Realm, listener: null);
     }
 
-    private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState, ulong realmGeneration)
+    private void ResetObserverRealmViews(PeerIndex observerId, PeerState observerState)
     {
-        if (observerState.LastObservedRealmGeneration != realmGeneration
-            && observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
+        if (!observerState.ObserverViewsInvalidated)
+            return;
+
+        if (observerViews.TryGetValue(observerId, out Dictionary<PeerIndex, PeerToPeerView>? views))
         {
             // Retire old identities before reseeding any destination peers, including a
             // return to the same realm after multiple transitions between simulation ticks.
@@ -214,7 +217,7 @@ public sealed class PeerSimulation : IPeerSimulation
             views.Clear();
         }
 
-        observerState.LastObservedRealmGeneration = realmGeneration;
+        observerState.ObserverViewsInvalidated = false;
     }
 
     /// <summary>
@@ -227,7 +230,7 @@ public sealed class PeerSimulation : IPeerSimulation
     private void SimulateSceneListenerObserver(PeerIndex observerId, PeerState observerState, SceneListenerState listener, uint tickCounter)
     {
         collector.Clear();
-        CollectSceneListenerSubjects(observerId, listener);
+        areaOfInterest.GetVisibleSubjects(observerId, listener, collector);
 
         PulseMetrics.SceneListener.VISIBLE_SUBJECTS.Record(collector.Count);
 
@@ -251,61 +254,13 @@ public sealed class PeerSimulation : IPeerSimulation
 
         string? observerWallet = identityBoard.GetWalletIdByPeerIndex(observerId);
 
-        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter, observerRealm, listener);
+        ProcessVisibleSubjects(observerId, observerWallet, views, observerState.ResyncRequests, tickCounter,
+            observerRealm, listener);
 
         observerState.ResyncRequests?.Clear();
 
         if (tickCounter % SWEEP_CHECK_INTERVAL == 0)
             SweepStaleViews(observerId, views, tickCounter);
-    }
-
-    // ── Scene-listener interest collection ──────────────────────────
-
-    /// <summary>
-    ///     Fills the collector with subjects standing inside the listener's AoI: for each announced
-    ///     realm, union the occupants of the covering cells in that realm's grid, then filter
-    ///     parcel-exact — the covering cells over-approximate, since a 100-unit cell holds ~6x6
-    ///     parcels. Every accepted subject is TIER_0: a parcel set has no distance to tier by.
-    ///     <para />
-    ///     The realm needs no test of its own, because grids are per realm: resolving one realm's grid
-    ///     already excludes every other realm's peers. That is what lets two cohosted worlds share both
-    ///     cell keys and parcel indices without colliding.
-    ///     <para />
-    ///     Cell keys are a single realm-independent union across the announcement, so a realm is probed
-    ///     with cells only another realm announced. That over-covers and never mis-covers: an extra cell
-    ///     can only surface a peer that still has to pass this realm's parcel filter.
-    /// </summary>
-    private void CollectSceneListenerSubjects(PeerIndex observerId, SceneListenerState listener)
-    {
-        foreach ((string realm, HashSet<int> parcels) in listener.ParcelsByRealm)
-        {
-            SpatialGrid? grid = realmGrids.GetGrid(realm);
-
-            if (grid == null)
-                continue;
-
-            foreach (long cellKey in listener.CellKeys)
-            {
-                HashSet<PeerIndex>? cellPeers = grid.GetPeers(cellKey);
-
-                if (cellPeers == null)
-                    continue;
-
-                foreach (PeerIndex subject in cellPeers)
-                {
-                    if (subject == observerId)
-                        continue;
-
-                    if (!snapshotBoard.TryRead(subject, out PeerSnapshot subjectSnapshot))
-                        continue;
-
-                    if (!parcels.Contains(subjectSnapshot.Parcel))
-                        continue;
-
-                    collector.Add(subject, PeerViewSimulationTier.TIER_0);
-                }
-            }
-        }
     }
 
     /// <summary>
@@ -322,7 +277,9 @@ public sealed class PeerSimulation : IPeerSimulation
         if (!selfMirrorEnabled || observerSnapshot.Realm == null)
             return;
 
-        collector.Add(observerId, selfMirrorTier);
+        IdentityRegistration? identity = identityBoard.GetIdentity(observerId);
+        if (identity != null)
+            collector.Add(observerId, selfMirrorTier, observerSnapshot.Seq, identity);
     }
 
     // ── Per-subject orchestration ───────────────────────────────────
@@ -337,11 +294,8 @@ public sealed class PeerSimulation : IPeerSimulation
         SceneListenerState? listener)
     {
         bool positionalOnly = listener != null;
-
-        for (var i = 0; i < collector.Count; i++)
+        foreach (ref readonly InterestEntry entry in CollectionsMarshal.AsSpan(collector.Entries))
         {
-            InterestEntry entry = collector.Entries[i];
-
             bool isSelfMirror = entry.Subject == observerId;
 
             if (isSelfMirror && !selfMirrorEnabled)
@@ -356,31 +310,21 @@ public sealed class PeerSimulation : IPeerSimulation
             if (!isSelfMirror
                 && observerWallet != null
                 && string.Equals(
-                    identityBoard.GetWalletIdByPeerIndex(entry.Subject),
+                    entry.Identity.Wallet,
                     observerWallet,
                     StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            // Resolve before tier pacing: eviction can retire the view, and inactive
+            // or recycled entries must not refresh its stale-view deadline.
+            if (!TryResolveInterestSnapshot(observerId, in entry, views, observerRealm, listener,
+                    out PeerSnapshot latestSnapshot))
+                continue;
+
             bool isNew = !views.TryGetValue(entry.Subject, out PeerToPeerView view);
 
-            if (!isNew && DetectAndHandleAliasing(observerId, entry.Subject, isSelfMirror, view, views))
+            if (!isNew && DetectAndHandleAliasing(observerId, entry.Subject, entry.Identity, in view, views))
                 isNew = true;
-
-            // Stamp before tier gate — a TIER_2 subject fires every 4th tick,
-            // but it's still visible on the intervening ticks. Without this,
-            // 3 unstamped ticks would trigger false re-entry detection.
-            if (!isNew)
-            {
-                view.LastSeenTick = tickCounter;
-                views[entry.Subject] = view;
-            }
-
-            // AoI and realm lifecycle are checked every tick; the tier gate below paces only delivery.
-            if (!snapshotBoard.TryRead(entry.Subject, out PeerSnapshot latestSnapshot))
-                continue;
-
-            if (RejectSubjectOutsideObserverAoi(observerId, entry.Subject, views, in latestSnapshot, observerRealm, listener))
-                continue;
 
             if (!isNew && RetireChangedSubjectRealm(observerId, entry.Subject, in view, in latestSnapshot))
             {
@@ -393,58 +337,94 @@ public sealed class PeerSimulation : IPeerSimulation
             int tierIndex = entry.Tier.Value;
 
             if (!hasResync && tierIndex < tierDivisors.Length && tickCounter % tierDivisors[tierIndex] != 0)
+            {
+                if (!isNew)
+                    StampVisibleView(entry.Subject, ref view, views, tickCounter);
                 continue;
+            }
 
             if (isNew)
             {
-                view = HandleNewSubject(observerId, entry.Subject, latestSnapshot, isSelfMirror, resyncRequests, positionalOnly);
+                // Aliasing or realm retirement above can emit messages and invoke logging.
+                if (!IsSubjectRegistrationActive(entry.Subject, entry.Identity))
+                    continue;
+
+                view = HandleNewSubject(observerId, entry.Subject, in latestSnapshot, entry.Identity, isSelfMirror, resyncRequests);
                 view.LastSeenTick = tickCounter;
                 views[entry.Subject] = view;
                 continue;
             }
 
-            if (!positionalOnly)
-                TryAnnounceProfile(observerId, entry.Subject, ref view);
+            PeerSnapshot? lastSentState = ProcessExistingSubject(
+                observerId, in entry, ref view, in latestSnapshot, resyncRequests, positionalOnly);
+            if (!lastSentState.HasValue)
+                continue;
 
-            PeerSnapshot lastSentState = ProcessExistingSubject(
-                observerId, entry, ref view, latestSnapshot, resyncRequests, positionalOnly);
-
-            view.LastSentSnapshot = lastSentState;
+            view.LastSentSnapshot = lastSentState.Value;
             view.LastSeenTick = tickCounter;
             views[entry.Subject] = view;
         }
     }
 
-    private bool RejectSubjectOutsideObserverAoi(PeerIndex observerId, PeerIndex subjectId,
-        Dictionary<PeerIndex, PeerToPeerView> views, in PeerSnapshot latestSnapshot, string? observerRealm,
-        SceneListenerState? listener)
+    private bool TryResolveInterestSnapshot(PeerIndex observerId, in InterestEntry entry,
+        Dictionary<PeerIndex, PeerToPeerView> views, string? observerRealm, SceneListenerState? listener,
+        out PeerSnapshot snapshot)
     {
-        if (IsInsideObserverAoi(in latestSnapshot, observerRealm, listener))
+        InterestSnapshotReadResult result = InterestSnapshotReader.Read(snapshotBoard, identityBoard, in entry, out snapshot);
+        if (result == InterestSnapshotReadResult.Inactive)
             return false;
 
-        // A subject can change realm on another worker after interest collection. Retire
-        // an existing view once; never announce an out-of-AoI snapshot as a new subject.
-        if (views.Remove(subjectId))
-            SendPlayerLeft(observerId, subjectId, "subject outside observer AoI");
+        if (result == InterestSnapshotReadResult.Retained)
+            return true;
 
-        return true;
+        PulseMetrics.Simulation.INTEREST_SNAPSHOT_EVICTED.Add(1);
+        return TryResolveEvictedInterestSnapshotHardFallback(observerId, in entry, views, observerRealm, listener,
+            out snapshot);
     }
 
-    /// <summary>
-    ///     A player observer sees only its own realm; a scene listener sees only an announced
-    ///     parcel of the realm that parcel was announced for.
-    /// </summary>
-    private static bool IsInsideObserverAoi(in PeerSnapshot subject, string? observerRealm, SceneListenerState? listener) =>
+    private bool TryResolveEvictedInterestSnapshotHardFallback(PeerIndex observerId, in InterestEntry entry,
+        Dictionary<PeerIndex, PeerToPeerView> views, string? observerRealm, SceneListenerState? listener,
+        out PeerSnapshot snapshot)
+    {
+        // Undesired hard fallback: the AoI-approved sequence was overwritten. Resolve the
+        // latest state and restore the previous simulation guard only on this measured path.
+        if (!snapshotBoard.TryRead(entry.Subject, out snapshot)
+            || !IsSubjectRegistrationActive(entry.Subject, entry.Identity))
+            return false;
+
+        if (IsInsideObserverAoiForHardFallback(in snapshot, observerRealm, listener))
+            return true;
+
+        if (views.Remove(entry.Subject))
+            SendPlayerLeft(observerId, entry.Subject, "evicted interest snapshot outside observer AoI");
+
+        return false;
+    }
+
+    private static bool IsInsideObserverAoiForHardFallback(in PeerSnapshot subject, string? observerRealm,
+        SceneListenerState? listener) =>
+        // Preserve the old guard: player realm only; listener realm plus announced parcel.
+        // Distance and tier remain the interest query's decision, even in this hard fallback.
         listener == null
             ? string.Equals(subject.Realm, observerRealm, StringComparison.Ordinal)
             : subject.Realm != null
               && listener.ParcelsByRealm.TryGetValue(subject.Realm, out HashSet<int>? parcels)
               && parcels.Contains(subject.Parcel);
 
+    private bool IsSubjectRegistrationActive(PeerIndex subjectId, IdentityRegistration identity) =>
+        InterestSnapshotReader.IsRegistrationActive(snapshotBoard, identityBoard, subjectId, identity);
+
+    private static void StampVisibleView(PeerIndex subjectId, ref PeerToPeerView view,
+        Dictionary<PeerIndex, PeerToPeerView> views, uint tickCounter)
+    {
+        view.LastSeenTick = tickCounter;
+        views[subjectId] = view;
+    }
+
     private bool RetireChangedSubjectRealm(PeerIndex observerId, PeerIndex subjectId,
         in PeerToPeerView view, in PeerSnapshot latestSnapshot)
     {
-        if (view.LastSentSnapshot.RealmGeneration == latestSnapshot.RealmGeneration)
+        if (string.Equals(view.LastSentSnapshot.Realm, latestSnapshot.Realm, StringComparison.Ordinal))
             return false;
 
         SendPlayerLeft(observerId, subjectId, "subject realm changed");
@@ -464,31 +444,26 @@ public sealed class PeerSimulation : IPeerSimulation
     }
 
     /// <summary>
-    ///     Defense-in-depth against <see cref="PeerIndex" /> aliasing. If the observer's view
-    ///     was seeded for a different wallet than the one currently occupying this slot, the
-    ///     logical identity has been replaced mid-session — emit <c>PlayerLeft</c> for the
-    ///     stale identity and drop the view so the caller re-enters the <c>isNew</c> path.
+    ///     Defense-in-depth against <see cref="PeerIndex" /> aliasing. Retires the view when its
+    ///     captured registration differs from the accepted registration, including same-wallet reuse.
+    ///     Emits <c>PlayerLeft</c> for the stale registration and removes its view.
     ///     <para />
     ///     The transport-level <see cref="PeerIndexAllocator" /> prevents this via pending-
     ///     recycle, but the simulation must not rely on that invariant silently. Returns true
     ///     when aliasing was detected and the view was removed.
     /// </summary>
     private bool DetectAndHandleAliasing(
-        PeerIndex observerId, PeerIndex subjectId, bool isSelfMirror,
-        PeerToPeerView view, Dictionary<PeerIndex, PeerToPeerView> views)
+        PeerIndex observerId, PeerIndex subjectId, IdentityRegistration identity,
+        in PeerToPeerView view, Dictionary<PeerIndex, PeerToPeerView> views)
     {
-        string? currentWallet = isSelfMirror
-            ? SELF_MIRROR_WALLET_ID
-            : identityBoard.GetWalletIdByPeerIndex(subjectId);
-
-        if (string.Equals(view.LastSentWalletId, currentWallet, StringComparison.OrdinalIgnoreCase))
+        if (ReferenceEquals(view.LastSentIdentity, identity))
             return false;
 
         SendPlayerLeft(observerId, subjectId, reason: null);
 
         logger.LogWarning(
             "PeerIndex {Subject} aliased (view held '{OldWallet}', board now '{NewWallet}') — observer {Observer} notified",
-            subjectId, view.LastSentWalletId, currentWallet, observerId);
+            subjectId, view.LastSentWalletId, identity.Wallet, observerId);
 
         views.Remove(subjectId);
         return true;
@@ -503,17 +478,16 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     private PeerToPeerView HandleNewSubject(
         PeerIndex observerId, PeerIndex subjectId,
-        PeerSnapshot latestSnapshot, bool isSelfMirror,
-        Dictionary<PeerIndex, uint>? resyncRequests,
-        bool positionalOnly)
+        in PeerSnapshot latestSnapshot, IdentityRegistration identity, bool isSelfMirror,
+        Dictionary<PeerIndex, uint>? resyncRequests)
     {
         resyncRequests?.Remove(subjectId);
 
         int profileVersion = profileBoard.Get(subjectId);
 
-        string? userId = isSelfMirror
+        string userId = isSelfMirror
             ? SELF_MIRROR_WALLET_ID
-            : identityBoard.GetWalletIdByPeerIndex(subjectId);
+            : identity.Wallet;
 
         messagePipe.Send(new OutgoingMessage(observerId, new ServerMessage
         {
@@ -535,6 +509,7 @@ public sealed class PeerSimulation : IPeerSimulation
             LastSentTeleportSeq = latestSnapshot.Seq,
             LastSentSnapshot = latestSnapshot,
             LastSentWalletId = userId,
+            LastSentIdentity = identity,
 
             // LastSentSeq is assigned below — either implicitly by SendEmoteStarted or explicitly.
         };
@@ -563,11 +538,11 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     syncs emote stop, then falls back to resync or delta.
     ///     Returns the snapshot that should become the new baseline.
     /// </summary>
-    private PeerSnapshot ProcessExistingSubject(
+    private PeerSnapshot? ProcessExistingSubject(
         PeerIndex observerId,
-        InterestEntry entry,
+        in InterestEntry entry,
         ref PeerToPeerView view,
-        PeerSnapshot latestSnapshot,
+        in PeerSnapshot latestSnapshot,
         Dictionary<PeerIndex, uint>? resyncRequests,
         bool positionalOnly)
     {
@@ -579,27 +554,39 @@ public sealed class PeerSimulation : IPeerSimulation
             out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport,
             out bool emoteStartFromEviction);
 
+        if (!IsSubjectRegistrationActive(entry.Subject, entry.Identity))
+            return null;
+
+        if (!positionalOnly)
+            TryAnnounceProfile(observerId, entry.Subject, ref view);
+
+        bool emoteStartIsEffective = lastEmoteStart.HasValue
+                                     && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
+
         // --- Broadcast teleport (spatial snap first) ---
-        if (lastTeleport is { } tp && view.LastSentTeleportSeq < tp.Seq)
+        if (lastTeleport is { } teleport)
         {
-            SendTeleport(observerId, ref view, entry.Subject, tp);
-            resyncRequests?.Remove(entry.Subject);
-            view.LastSentTeleportSeq = tp.Seq;
-            lastSentState = tp;
-            discreteEventSent = true;
+            PeerSnapshot tp = ResolveEventPose(in teleport, in latestSnapshot, out _);
+            if (view.LastSentTeleportSeq < tp.Seq)
+            {
+                SendTeleport(observerId, ref view, entry.Subject, tp);
+                resyncRequests?.Remove(entry.Subject);
+                view.LastSentTeleportSeq = tp.Seq;
+                lastSentState = tp;
+                discreteEventSent = true;
+            }
         }
 
         // --- Broadcast emote start only if the emote is still active (not stopped in the same batch).
         //     An emote that started and stopped between ticks is invisible to the observer. ---
-        bool emoteStartIsEffective = lastEmoteStart.HasValue
-                                     && lastEmoteStart.Value.Seq > (lastEmoteStop?.Seq ?? 0);
-
         if (emoteStartIsEffective
             && lastEmoteStart!.Value.Emote is { EmoteId: not null } emote
             && !(emote.EmoteId == view.LastSentEmote?.EmoteId && emote.StartSeq == view.LastSentEmote?.StartSeq))
         {
-            PeerSnapshot es = lastEmoteStart.Value;
-            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote, fromEviction: emoteStartFromEviction);
+            PeerSnapshot emoteStart = lastEmoteStart.Value;
+            PeerSnapshot es = ResolveEventPose(in emoteStart, in latestSnapshot, out bool realmRebased);
+            SendEmoteStarted(observerId, ref view, entry.Subject, es, emote,
+                fromEviction: emoteStartFromEviction, fromLatestSnapshotFallback: realmRebased);
             resyncRequests?.Remove(entry.Subject);
             view.LastSentEmote = emote;
 
@@ -612,16 +599,24 @@ public sealed class PeerSimulation : IPeerSimulation
         // --- Phase 2: sync emote stop (skip when the start is still effective —
         //     either just sent, or already synced via dedup — the emote is active) ---
         if (!emoteStartIsEffective)
-            TrySyncEmoteStop(observerId, entry.Subject, ref view, ref lastSentState, lastEmoteStop);
+            TrySyncEmoteStop(observerId, entry.Subject, ref view, ref lastSentState, lastEmoteStop, in latestSnapshot);
 
         // --- Phase 3: resync or delta (skip if discrete events already carried full state) ---
         if (!discreteEventSent)
-        {
-            lastSentState = HandleResyncOrDelta(
-                observerId, entry, ref view, lastSentState, latestSnapshot, resyncRequests);
-        }
+            return HandleResyncOrDelta(
+                observerId, in entry, ref view, lastSentState, in latestSnapshot, resyncRequests);
 
         return lastSentState;
+    }
+
+    private static PeerSnapshot ResolveEventPose(in PeerSnapshot eventSnapshot, in PeerSnapshot latestSnapshot,
+        out bool realmRebased)
+    {
+        // A retained subject can leave and return between ticks. Preserve the event's
+        // metadata, but never forward a pose from its temporary realm. This also protects
+        // against the return teleport being evicted while the intermediate scan is running.
+        realmRebased = !string.Equals(eventSnapshot.Realm, latestSnapshot.Realm, StringComparison.Ordinal);
+        return realmRebased ? latestSnapshot : eventSnapshot;
     }
 
     /// <summary>
@@ -653,7 +648,7 @@ public sealed class PeerSimulation : IPeerSimulation
     ///     Only the stop snapshot itself has <c>StopReason != null</c> (post-stop snapshots
     ///     inherit <c>null</c>), so <paramref name="lastEmoteStop" /> remains unique per transition.
     /// </summary>
-    private void ScanIntermediateEvents(PeerIndex subjectId, uint fromSeq, PeerSnapshot latestSnapshot,
+    private void ScanIntermediateEvents(PeerIndex subjectId, uint fromSeq, in PeerSnapshot latestSnapshot,
         out PeerSnapshot? lastEmoteStart, out PeerSnapshot? lastEmoteStop, out PeerSnapshot? lastTeleport,
         out bool emoteStartFromEviction)
     {
@@ -666,7 +661,10 @@ public sealed class PeerSimulation : IPeerSimulation
 
         for (uint seq = fromSeq + 1; seq <= latestSnapshot.Seq; seq++)
         {
-            if (!snapshotBoard.TryRead(subjectId, seq, out PeerSnapshot snapshot))
+            PeerSnapshot snapshot;
+            if (seq == latestSnapshot.Seq)
+                snapshot = latestSnapshot;
+            else if (!snapshotBoard.TryRead(subjectId, seq, out snapshot))
                 continue;
 
             if (snapshot.Emote is { EmoteId: not null, StartSeq: var startSeq })
@@ -710,6 +708,17 @@ public sealed class PeerSimulation : IPeerSimulation
                 emoteStartFromEviction = true;
             }
         }
+
+        // The scan spans separate seqlock reads, so eviction can hide a stop or a newer
+        // start. The captured latest ledger is authoritative about the active emote.
+        if (latestSnapshot.Emote is not { EmoteId: not null, StopReason: null } activeEmote)
+            lastEmoteStart = null;
+        else if (lastEmoteStart?.Emote is not { } scannedEmote
+                 || scannedEmote.StartSeq != activeEmote.StartSeq || scannedEmote.EmoteId != activeEmote.EmoteId)
+        {
+            lastEmoteStart = latestSnapshot;
+            emoteStartFromEviction = true;
+        }
     }
 
     // ── Emote stop detection ────────────────────────────────────────
@@ -718,33 +727,52 @@ public sealed class PeerSimulation : IPeerSimulation
         PeerIndex observerId, PeerIndex subjectId,
         ref PeerToPeerView view,
         ref PeerSnapshot lastSentState,
-        PeerSnapshot? stopSnapshot)
+        PeerSnapshot? stopSnapshot,
+        in PeerSnapshot latestSnapshot)
     {
         if (view.LastSentEmote?.EmoteId == null)
             return;
-        // Explicit stop — either Cancelled (from EmoteStopHandler) or Completed (from EmoteCompleter).
-        // Both are published as real stop snapshots on the subject's worker, so they carry their own seq.
+        PeerSnapshot pose;
+        EmoteStopReason reason;
+        bool fromLatestSnapshotFallback;
+
+        // Prefer the actual stop reason when its event survives in the ring.
         if (stopSnapshot?.Emote is { StopReason: not null } stopEmote)
         {
-            SendEmoteStopped(observerId, ref view, subjectId, stopSnapshot.Value, stopEmote.StopReason!.Value);
-            view.LastSentEmote = null;
-
-            // Advance the Phase 3 baseline to the stop snapshot — otherwise Phase 3's
-            // SendDelta would diff from the pre-emote baseline and potentially re-send
-            // the same seq already carried by EmoteStopped above.
-            if (stopSnapshot.Value.Seq > lastSentState.Seq)
-                lastSentState = stopSnapshot.Value;
+            PeerSnapshot stop = stopSnapshot.Value;
+            pose = ResolveEventPose(in stop, in latestSnapshot, out fromLatestSnapshotFallback);
+            reason = stopEmote.StopReason.Value;
         }
+        else if (!latestSnapshot.IsEmoting())
+        {
+            // A stop marker is transient and can be evicted before delivery. The idle
+            // ledger still proves that the previously announced emote has ended. Its
+            // original reason may be lost; cancel that client emote with the current pose.
+            pose = latestSnapshot;
+            reason = latestSnapshot.Emote?.StopReason ?? EmoteStopReason.Cancelled;
+            fromLatestSnapshotFallback = true;
+        }
+        else
+            return;
+
+        SendEmoteStopped(observerId, ref view, subjectId, pose, reason,
+            fromLatestSnapshotFallback: fromLatestSnapshotFallback);
+        view.LastSentEmote = null;
+
+        // Advance the Phase 3 baseline to the sent pose, so the following delta does not
+        // repeat the full state's sequence or refer to a foreign-realm baseline.
+        if (pose.Seq > lastSentState.Seq)
+            lastSentState = pose;
     }
 
     // ── Resync / delta ──────────────────────────────────────────────
 
-    private PeerSnapshot HandleResyncOrDelta(
+    private PeerSnapshot? HandleResyncOrDelta(
         PeerIndex observerId,
-        InterestEntry entry,
+        in InterestEntry entry,
         ref PeerToPeerView view,
         PeerSnapshot lastSentState,
-        PeerSnapshot latestSnapshot,
+        in PeerSnapshot latestSnapshot,
         Dictionary<PeerIndex, uint>? resyncRequests)
     {
         if (resyncRequests == null || !resyncRequests.Remove(entry.Subject, out uint lastKnownSeq))
@@ -755,9 +783,16 @@ public sealed class PeerSimulation : IPeerSimulation
 
         // Try a targeted delta from the client's baseline; fall back to full state
         // if the baseline is evicted, the seq hasn't advanced, or the feature is disabled.
-        if (resyncWithDelta
-            && snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out PeerSnapshot knownSnapshot)
-            && knownSnapshot.Seq != latestSnapshot.Seq)
+        PeerSnapshot knownSnapshot = default;
+        bool hasBaseline = resyncWithDelta
+            && lastKnownSeq < latestSnapshot.Seq
+            && snapshotBoard.TryRead(entry.Subject, lastKnownSeq, out knownSnapshot)
+            && knownSnapshot.Seq < latestSnapshot.Seq;
+
+        if (!IsSubjectRegistrationActive(entry.Subject, entry.Identity))
+            return null;
+
+        if (hasBaseline)
         {
             SendDelta(observerId, ref view, entry.Subject, knownSnapshot, latestSnapshot, entry.Tier, PacketMode.RELIABLE, fromResync: true);
 
@@ -817,9 +852,12 @@ public sealed class PeerSimulation : IPeerSimulation
     /// </summary>
     private void SendTracked(PeerIndex observerId, ref PeerToPeerView view, uint seq, ServerMessage message, PacketMode packetMode,
         bool fromEmoteStartEviction = false,
-        bool fromResync = false)
+        bool fromResync = false,
+        bool fromLatestSnapshotFallback = false)
     {
-        if (seq == view.LastSentSeq && !fromResync)
+        // An emote and teleport using the latest pose may intentionally share a full-state
+        // sequence. Both messages are needed by the client.
+        if (seq == view.LastSentSeq && !fromResync && !fromLatestSnapshotFallback)
         {
             if (fromEmoteStartEviction)
                 logger.LogWarning(
@@ -854,7 +892,7 @@ public sealed class PeerSimulation : IPeerSimulation
     }
 
     private void SendEmoteStarted(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteState emote,
-        bool fromEviction = false)
+        bool fromEviction = false, bool fromLatestSnapshotFallback = false)
     {
         var emoteStarted = new EmoteStarted
         {
@@ -871,13 +909,14 @@ public sealed class PeerSimulation : IPeerSimulation
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
             EmoteStarted = emoteStarted,
-        }, PacketMode.RELIABLE, fromEmoteStartEviction: fromEviction);
+        }, PacketMode.RELIABLE, fromEmoteStartEviction: fromEviction, fromLatestSnapshotFallback: fromLatestSnapshotFallback);
 
         logger.LogInformation("Broadcasting EmoteStarted {EmoteId} for subject {Subject} to observer {Observer}",
             emote.EmoteId, subjectId, observerId);
     }
 
-    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason)
+    private void SendEmoteStopped(PeerIndex observerId, ref PeerToPeerView view, PeerIndex subjectId, PeerSnapshot snapshot, EmoteStopReason reason,
+        bool fromLatestSnapshotFallback = false)
     {
         SendTracked(observerId, ref view, snapshot.Seq, new ServerMessage
         {
@@ -889,7 +928,7 @@ public sealed class PeerSimulation : IPeerSimulation
                 Sequence = snapshot.Seq,
                 PlayerState = CreatePlayerState(snapshot),
             },
-        }, PacketMode.RELIABLE);
+        }, PacketMode.RELIABLE, fromLatestSnapshotFallback: fromLatestSnapshotFallback);
 
         logger.LogInformation("Sending EmoteStopped for subject {Subject} to observer {Observer} (reason={Reason})",
             subjectId, observerId, reason);

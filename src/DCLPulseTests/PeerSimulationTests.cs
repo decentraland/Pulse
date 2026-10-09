@@ -1,5 +1,6 @@
 using Decentraland.Pulse;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse;
 using Pulse.InterestManagement;
@@ -73,11 +74,24 @@ public partial class PeerSimulationTests
                            Arg.Any<PeerIndex>(), Arg.Any<PeerSnapshot>(), Arg.Any<IInterestCollector>()))
                       .Do(ci =>
                        {
-                           IInterestCollector? collector = ci.ArgAt<IInterestCollector>(2);
+                           IInterestCollector collector = ci.ArgAt<IInterestCollector>(2);
+                           PeerSnapshot observerSnapshot = ci.ArgAt<PeerSnapshot>(1);
 
                            foreach ((PeerIndex s, PeerViewSimulationTier t) in visibleSubjects)
-                               collector.Add(s, t);
+                           {
+                               IdentityRegistration? identity = identityBoard.GetIdentity(s);
+                               if (identity != null && snapshotBoard.TryRead(s, out PeerSnapshot snapshot)
+                                   && string.Equals(snapshot.Realm, observerSnapshot.Realm, StringComparison.Ordinal))
+                                   collector.Add(s, t, snapshot.Seq, identity);
+                           }
                        });
+
+        var listenerInterest = new SpatialHashAreaOfInterest(realmGrids, snapshotBoard, identityBoard,
+            Options.Create(new SpatialHashAreaOfInterestOptions()));
+        areaOfInterest.When(x => x.GetVisibleSubjects(
+                           Arg.Any<PeerIndex>(), Arg.Any<SceneListenerState>(), Arg.Any<IInterestCollector>()))
+                      .Do(ci => listenerInterest.GetVisibleSubjects(ci.ArgAt<PeerIndex>(0),
+                           ci.ArgAt<SceneListenerState>(1), ci.ArgAt<IInterestCollector>(2)));
 
         timeProvider = Substitute.For<ITimeProvider>();
         timeProvider.MonotonicTime.Returns(0u);
@@ -103,6 +117,7 @@ public partial class PeerSimulationTests
         PublishSnapshot(observer, seq: 1);
         PublishSnapshot(subject, seq: 1);
 
+        identityBoard.Set(observer, "0xOBSERVER_WALLET");
         identityBoard.Set(subject, "0xSUBJECT_WALLET");
     }
 

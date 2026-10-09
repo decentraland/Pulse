@@ -26,8 +26,8 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
         TeleportRequest request = message.Teleport;
         string realm = request.Realm;
 
-        // Read the prior realm before publishing so the realm-change log can compare against
-        // the pre-teleport state. The publisher does its own snapshot read internally for
+        // Read the prior realm before publishing to detect observer-view invalidation and
+        // log the change. The publisher does its own snapshot read internally for
         // rotation/head-IK inheritance — minor double-read, single-writer per slot guarantees
         // they observe the same prior snapshot.
         string? previousRealm = snapshotBoard.TryRead(from, out PeerSnapshot prev) ? prev.Realm : null;
@@ -36,6 +36,10 @@ public class TeleportHandler(ILogger<TeleportHandler> logger,
 
         if (!string.Equals(previousRealm, realm, StringComparison.Ordinal))
         {
+            // Keep this latched until simulation: later teleports can return to the prior
+            // realm, and ordinary inputs can evict every teleport from the snapshot ring.
+            peerState.ObserverViewsInvalidated = true;
+
             logger.LogInformation("Peer {Peer} teleported to realm '{Realm}' (was '{Previous}') at {Position}",
                 from, realm, previousRealm ?? "<none>", snapshot.GlobalPosition);
         }

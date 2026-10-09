@@ -50,10 +50,14 @@ public class SelfMirrorTests
                            Arg.Any<PeerIndex>(), Arg.Any<PeerSnapshot>(), Arg.Any<IInterestCollector>()))
                       .Do(ci =>
                        {
-                           IInterestCollector? collector = ci.ArgAt<IInterestCollector>(2);
+                           IInterestCollector collector = ci.ArgAt<IInterestCollector>(2);
 
                            foreach ((PeerIndex s, PeerViewSimulationTier t) in visibleSubjects)
-                               collector.Add(s, t);
+                           {
+                               IdentityRegistration? identity = identityBoard.GetIdentity(s);
+                               if (identity != null && snapshotBoard.TryRead(s, out PeerSnapshot snapshot))
+                                   collector.Add(s, t, snapshot.Seq, identity);
+                           }
                        });
 
         timeProvider = Substitute.For<ITimeProvider>();

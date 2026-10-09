@@ -10,6 +10,11 @@ public sealed class NullAreaOfInterest : IAreaOfInterest
 {
     public void GetVisibleSubjects(PeerIndex observer, in PeerSnapshot observerSnapshot, IInterestCollector collector)
     {
-        // No subjects visible — simulation produces no output.
+        // Reports no visible subjects.
+    }
+
+    public void GetVisibleSubjects(PeerIndex observer, SceneListenerState listener, IInterestCollector collector)
+    {
+        // Reports no visible subjects.
     }
 }

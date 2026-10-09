@@ -495,6 +495,27 @@ Histogram of the number of visible subjects per scene-listener observation. Expo
 
 ---
 
+## Simulation health metrics
+
+### Tick Overruns
+
+Count of ticks that exceeded `BaseTickMs`. Rendered as a rate row (per-second), not a histogram.
+
+**Expected**: 0. Any sustained rate is an SLO breach — the simulation is not keeping tick cadence.
+
+### Interest Snapshot Evictions
+
+Count of interest entries whose selected sequence was evicted from snapshot history before delivery. The normal path reads the exact sequence accepted by interest management. An eviction triggers a hard fallback: read the latest snapshot and repeat the observer realm/parcel comparison before delivery. This fallback is undesired and should normally stay unused.
+
+Each affected observer query increments the counter once, including skipped tier ticks. Historical event-scan misses, evicted resync baselines, disconnected subjects and recycled peer slots are excluded. It is a count of hard fallback attempts, not unique lost snapshots or messages.
+
+| Signal | Meaning |
+|---|---|
+| Zero increases | Normal — selected sequences remain available until delivery |
+| Any increase | The hard fallback ran. Compare `Peers:SnapshotHistoryCapacity` with publisher bursts and worker delay between interest selection and delivery; cross-check Tick Duration and Incoming Queue |
+
+**Prometheus**: `dcl_pulse_interest_snapshot_evicted_total`, an unlabelled counter. The Grafana **Interest Snapshot Evictions** panel shows `round(sum(increase(dcl_pulse_interest_snapshot_evicted_total[$__rate_interval])))`. `increase` extrapolates between scrape samples; rounded panel values are an estimate of events in the window. This counter is available in Prometheus and Grafana; the console dashboard does not render it.
+
 ## Latency metrics
 
 Histogram-backed timing metrics for the simulation and outbound-drain hot paths. The collector holds raw per-bucket counts; the dashboard's percentile columns describe the **value distribution** (ms/µs) — Window over the buckets that filled since the previous 500 ms snapshot, Lifetime over the cumulative buckets — not a rate. The sparkline plots the window P99, the tail we care about.
@@ -521,12 +542,6 @@ Publish→fan-out staleness of `STATE_DELTA` per AoI tier — `MonotonicTime −
 |---|---|
 | Flat, well under budget | Healthy — plenty of headroom in the tick |
 | Creeping toward `BaseTickMs × 1000` | CPU saturation or AoI fan-out growth — precursor to Tick Overruns |
-
-### Tick Overruns
-
-Count of ticks that exceeded `BaseTickMs`. Rendered as a rate row (per-second), not a histogram.
-
-**Expected**: 0. Any sustained rate is an SLO breach — the simulation is not keeping tick cadence.
 
 ### Drain Cycle (µs)
 

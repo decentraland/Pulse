@@ -84,6 +84,7 @@ public class TeleportHandlerTests
 
         Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue),
             "No snapshot should be published when the realm is empty.");
+        Assert.That(peers[peer].ObserverViewsInvalidated, Is.False);
     }
 
     [Test]
@@ -96,6 +97,48 @@ public class TeleportHandlerTests
         handler.Handle(peers, peer, CreateTeleportMessage(realm: "realm-a"));
 
         Assert.That(snapshotBoard.LastSeq(peer), Is.EqualTo(uint.MaxValue));
+        Assert.That(peers[peer].ObserverViewsInvalidated, Is.False);
+    }
+
+    [Test]
+    public void Handle_RealmChange_InvalidatesObserverViews()
+    {
+        var peer = new PeerIndex(1);
+        peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peer);
+        snapshotBoard.Publish(peer, TestSnapshots.Make(realm: "realm-a"));
+
+        handler.Handle(peers, peer, CreateTeleportMessage(realm: "realm-b"));
+
+        Assert.That(peers[peer].ObserverViewsInvalidated, Is.True);
+    }
+
+    [Test]
+    public void Handle_SameRealmTeleport_DoesNotInvalidateObserverViews()
+    {
+        var peer = new PeerIndex(1);
+        peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peer);
+        snapshotBoard.Publish(peer, TestSnapshots.Make(realm: "realm-a"));
+
+        handler.Handle(peers, peer, CreateTeleportMessage(realm: "realm-a"));
+
+        Assert.That(peers[peer].ObserverViewsInvalidated, Is.False);
+    }
+
+    [Test]
+    public void Handle_RoundTripAndSameRealmTeleport_PreservesPendingInvalidation()
+    {
+        var peer = new PeerIndex(1);
+        peers[peer] = new PeerState(PeerConnectionState.AUTHENTICATED);
+        snapshotBoard.SetActive(peer);
+        snapshotBoard.Publish(peer, TestSnapshots.Make(realm: "realm-a"));
+
+        foreach (string realm in new[] { "realm-b", "realm-a", "realm-a" })
+        {
+            handler.Handle(peers, peer, CreateTeleportMessage(realm: realm));
+            Assert.That(peers[peer].ObserverViewsInvalidated, Is.True);
+        }
     }
 
     [Test]

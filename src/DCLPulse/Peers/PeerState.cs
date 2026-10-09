@@ -29,8 +29,8 @@ public class PeerState(PeerConnectionState connectionState)
     public Dictionary<PeerIndex, uint>? ResyncRequests { get; set; }
 
     /// <summary>
-    ///     Realm generation last processed by this player's observer simulation. Owned by the
-    ///     peer's worker and initialized to zero with each new peer state.
+    ///     Latched by a realm-changing teleport until the next player-observer simulation.
+    ///     Accessed only by the owning worker; survives round trips and snapshot ring eviction.
     /// </summary>
-    public ulong LastObservedRealmGeneration { get; set; }
+    public bool ObserverViewsInvalidated { get; set; }
 }

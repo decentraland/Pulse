@@ -7,8 +7,8 @@ namespace Pulse.InterestManagement;
 
 /// <summary>
 ///     The set of live <see cref="SpatialGrid" />s, one per realm, and the router that keeps each peer
-///     in exactly one of them. Realm isolation is structural: a grid holds one realm's peers and
-///     nothing else, so neither interest management nor cluster derivation ever compares realms.
+///     in exactly one of them. Grids partition indexed locations by realm; a retained occupant set
+///     describes an earlier placement and does not guarantee a peer's current snapshot realm.
 ///     <para />
 ///     Per-peer bookkeeping (which realm and cell a slot currently occupies) lives here rather than in
 ///     each grid. Realm names arrive from clients, so a per-grid array indexed by

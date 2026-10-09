@@ -145,11 +145,8 @@ public sealed class PeerSnapshotPublisher(
             IsTeleport: true,
             Realm: teleportRequest.Realm);
 
-        // Teleport is the only path that changes a peer's realm, and the snapshot and the grids cannot
-        // be updated together. Vacating the old grid first leaves the peer in no grid for an instant —
-        // invisible to both realms — instead of sitting in the old realm's grid while its snapshot
-        // already names the new one, which an observer of the old realm reads as a cross-realm subject
-        // and holds until the stale-view sweep clears it.
+        // A realm-changing teleport vacates the old grid before publishing the new snapshot and
+        // entering the destination grid. Previously returned cell sets can still retain this peer.
         if (!string.Equals(previousRealm, teleportRequest.Realm, StringComparison.Ordinal))
             realmGrids.Remove(from);
 

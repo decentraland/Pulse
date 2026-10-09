@@ -299,7 +299,8 @@ public sealed class ClusterTracker : BackgroundService
 
     /// <summary>
     ///     Reads one realm's occupied cells and builds a node per cell that has at least one collectable
-    ///     occupant. Every occupant of the grid is in this realm, so no member needs a realm test.
+    ///     occupant. Retained occupant sets can outlive a cell or realm change; members are attributed
+    ///     to the first grid that collects them during this pass.
     /// </summary>
     private void CollectRealmNodes(string realm, SpatialGrid grid)
     {

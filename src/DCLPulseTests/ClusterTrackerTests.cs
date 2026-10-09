@@ -56,7 +56,7 @@ public class ClusterTrackerTests
         Assert.That(pass.Clusters, Has.Count.EqualTo(1));
         Assert.That(pass.Clusters[0].Count, Is.EqualTo(1));
         Assert.That(pass.Clusters[0].Realm, Is.EqualTo(REALM));
-        Assert.That(pass.GetClusterId(new PeerIndex(0)), Is.EqualTo("C1"));
+        Assert.That(pass.GetClusterId(new PeerIndex(0)), Is.EqualTo($"C{clusterBoard.RoomRecoveryStatus.Epoch}-1"));
     }
 
     [Test]
@@ -437,7 +437,7 @@ public class ClusterTrackerTests
 
         tracker.RunPass();
 
-        feedPublisher.Received(1).PublishClusterChange("0xwallet0", "C1", REALM, Arg.Any<ClusterSession>());
+        feedPublisher.Received(1).PublishClusterChange("0xwallet0", $"C{clusterBoard.RoomRecoveryStatus.Epoch}-1", REALM, Arg.Any<ClusterSession>());
     }
 
     [Test]
@@ -588,7 +588,7 @@ public class ClusterTrackerTests
         SetupPeer(new PeerIndex(0), new Vector3(10, 0, 10));
 
         tracker.RunPass();
-        Assert.That(clusterBoard.Current.GetClusterId(new PeerIndex(0)), Is.EqualTo("C1"));
+        Assert.That(clusterBoard.Current.GetClusterId(new PeerIndex(0)), Is.EqualTo($"C{clusterBoard.RoomRecoveryStatus.Epoch}-1"));
 
         // Simulate a disconnect: the peer leaves the grid and its snapshot slot is released.
         RemovePeer(new PeerIndex(0));
@@ -1012,7 +1012,7 @@ public class ClusterTrackerTests
         const int passesPastFormerMirrorLifetime = 3601;
         for (var pass = 0; pass < passesPastFormerMirrorLifetime; pass++) tracker.RunPass();
 
-        Assert.That(clusterBoard.Assignments[WALLET], Is.EqualTo(new ClusterAssignment("C1", REALM, SESSION_A)));
+        Assert.That(clusterBoard.Assignments[WALLET], Is.EqualTo(new ClusterAssignment($"C{clusterBoard.RoomRecoveryStatus.Epoch}-1", REALM, SESSION_A)));
         feedPublisher.DidNotReceive().PublishClusterChange(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ClusterSession>());
     }
 
@@ -1200,7 +1200,7 @@ public class ClusterTrackerTests
         ClusterTracker tracker = CreateTracker();
         SetupPeer(new PeerIndex(0), Vector3.Zero, wallet: checksumWallet, session: session);
         using var publisher = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
-            Options.Create(new NatsOptions()), snapshotBoard, clusterBoard);
+            Options.Create(new NatsOptions()), snapshotBoard, clusterBoard, identityBoard);
 
         tracker.RunPass();
 
@@ -1210,9 +1210,9 @@ public class ClusterTrackerTests
             Assert.That(clusterBoard.Assignments.Keys, Is.EquivalentTo(new[] { lowerCased }));
             Assert.That(clusterBoard.Assignments.ContainsKey(checksumWallet), Is.False, "the map is ordinal over lower-cased keys");
             Assert.That(publisher.TryResolveAssignment($"peer.{lowerCased}.cluster_assignment", Encoding.UTF8.GetBytes(session),
-                out PeerClusterChange? lowerResponse) ? lowerResponse.ClusterId : null, Is.EqualTo("C1"));
+                out PeerClusterChange? lowerResponse) ? lowerResponse.ClusterId : null, Is.EqualTo($"C{clusterBoard.RoomRecoveryStatus.Epoch}-1"));
             Assert.That(publisher.TryResolveAssignment($"peer.{checksumWallet}.cluster_assignment", Encoding.UTF8.GetBytes(session),
-                out PeerClusterChange? checksumResponse) ? checksumResponse.ClusterId : null, Is.EqualTo("C1"));
+                out PeerClusterChange? checksumResponse) ? checksumResponse.ClusterId : null, Is.EqualTo($"C{clusterBoard.RoomRecoveryStatus.Epoch}-1"));
         });
     }
 

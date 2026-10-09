@@ -41,6 +41,7 @@ public sealed class ClusterTracker : BackgroundService
     private readonly IdentityBoard identityBoard;
     private readonly ClusterBoard clusterBoard;
     private readonly IClusterFeedPublisher feedPublisher;
+    private readonly RoomRecoveryLedger roomRecovery;
 
     // Stats-only mode has no request responder and no hint loop, so no assignment map is built.
     private readonly bool feedEnabled;
@@ -72,6 +73,7 @@ public sealed class ClusterTracker : BackgroundService
 
     private long passNumber;
     private long nextClusterNumber;
+    private bool recoveryCapacityBlocked;
 
     // The map last handed to the board and the pass that built or kept it. Never mutated after it is
     // handed over.
@@ -101,6 +103,8 @@ public sealed class ClusterTracker : BackgroundService
         this.identityBoard = identityBoard;
         this.clusterBoard = clusterBoard;
         this.feedPublisher = feedPublisher;
+        roomRecovery = new RoomRecoveryLedger(this.options);
+        clusterBoard.PublishRoomRecovery(roomRecovery.Snapshot(out RoomRecoveryStatus initialStatus), initialStatus);
 
         feedEnabled = natsOptions.Value.IsConfigured;
         peerStates = new PeerClusterState[maxPeers];
@@ -137,6 +141,7 @@ public sealed class ClusterTracker : BackgroundService
         logger.LogInformation(
             "Cluster tracker started — pass every {PassIntervalMs}ms, dwell {DwellPasses} passes, id prefix {IdPrefix}",
             options.PassIntervalMs, options.DwellPasses, options.IdPrefix);
+        logger.LogWarning("Room admission requires controlled reset confirmation for epoch {Epoch}", roomRecovery.Epoch);
 
         // Long-running so the pass never occupies a thread-pool worker.
         await Task.Factory.StartNew(
@@ -191,6 +196,7 @@ public sealed class ClusterTracker : BackgroundService
         // to the feed.
         CollectAssignmentChanges();
         PublishRecoveryAssignments();
+        UpdateRoomRecoveryPlans();
         PublishAssignmentChanges();
         ForgetVanishedPeers();
         ForgetExpiredSessions();
@@ -243,6 +249,35 @@ public sealed class ClusterTracker : BackgroundService
         RecordGauge(PulseMetrics.Clusters.COUNT, clusterCount, ref lastClusterCount);
         RecordGauge(PulseMetrics.Clusters.PEERS, peers, ref lastClusterPeers);
         RecordGauge(PulseMetrics.Clusters.SIZE_MAX, largest, ref lastSizeMax);
+    }
+
+    private void UpdateRoomRecoveryPlans()
+    {
+        if (!feedEnabled) return;
+
+        var desired = new Dictionary<string, DesiredRoomAssignment>(members.Count, StringComparer.Ordinal);
+        foreach (PassMember member in members)
+        {
+            ref PeerClusterState state = ref peerStates[member.Peer.Value];
+            if (state.PublishedClusterId is { } clusterId && state.PublishedRealm is { } realm)
+                desired[member.Wallet.ToLowerInvariant()] = new DesiredRoomAssignment(
+                    new ClusterAssignment(clusterId, realm, member.Session), member.Peer, member.Identity);
+        }
+
+        var now = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // Adopt this pass's owner before acknowledgements can release admission.
+        roomRecovery.Reconcile(desired, now);
+        for (var confirmed = 0; confirmed < RoomRecoveryInbox.MAX_CONFIRMATIONS_PER_PASS
+             && clusterBoard.RecoveryInbox.TryRead(out RoomRecoveryConfirmation confirmation); confirmed++)
+            roomRecovery.Apply(confirmation, now);
+
+        clusterBoard.PublishRoomRecovery(roomRecovery.Snapshot(out RoomRecoveryStatus status), status);
+        if (roomRecovery.CapacityBlocked != recoveryCapacityBlocked)
+        {
+            recoveryCapacityBlocked = roomRecovery.CapacityBlocked;
+            logger.LogWarning("Room recovery capacity blocked: {Blocked}; retained wallets {Wallets}, pending operations {Operations}",
+                recoveryCapacityBlocked, status.RetainedWallets, status.PendingOperations);
+        }
     }
 
     /// <summary>
@@ -363,7 +398,7 @@ public sealed class ClusterTracker : BackgroundService
             seen.LastSeenPass = passNumber;
 
         members.Add(new PassMember(peer, wallet, identity.Session,
-            snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport));
+            snapshot.GlobalPosition, snapshot.Parcel, snapshot.IsTeleport, identity));
     }
 
     private void AddNode(string realm, long cellKey, int memberStart, int memberCount)
@@ -584,7 +619,7 @@ public sealed class ClusterTracker : BackgroundService
 
     private string MintClusterId()
     {
-        var id = $"{options.IdPrefix}{++nextClusterNumber}";
+        var id = $"{options.IdPrefix}{roomRecovery.Epoch}-{++nextClusterNumber}";
 
         // Inheritance only reads previous-pass assignments, so a freshly minted ID is uncontested.
         clusterRecords[id] = new ClusterRecord
@@ -861,7 +896,8 @@ public sealed class ClusterTracker : BackgroundService
         string Session,
         Vector3 Position,
         int Parcel,
-        bool IsTeleport
+        bool IsTeleport,
+        IdentityRegistration Identity
     );
 
     /// <summary>

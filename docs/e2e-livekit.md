@@ -1,5 +1,11 @@
 # End-to-end: the LiveKit conn-string path
 
+> **Historical harness.** The evidence and parking/metadata scenarios below describe the earlier
+> implementation. They do not validate Pulse-owned recovery. Use the
+> [current plan](demand-driven-recovery-protocol-plan.md) and
+> [bootstrap procedure](https://github.com/decentraland/comms-gatekeeper/blob/fix/pulse-owned-room-recovery/docs/room-recovery-operations.md)
+> before testing the new backend pair; old scripts do not satisfy its admission barrier.
+
 How to run the harness that checks Pulse's cluster feed all the way to the LiveKit connection
 string a client would actually receive, on a local machine and in CI.
 
@@ -29,7 +35,7 @@ to the set ws-connector welcomed. `island-C3` rather than `C3` — the prefix is
 
 Note `C3`, not `C1`: the cluster counter is monotonic per Pulse process, so a restart of the
 *bots* against a long-lived server keeps incrementing. That is the ID-reuse gap in
-[clustering-on-aoi.md §7](clustering-on-aoi.md), visible in ordinary use.
+[clustering ID limits](clustering-on-aoi.md#open-questions), visible in ordinary use.
 
 **Heartbeats are not what triggers the mint here.** They carry real positions and ws-connector
 republishes them to `peer.{addr}.heartbeat`, but in *this* stack nothing subscribes —
@@ -121,8 +127,7 @@ is not. Do not "fix" either side to match the other; the two subjects are load-b
 as written, and a mismatch means nothing arrives.
 
 Pulse publishes its subjects literally — it has no prefix knob. See
-[clustering-on-aoi.md §3.6](clustering-on-aoi.md) for the full feed description and the three
-subjects Pulse emits.
+[clustering feed](clustering-on-aoi.md#feed) for the current subjects and delivery contract.
 
 ### Two strengths of claim, and which one you asked for
 
@@ -623,7 +628,7 @@ curl -s "http://127.0.0.1:8222/subsz?subs=1"
 **Address casing.** ws-connector's registry keys on `normalizeAddress(address)`, which is
 `address.toLowerCase()`, and the welcome message returns that lowercased address as `peer_id`.
 Pulse lowercases the wallet before building the subject, for the same reason
-(clustering-on-aoi.md §3.6). gatekeeper lowercases the token it extracts from the subject. Every
+([clustering feed](clustering-on-aoi.md#feed)). gatekeeper lowercases the token it extracts from the subject. Every
 hop agrees — until something introduces a checksum-cased address, at which point
 `engine.peer.0xAbC….island_changed` is published, ws-connector's wildcard subscription matches
 it, `peersRegistry.getPeerWs('0xAbC…')` returns nothing, and the message is dropped with no log
@@ -640,7 +645,7 @@ gatekeeper's side and `engine.peer.*.island_changed` on ws-connector's.
 **Half a session.** A wallet with a Pulse session but no ws-connector session gets an
 `island_changed` that nobody forwards — harmless, invisible. A wallet with a ws-connector
 session but no Pulse session never appears in a cluster pass, so nothing is ever published for
-it. This is a documented consequence of the split (clustering-on-aoi.md §3.6). In this harness
+it. This is a documented consequence of the split ([clustering feed](clustering-on-aoi.md#feed)). In this harness
 it is usually a partial failure: `--comms-enabled` was omitted, or the comms channel failed
 while the Pulse channel stayed up, which is by design a separate failure domain. *Tell it
 apart:* `curl -s http://127.0.0.1:5000/status` reports ws-connector's `userCount`; compare it
@@ -673,9 +678,7 @@ your CI runner. Two consequences worth asserting on directly: a bot idling insid
 must produce *no* repeat assignment (the debounce and the outbox's latest-wins), and a bot
 walking from one cluster to another must produce *exactly one*.
 
-**The broker was not there at startup.** Pulse's feed is publish-only, config-gated and
-fail-soft: an empty or unreachable `Nats:Url` leaves clustering running and publishes nothing,
-by design, because a broker outage must never stall the simulation. It also means a typo in the
+**The broker was not there at startup.** An empty `Nats:Url` disables broker traffic. An unreachable broker leaves clustering/simulation running while the publisher retries. It also means a typo in the
 URL is indistinguishable from a healthy idle server unless you look.
 `dcl_pulse_nats_connected` and the startup log line are the only signals. This is the reason for
 `--wait` and the healthchecks; it is also the reason `Metrics__Type` is pinned to `Prometheus`

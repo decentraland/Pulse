@@ -96,6 +96,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     private readonly NatsOptions options;
     private readonly SnapshotBoard snapshotBoard;
     private readonly ClusterBoard clusterBoard;
+    private readonly IdentityBoard identityBoard;
     private readonly bool feedEnabled;
 
     // Outbox. Every access runs under outboxLock, and all three callers mutate: the tracker thread
@@ -162,13 +163,15 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         ILoggerFactory loggerFactory,
         IOptions<NatsOptions> options,
         SnapshotBoard snapshotBoard,
-        ClusterBoard clusterBoard)
+        ClusterBoard clusterBoard,
+        IdentityBoard identityBoard)
     {
         this.logger = logger;
         this.loggerFactory = loggerFactory;
         this.options = options.Value;
         this.snapshotBoard = snapshotBoard;
         this.clusterBoard = clusterBoard;
+        this.identityBoard = identityBoard;
 
         commitHash = Environment.GetEnvironmentVariable("COMMIT_HASH") ?? "unknown";
         feedEnabled = this.options.IsConfigured;
@@ -300,6 +303,10 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             rented.Session = session.Session;
             rented.DisplacedSession = session.DisplacedSession ?? string.Empty;
             rented.DisplacedClusterId = session.DisplacedClusterId ?? string.Empty;
+            rented.RoomRecovery = clusterBoard.RoomRecoveryAssignments.TryGetValue(wallet.ToLowerInvariant(), out RoomRecoveryAssignment? recovery)
+                                  && recovery.Assignment == new ClusterAssignment(clusterId, realm, session.Session)
+                ? RoomRecoveryLedger.Message(recovery)
+                : null;
 
             // Lower-cased so one wallet always maps to one subject, whatever checksum casing the auth
             // chain carried. The subject is also the coalescing key, so per-subject latest-wins is
@@ -642,6 +649,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             await Task.WhenAll(
                 DrainAsync(connection, signal, loops),
                 RespondToAssignmentRequestsAsync(connection, loops),
+                ReceiveRoomCleanupConfirmationsAsync(connection, loops),
+                ReceiveBootstrapConfirmationsAsync(connection, loops),
                 PublishAssignmentRefreshesAsync(connection, loops),
                 heartbeatEnabled ? PublishDiscoveryPeriodicallyAsync(connection, loops) : Task.CompletedTask);
         }
@@ -661,7 +670,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     ///     Resolves a <c>peer.{wallet}.cluster_assignment</c> request whose body is the requester's
     ///     42-byte ephemeral session. Returns false for a malformed subject or body, an unknown wallet,
     ///     or a session other than the one that published the assignment — there is no session-less
-    ///     mode.
+    ///     mode. Cleanup-only records retain their last selector and are returned only while the wallet
+    ///     has no live binding. Active plans require the registration captured by the tracker.
     /// </summary>
     internal bool TryResolveAssignment(string subject, ReadOnlySpan<byte> data, [NotNullWhen(true)] out PeerClusterChange? response)
     {
@@ -674,8 +684,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "cluster_assignment") return false;
 
         // The assignment map is keyed by the lower-cased wallet; the subject may carry any casing.
-        if (!clusterBoard.Assignments.TryGetValue(parts[1].ToLowerInvariant(), out ClusterAssignment assignment)
-            || !string.Equals(Encoding.UTF8.GetString(data), assignment.Session, StringComparison.OrdinalIgnoreCase))
+        if (!clusterBoard.RoomRecoveryAssignments.TryGetValue(parts[1].ToLowerInvariant(), out RoomRecoveryAssignment? assignment)
+            || !string.Equals(Encoding.UTF8.GetString(data), assignment.Assignment.Session, StringComparison.OrdinalIgnoreCase)
+            || !IsCurrentRecovery(parts[1], assignment))
             return false;
 
         response = AssignmentMessage(assignment);
@@ -738,12 +749,102 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
         return true;
     }
 
-    private static PeerClusterChange AssignmentMessage(ClusterAssignment assignment) => new ()
+    private static PeerClusterChange AssignmentMessage(RoomRecoveryAssignment assignment) => new ()
     {
-        ClusterId = assignment.ClusterId,
-        Realm = assignment.Realm,
-        Session = assignment.Session,
+        ClusterId = assignment.CleanupOnly ? string.Empty : assignment.Assignment.ClusterId,
+        Realm = assignment.CleanupOnly ? string.Empty : assignment.Assignment.Realm,
+        Session = assignment.Assignment.Session,
+        RoomRecovery = RoomRecoveryLedger.Message(assignment),
     };
+
+    private bool IsCurrentRecovery(string wallet, RoomRecoveryAssignment assignment)
+    {
+        if (assignment.CleanupOnly)
+            return !identityBoard.TryGetPeerIndexByWallet(wallet, out _);
+
+        return assignment.Peer is { } peer && assignment.Identity is { } identity
+               && identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex current) && current == peer
+               && ReferenceEquals(identityBoard.GetIdentity(peer), identity);
+    }
+
+    internal bool TryAcceptCleanupConfirmation(string subject, ReadOnlySpan<byte> data)
+    {
+        if (data.Length is 0 or > 4096) return false;
+        string[] parts = subject.Split('.');
+        if (parts.Length != 3 || parts[0] != "peer" || parts[2] != "room_cleanup_completed"
+            || !IsAddress(parts[1])) return false;
+        try
+        {
+            RoomCleanupCompleted completion = RoomCleanupCompleted.Parser.ParseFrom(data);
+            if (completion.Epoch.Length is 0 or > 64 || completion.Revision.Length is 0 or > 20) return false;
+            if (completion.ObservedReady)
+            {
+                if (completion.OperationId.Length != 0 || completion.ClusterId.Length != 0 || completion.RevokeBefore != 0)
+                    return false;
+            }
+            else if (completion.OperationId.Length is 0 or > 64 || completion.ClusterId.Length is 0 or > 256
+                     || completion.RevokeBefore == 0) return false;
+            return clusterBoard.RecoveryInbox.TryWrite(new RoomRecoveryConfirmation(parts[1].ToLowerInvariant(),
+                completion.Epoch, completion.Revision, completion.OperationId, completion.ClusterId, completion.RevokeBefore,
+                ObservedReady: completion.ObservedReady));
+        }
+        catch (InvalidProtocolBufferException) { return false; }
+    }
+
+    internal bool TryAcceptBootstrapConfirmation(ReadOnlySpan<byte> data)
+    {
+        if (data.Length is 0 or > 128) return false;
+        try
+        {
+            RoomRecoveryBootstrapCompleted completion = RoomRecoveryBootstrapCompleted.Parser.ParseFrom(data);
+            if (completion.Epoch.Length is 0 or > 64) return false;
+            return clusterBoard.RecoveryInbox.TryWrite(new RoomRecoveryConfirmation(string.Empty, completion.Epoch,
+                string.Empty, string.Empty, string.Empty, 0, Bootstrap: true));
+        }
+        catch (InvalidProtocolBufferException) { return false; }
+    }
+
+    private static bool IsAddress(string value)
+    {
+        if (value.Length != 42 || !value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (char character in value.AsSpan(2))
+            if (!char.IsAsciiHexDigit(character)) return false;
+        return true;
+    }
+
+    private async Task ReceiveRoomCleanupConfirmationsAsync(NatsConnection connection, CancellationTokenSource loops)
+    {
+        while (!loops.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (NatsMsg<byte[]> message in connection.SubscribeAsync<byte[]>(
+                                   "peer.*.room_cleanup_completed", cancellationToken: loops.Token))
+                    TryAcceptCleanupConfirmation(message.Subject, message.Data ?? []);
+            }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+            catch (Exception exception) { logger.LogWarning(exception, "Room cleanup confirmation subscription interrupted; retrying"); }
+            try { await Task.Delay(PIPELINE_REBUILD_BACKOFF, loops.Token); }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+        }
+    }
+
+    private async Task ReceiveBootstrapConfirmationsAsync(NatsConnection connection, CancellationTokenSource loops)
+    {
+        while (!loops.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (NatsMsg<byte[]> message in connection.SubscribeAsync<byte[]>(
+                                   "pulse.room_recovery.bootstrap_completed", cancellationToken: loops.Token))
+                    TryAcceptBootstrapConfirmation(message.Data ?? []);
+            }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+            catch (Exception exception) { logger.LogWarning(exception, "Room bootstrap confirmation subscription interrupted; retrying"); }
+            try { await Task.Delay(PIPELINE_REBUILD_BACKOFF, loops.Token); }
+            catch (OperationCanceledException) when (loops.IsCancellationRequested) { return; }
+        }
+    }
 
     private async Task RespondToAssignmentRequestsAsync(NatsConnection connection, CancellationTokenSource loops)
     {
@@ -781,10 +882,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
 
     /// <summary>
-    ///     Publishes every current assignment on <c>peer.{wallet}.cluster_snapshot</c> once per
-    ///     <see cref="NatsOptions.AssignmentRefreshIntervalMs" />, carrying its cluster, realm and session
-    ///     and no displaced-session fields. The session is the ephemeral address the request path is
-    ///     keyed by — the value every <c>cluster_change</c> already carries, not a credential.
+    ///     Publishes complete room plans, including pending and completed cleanup-only records, on
+    ///     <c>peer.{wallet}.cluster_snapshot</c> once per <see cref="NatsOptions.AssignmentRefreshIntervalMs" />.
+    ///     Hints do not carry legacy displacement fields and require a fresh lookup before any action.
     /// </summary>
     private async Task PublishAssignmentRefreshesAsync(NatsConnection connection, CancellationTokenSource loops)
     {
@@ -795,8 +895,9 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
             while (await timer.WaitForNextTickAsync(loops.Token))
             {
                 // Keys are lower-cased wallets, so the subject needs no normalisation here.
-                foreach ((string wallet, ClusterAssignment assignment) in clusterBoard.Assignments)
+                foreach ((string wallet, RoomRecoveryAssignment assignment) in clusterBoard.RoomRecoveryAssignments)
                 {
+                    if (!IsCurrentRecovery(wallet, assignment)) continue;
                     try
                     {
                         await connection.PublishAsync($"peer.{wallet}.cluster_snapshot",

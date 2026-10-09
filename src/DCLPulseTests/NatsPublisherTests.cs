@@ -782,6 +782,29 @@ public class NatsPublisherTests
     }
 
     [Test]
+    public void RecycledChange_ClearsThePreviousWalletsRoomRecoveryPlan()
+    {
+        var board = new ClusterBoard();
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
+        {
+            ["0xwallet0"] = new("C1", "realm-a", "0xsession-a"),
+        });
+        using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, assignments: board);
+        publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xsession-a", null, null));
+        (string _, IMessage first) = DequeueNext(publisher);
+        Assert.That(((PeerClusterChange)first).RoomRecovery, Is.Not.Null);
+        publisher.Return(first);
+        publisher.PublishClusterChange("0xwallet1", "C2", "realm-b", new ClusterSession("0xsession-b", null, null));
+        (string _, IMessage second) = DequeueNext(publisher);
+        Assert.Multiple(() =>
+        {
+            Assert.That(second, Is.SameAs(first));
+            Assert.That(((PeerClusterChange)second).RoomRecovery, Is.Null);
+        });
+        publisher.Return(second);
+    }
+
+    [Test]
     public void SupersededTopology_ReturnsTheReplacedInstance()
     {
         NatsPublisher publisher = CreatePublisher(url: BROKER_URL);
@@ -1096,7 +1119,7 @@ public class NatsPublisherTests
     public async Task FailedRecoveryHint_CountsAsPublishFailedAndNotAsDropped()
     {
         var assignments = new ClusterBoard();
-        assignments.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        assignments.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             ["0x1111111111111111111111111111111111111111"] = new("C1", REALM, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         });
@@ -1177,12 +1200,13 @@ public class NatsPublisherTests
             MaxAssignmentRequestsPerSecond = maxAssignmentRequestsPerSecond,
         });
 
+        ClusterBoard board = assignments ?? new ClusterBoard();
         return new NatsPublisher(
             logger ?? NullLogger<NatsPublisher>.Instance,
             NullLoggerFactory.Instance,
             options,
             snapshotBoard,
-            assignments ?? new ClusterBoard());
+            board, TestRoomRecovery.Identities(board));
     }
 
     /// <summary>

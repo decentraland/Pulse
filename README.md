@@ -83,11 +83,9 @@ pwsh tools/fetch-rust-eth.ps1       # Windows PowerShell
 
 ## Transport
 
-Pulse uses ENet over UDP. A couple of non-obvious behaviors worth knowing before reading or changing server code:
-
-- **`PeerIndex` is a recycled slot, not an identity.** It wraps `ENetPeer.ID`, which ENet reassigns to the next connecting peer as soon as the previous one is freed. The stable identity is the wallet address from the auth handshake — resolve it through `IdentityBoard` rather than treating `PeerIndex` as the player.
-- **Any per-observer state keyed by `PeerIndex` must be invalidated on disconnect.** If a view, cache, or baseline keyed by `PeerIndex` outlives the peer, the next peer that lands on that slot will silently inherit the stale state — no `PlayerJoined` for the new player, wrong wallet cached on clients, deltas diffed against the old baseline.
-- **Channel convention is enforced by packet flags, not by ENet.** Ch0 is reliable control flow (snapshots, events, resyncs); ch1 is unreliable sequenced (high-frequency state updates, input).
+Pulse uses ENet over UDP and WebTransport with a shared peer allocator. `PeerIndex` is a
+recycled server slot; use identity registrations to fence connection lifetimes. See
+[architecture](docs/ai-agent-context.md) for transport, lifecycle and synchronization rules.
 
 ### Capacity tuning
 
@@ -158,8 +156,8 @@ The test client stays a client — it holds no broker connection and never publi
 
 See [docs/e2e-livekit.md](docs/e2e-livekit.md) for prerequisites, the bridge modes, and how to read a failure.
 
-See [cluster assignment recovery](docs/cluster-assignment-recovery.md) for the NATS lookup and
-periodic recovery contract, deployment order, and broker-test setup.
+See [cluster assignment recovery](docs/cluster-assignment-recovery.md) for the NATS lookup,
+Pulse-owned room admission, required restart bootstrap, and broker-test setup.
 
 ### What the bot does
 

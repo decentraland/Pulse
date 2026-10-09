@@ -1,444 +1,63 @@
-# MMO Networking Stack — Architecture Context
+# Pulse agent instructions
 
-## Project Overview
+Pulse is a .NET 10 Generic Host for avatar synchronization and realm-scoped clustering. It relays validated client state; scene simulation and LiveKit token issuance belong to other services.
 
-Building a high-performance MMO-like multiplayer networking stack. Client is Unity (C#), server is .NET Generic Host. This project is server. Protocol is open — other client technologies must be able to implement it. Infrastructure is AWS.
+## Read by task
 
----
+| Before changing | Read |
+| --- | --- |
+| Authentication, peer lifecycle, synchronization or scene listeners | [Architecture](docs/ai-agent-context.md) |
+| Interest eligibility, sequence resolution, eviction or deduplication | [Interest snapshot consistency](docs/interest-snapshot-consistency.md) |
+| Cluster topology, sticky IDs, debounce or feed delivery | [Clustering](docs/clustering-on-aoi.md) |
+| Assignment lookup, recovery hints, takeover recovery or deployment overlap | [Assignment recovery](docs/cluster-assignment-recovery.md) |
+| NATS request/reply, broker permissions or delivery guarantees | [NATS use](docs/nats-usage.md) |
+| Admission, validation, rate limits, bans or client rejection handling | [Hardening](docs/hardening.md) |
+| Dynamic IP limits or Unleash configuration | [Feature flags](docs/feature-flags.md) |
+| Metrics or dashboard panels | [Metrics](docs/metrics.md) and the dashboard rule below |
+| Builds, native dependencies, bots or deployment | [README](README.md); [LiveKit harness](docs/e2e-livekit.md), [debugging](docs/debugging.md) or [deploy canvas](docs/slack-canvas.md) as needed |
 
-## Transport Layer
+## Ownership and design
 
-**ENet** over UDP.
+- Workers own `peerStates` and `observerViews`, sharded by `PeerIndex.Value % workerCount`. Route cross-worker decisions through `MessagePipe.incomingChannel` -> `PeersManager` -> the owning worker's channel. Shared transport/allocator coordination stays at that layer; peer rekeying or direct worker-state migration is unsupported.
+- Fence slot-based state with `IdentityRegistration`; wallet and sequence equality cannot detect a same-wallet, same-session reconnect. Include recycled-slot cases in lifecycle tests.
+- Handlers publish through `PeerSnapshotPublisher`, which owns sequence numbering, decoding, ledger stamping and spatial-index updates. Extend the `PeerSnapshot` ledger for worker-written shared state; a separate board must justify a different lifecycle or read pattern.
+- Add abstractions for reuse, polymorphism or a test seam. Merge components that have one consumer and no independent behavior. Pass dependencies as objects rather than per-field delegates; use existing snapshot and quantization primitives.
+- Keep `PeerSimulation` orchestration as named private calls, with each new behavior in a focused method.
+- Give retries, resyncs and sweeps a bounded termination condition. Components consume injected dependencies; composition stays in `Program.cs`.
 
-Channel semantics are enforced by convention, not by ENet itself — packet flags determine behavior per send call:
-- `ENET_PACKET_FLAG_RELIABLE` — reliable ordered (ch0)
-- `0` (no flags) — unreliable sequenced (ch1), stale packets silently dropped by ENet
-- `ENET_PACKET_FLAG_UNSEQUENCED` — unreliable unordered
+## Code and tests
 
-**Channel conventions:**
-- ch0: reliable control flow (snapshots, events, resyncs)
-- ch1: unreliable sequenced (high-frequency state updates, input)
+Use `DCLPulse.sln.DotSettings` and nearby files for style. Prefer primary constructors for trivial DI, file-scoped namespaces and `var` when the type is clear. Tests use NUnit and NSubstitute, fixtures named `{Feature}Tests`, and behavior-named methods with arrange/act/assert structure.
 
-### PeerIndex is ENet's recycled slot ID — not a stable identity
+- **Hot paths:** per-tick fan-out and per-packet parsing/serialization stay allocation-free. Use loops, spans and reusable buffers; avoid LINQ, boxing, captures and string building. Mark hot lambdas/local functions `static`. Keep debug-only work behind `#if DEBUG` or a config-gated cold path. Pair every rent with release and dispose owned resources.
+- **Async:** suffix awaitables `Async`; dispose owned cancellation sources. Background/channel loops handle cancellation as shutdown and log other failures. Use cancellation checks in hot loops; throw in awaited flows that handle them.
+- **Nullability:** express absence as `T?` and trust non-null annotations. Fix warnings at their source; null-forgiving `!` is allowed only on NSubstitute proxies in tests. Keep NRT enabled.
+- **Comments:** document public types and non-obvious public members. State what the annotated code guarantees, with sentence case and a period. Omit line numbers, commented-out code and block comments.
+- **Ordering:** enums/delegates -> fields -> properties -> events -> methods -> nested types; within groups, public -> internal -> protected -> private. Fields: constants/static readonly -> static -> readonly -> public -> private. Methods: constructor -> Dispose -> public API -> helpers after their callers.
 
-`PeerIndex` wraps `ENetPeer.ID`, which is an index into the host's fixed-size peer table. **ENet reuses the slot** as soon as a previous peer is freed, so the same `PeerIndex` value can refer to a different wallet across connect/disconnect cycles. The stable identity is the wallet address resolved during the auth handshake (`IdentityBoard.GetWalletIdByPeerIndex`).
+## Verification
 
-**Implications for server code:**
-- Never treat `PeerIndex` as the player identity — always dereference through `IdentityBoard` or carry the `UserId` explicitly in protocol messages.
-- Any observer-side state keyed by `PeerIndex` (per-observer views, caches, baselines) must be invalidated synchronously when the underlying peer disconnects, or it will collide with the next peer that lands on that slot.
-- Peer-lifecycle messages (`PlayerJoined`, `PlayerLeft`) are correctness-critical: a missed `PlayerLeft` lets the client keep a stale wallet associated with a slot and apply subsequent deltas against the wrong player.
-- When writing tests that simulate reconnects, remember that ENet would reuse the slot — test the reused-ID path explicitly, not only the fresh-ID path.
+Use the host's installed .NET 10 SDK and pass the solution explicitly:
 
----
-
-## Authorization
-
-**Decentraland ECDSA authentication chain**, validated entirely locally on the game server. No network call per connection.
-
-### Identity Model
-
-The client holds an `AuthIdentity` established during a prior browser-based login session:
-
-```
-AuthChain = [
-  { type: SIGNER,          payload: "0xWALLET_ADDRESS", signature: "" },
-  { type: ECDSA_EPHEMERAL, payload: "Decentraland Login\nEphemeral address: 0xEPH\nExpiration: <ISO8601>", signature: <walletSig> }
-]
-ephemeralIdentity = { address, privateKey, publicKey }
+```sh
+dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false
+dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false
 ```
 
-The wallet signs the ephemeral key once. The ephemeral key signs all subsequent game server connections without further wallet interaction.
+Keep `GenerateProto=false` unless regeneration is requested. Schema sources live in the sibling protocol repository; generated C# is committed here. Native-package restore and version pinning are documented in the README.
 
-### Handshake Packet
+Benchmarks belong in `src/DCLPulseBenchmarks`. Run Release builds and select suites through `BenchmarkSwitcher`, rather than editing `Program.cs`. Record reproducible measurements and rejected optimizations in the benchmark documentation.
 
-Sent on **channel 0 (reliable)** immediately after ENet transport connect:
+Changes to the restore/build pipeline, package references or `packages/` ignore rules require building all three images; selective pre-restore COPY lists must include new inputs:
 
-```
-{ authChain, timestamp, connectSig }
-```
-
-`connectSig` = `ECDSA_sign("connect:/server-id:TIMESTAMP:{}", ephPrivKey)`
-
-### Server-Side Validation (local, no network call)
-
-1. `chain[0].type == SIGNER`, `chain[0].signature == ""`  →  extract `walletAddr`
-2. `chain[1].type == ECDSA_EPHEMERAL`  →  parse `ephAddr` + `expiration`; recover signer from `(payload, sig)` must equal `walletAddr`; check `expiration > now`
-3. Recover signer from `(connectPayload, connectSig)` must equal `ephAddr`
-4. `|now − timestamp| < 60s`  →  anti-replay
-5. `server_id` in connect payload matches this instance  →  prevents cross-server token reuse
-
-`player_id = chain[0].payload` (Ethereum wallet address, globally unique, no registration needed)
-
-### Initial-State Seed
-
-`HandshakeRequest.PlayerInitialState` is **the state the client authenticates with** — not a server-side fallback. It's optional: the legacy connect flow omits it and sets realm via a follow-up `TeleportRequest`; the reconnect/recovery flow includes it so AoI can place the peer immediately without waiting for a teleport round-trip. The handshake handler validates it via `FieldValidator.ValidateHandshakeInitialState` **before** transitioning to `AUTHENTICATED`; a malformed seed disconnects the peer with `INVALID_HANDSHAKE_FIELD` rather than letting half-validated state into the snapshot ring.
-
-When `InitialState` *is* sent, its `realm` must be non-empty and within `MaxRealmLength` — same rules as `TeleportRequest.realm`. It's stamped onto the seed snapshot directly so AoI can place the peer immediately on reconnect; without it the seeded peer would have `Realm = null` and be invisible to every observer until the next `TeleportRequest`.
-
-If `InitialState.emote_id` is set the seeded snapshot also carries an `EmoteState` with `start_tick = now − emote_start_offset_ms` (underflow-clamped) so the next `EmoteStarted` broadcast scrubs the animation forward by the elapsed-since-real-start delta.
-
-### Peer State Machine
-
-```
-PENDING_AUTH → AUTHENTICATED → DISCONNECTING → [removed]
+```sh
+docker build -f src/DCLPulse/Dockerfile -t pulse-prod-test .
+docker build -f src/DCLPulse/Dockerfile.dev-debug -t pulse-dev-debug-test .
+docker build -f Dockerfile.debug -t pulse-debug-test .
 ```
 
-- States live in `PeerConnectionState` (`src/DCLPulse/Peers/PeerConnectionState.cs`); `NONE` is the enum default, never assigned.
-- Server-initiated disconnects (handshake reject, `PeerDefense` kick) pass through `PENDING_DISCONNECT` first — `transport.Disconnect` called but ENet's disconnect event not yet emitted; inbound packets from the peer are skipped in that window — then `DISCONNECTING` when the event lands.
-- `PENDING_AUTH` deadline: **30 seconds**. Non-HANDSHAKE packets silently dropped.
-- Validation failure: send `HANDSHAKE_REJECT { reason }`, call `enet_peer_disconnect_later` (flushes reject before drop).
-- Deadline exceeded: `enet_peer_disconnect` immediately, no message.
-- Duplicate `player_id`: evict existing session, accept new one (avoids ghost connections).
-- No game logic executes before `AUTHENTICATED`.
+## Dashboard completion
 
----
+An added, renamed or relabelled exported series is complete when the `dashboard-curator` agent (`.claude/agents/dashboard-curator.md`) has updated the panels and `python scripts/dashboard-lint.py` reports zero errors. Use that agent for dashboard reviews and consolidation too.
 
-## Serialization
-
-**Custom protoc plugin** (`protoc-gen-bitwise`) generating quantized-accessor partials from `.proto` files.
-
-`.proto` is the single source of truth (hosted in the sibling `@dcl/protocol` repo). Custom `QuantizedFloatOptions` field extension annotates fields with `bits`, `min`, `max`. Quantized values live in plain `uint32` proto fields — ordinary protobuf varints on the wire, not a hand-rolled bit stream. The plugin generates partial classes (`*.Bitwise.cs`) with float `{Field}Quantized` accessors backed by the static `Quantize` helpers (`src/Protocol/Generated/Quantize.cs`):
-
-```
-encoded = round((clamp(value, min, max) - min) / (max - min) * (2^bits - 1))
-decoded = (encoded / (2^bits - 1)) * (max - min) + min
-```
-
-Velocity-style fields use the power-law variant (`Quantize.EncodePower` / `DecodePower`), which concentrates resolution near zero. Each accessor comes with a `{Field}QuantizedStep` constant — the coarsest grid step, safe as an equality tolerance.
-
-Standard protobuf `optional` fields provide per-field presence natively — unchanged fields are simply omitted from deltas; no custom field mask is generated.
-
----
-
-## State Synchronization Model
-
-**Sliding window / time-based assumption.** The server does not track per-observer confirmed baselines (no ring buffer, no ACK tracking for unreliable channel). The server diffs `current` vs `last_sent_snapshot` per observer and sends the result. If the client can't apply a delta it sends `RESYNC_REQUEST`.
-
-**No proactive STATE_FULL mid-session.** The client drives resync, the server never anticipates it.
-
-**Snapshot History.** The server keeps a small rolling history of snapshots per subject (`SnapshotBoard` ring buffer). Each snapshot carries positional/animation state plus nullable ledger columns (`EmoteState`, `Realm`, …) that `Publish` carries forward from the previous slot when the incoming snapshot leaves them null — so the latest ring entry is always self-sufficient, regardless of ring depth.
-
-**Prefer extending the `SnapshotBoard` ledger over introducing parallel per-peer boards.** When adding new per-peer state that's mutated by the owning worker and read by other workers (AoI, simulation), the default is a new nullable field on `PeerSnapshot` with carry-forward in `Publish` — same pattern as `EmoteState` and `Realm`. A separate board is only justified when the data has a fundamentally different lifecycle (e.g. set once at auth and never mutated, like `IdentityBoard`) or a radically different read pattern. Don't spin up a fresh shared board just because the data is "new"; one ring seqlock + one inheritance line in `Publish` is cheaper to reason about than N parallel stores that all have to agree on lifetime and recycling.
-
-**Intermediate snapshot scanning.** Between two simulation ticks, multiple snapshots may be published (movement, teleports, emote starts/stops). The simulation scans all intermediates from `lastSentSeq+1` to `latestSeq`, collecting the **last** of each discrete event type (teleport, emote start, emote stop). Earlier events of the same type are superseded. An emote that started and stopped in the same batch is invisible to the observer.
-
-**Resync.** Default: always responds with `STATE_FULL`. When `Peers.ResyncWithDelta` is enabled, the server first attempts a targeted delta from the client's `knownSeq` baseline (if still in the ring), falling back to `STATE_FULL` when evicted. Configurable via `appsettings.json`, Docker env var (`Peers__ResyncWithDelta`), or GitHub manual deploy input.
-
-**Interest management** on the server limits which players receive updates about which other players. Per-observer fan-out is the primary bandwidth concern.
-
-**AoI consistency:** Before changing interest entries, snapshot resolution or eviction fallback, or collector deduplication, read [docs/interest-snapshot-consistency.md](docs/interest-snapshot-consistency.md) for the contract, overwrite mechanism, and measured tradeoffs.
-
----
-
-## Message Architecture
-
-### Client → Server
-
-**MovementInput** (ch1, unreliable sequenced, variable while moving, 0hz while emoting)
-- Full continuous state every packet: position, velocity, rotation, blend values, head IK
-- Boolean state flags packed as u16 bitmask (grounded, jumping, falling, stunned, etc.)
-- No piggybacked ACKs (sliding window means no ACK tracking needed)
-- Quantized floats throughout
-- Tiered quantization based on interest management
-
-**EMOTE_START** (ch0, reliable)
-- Emote string ID, optional duration_ms, and full PlayerState
-- Server publishes a snapshot with `EmoteState` (emote ID, start tick, duration) — no separate emote board
-- Client stops sending MovementInput while emoting
-
-**EMOTE_STOP** (ch0, reliable)
-- Looping emotes only; one-shots expire via server-side time check against `EmoteState.DurationMs`
-- Server publishes a stop snapshot (EmoteId=null, StopReason=Cancelled) preserving the subject's position
-
-**TELEPORT_REQUEST** (ch0, reliable)
-- Client-initiated teleport (e.g. triggered by game logic)
-- Server validates and publishes a teleport snapshot; observer delivery follows the TELEPORT lifecycle contract below
-
-**RESYNC_REQUEST** (ch0, reliable)
-- Sent when a received STATE_DELTA can't be applied (gap in seq)
-- Server responds with STATE_FULL (or targeted delta when `Peers.ResyncWithDelta` is enabled)
-
-**SCENE_LISTENER_HANDSHAKE** (ch0, reliable)
-- Alternative to `HANDSHAKE`: same Decentraland ECDSA auth chain, plus an area of interest announced at connect as `repeated SceneListenerAoi` — one entry per realm, each with a non-empty `realm` (same rules as `TeleportRequest.realm`) and its inclusive parcel-coordinate rects (`repeated ParcelRect`, a single parcel is `min == max`). The server validates and expands each realm's rects to its own parcel set. `SceneListener:MaxParcels` (default 4096) is **one cumulative budget over realms and parcels alike** — Σ over realms of (a fixed per-realm charge + Σ nominal rect areas) — so extra realms buy no extra area and extra area buys no extra realms; over budget is rejected, never clamped. **A peer whose source IP is in `Transport:Hardening:IpLimiter:Whitelist` is exempt from the budget entirely** — not raised, not clamped, simply not applied, in both dimensions; every other rule (realm length, one entry per realm, rect well-formedness and bounds) still holds. A realm may appear once
-- **Per realm, not per connection**, because parcels only mean anything within a realm: every world numbers its parcels from 0,0, so an authoritative server cohosting scenes from several worlds would otherwise need a connection per world — which the wallet-unique session rule and the per-IP listener cap both forbid
-- Authenticates a **receive-only listener**: it never becomes a subject (no snapshot/grid registration, so players can never see it) and observes only players standing in an announced parcel *of the realm that parcel was announced for*
-- Receives the positional and emote stream — `PlayerJoined`, `PlayerLeft`, `PlayerStateDelta`, `PlayerStateFull`, `Teleported`, `EmoteStarted`, `EmoteStopped`; profile-version messages are suppressed for listener observers. `PlayerJoined` and `Teleported` carry the subject's realm, which is what lets a multi-realm listener tell two identically-numbered parcels apart. Delivery in a different observed realm sends `PlayerLeft`, then `PlayerJoined` carrying the new realm when the accepted parcel is announced for it; the TELEPORT contract below also covers realm round trips
-- `RESYNC_REQUEST` and `SCENE_LISTENER_UPDATE` remain allowed; every other inbound message from a listener is silently dropped and counted
-
-**SCENE_LISTENER_UPDATE** (ch0, reliable)
-- Replaces a listener's announced AoI in place, on a live connection: same `repeated SceneListenerAoi` rules and the same cumulative `SceneListener:MaxParcels` budget — including the whitelisted-IP exemption, re-resolved against the live list on every update — no re-authentication. Realms absent from the update are no longer observed. Only valid from a peer that authenticated with `SCENE_LISTENER_HANDSHAKE`; from anyone else it is dropped
-- Rides the shared discrete-event token bucket (expansion is O(Σ rect area)); a malformed AoI disconnects with `INVALID_SCENE_LISTENER_FIELD` and never partially applies — the previous set stays in force until a valid update lands
-- Takes effect on the next simulation tick. Subjects that enter the new set are joined like any newly visible peer; subjects the listener has dropped stop being collected and their views age out through the ordinary stale-view sweep, exactly as for a player who walks out of range — so `PlayerLeft` for them trails the update by up to `VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL` ticks (≈4 s)
-
-### Server → Client
-
-**PLAYER_JOINED** (ch0, reliable, broadcast to interest set)
-- Sent when a subject first enters the observer's interest set
-- Carries `user_id`, `profile_version`, full `PlayerState`, and the subject's `realm` (its AoI partition)
-
-**STATE_FULL** (ch0, reliable)
-- Full snapshot of a subject's state
-- Sent on zone entry or in response to RESYNC_REQUEST
-
-**STATE_DELTA** (ch1, unreliable sequenced, per server tick)
-- Diff from last_sent_snapshot for each observer/subject pair
-- optional-field presence suppresses unchanged continuous fields
-- state_flags always present regardless of field presence
-- Quantized floats, same ranges as MovementInput
-
-**EMOTE_STARTED** (ch0, reliable, broadcast to interest set)
-- Emote string ID, sequence, server_tick, and full PlayerState
-- PlayerState sent reliably because no further position updates will arrive during the emote
-- Observers use server_tick to scrub animation forward by transit latency
-- Only the last emote start per batch is broadcast; earlier ones superseded by the latest
-
-**EMOTE_STOPPED** (ch0, reliable, broadcast to interest set)
-- Reason: completed (one-shot duration expired) or cancelled (client sent EMOTE_STOP)
-- Carries sequence and full PlayerState so the client can snap to the correct position on resume
-- Client resumes MovementInput only after receiving this (gates resume on server clock)
-
-**TELEPORT** (ch0, reliable, broadcast to interest set)
-- Server-authoritative teleport position with server_tick
-- Carries the subject's `realm`, always the realm recorded in the observer's view. A different accepted realm retires that view with PLAYER_LEFT before PLAYER_JOINED; subjects that leave interest age out through the stale-view sweep. An observer that changes realm itself retires and reseeds all its views
-- A subject's A→B→A round trip can retain its A view if it returns before the stale-view sweep retires it. A retained return teleport produces TELEPORT in A; if the teleport markers were overwritten, delivery can be a plain STATE_DELTA instead. See [interest snapshot consistency](docs/interest-snapshot-consistency.md) for the retention and fallback contract
-- Receiver clears interpolation buffer and snaps to position
-
----
-
-## Key Design Decisions & Rationale
-
-**No movement lock on server during emotes.** Client is responsible for not sending MovementInput while emoting. Server is a relay for emote events, not a movement authority.
-
-**No server-side scene simulation.** The server relays and validates client-reported positions. It cannot compute positions independently.
-
-**Client drives resync.** The server never proactively fires STATE_FULL when a baseline goes stale. The gap detection lives on the client (seq number check), which triggers RESYNC_REQUEST.
-
-**Unreliable input, not reliable.** Movement input on the unreliable channel avoids head-of-line blocking. A retransmitted stale position is worse than a skipped one. 3-tick redundancy recovers from loss without retransmission overhead.
-
-**state_flags always present in STATE_DELTA.** Boolean transitions (jump, land, fall) drive animation events. Missing one costs more than the 2 bytes it takes to always include the full state.
-
-**Teleport as a separate message, not an is_instant flag.** Teleports are discrete events, not a property of continuous movement. Keeping them as a dedicated reliable message guarantees the interpolation-skip instruction arrives before subsequent position updates.
-
-**server_tick is a single unified clock** across all messages (STATE_DELTA, EMOTE_STARTED, EMOTE_STOPPED, TELEPORT). Client uses it for animation scrubbing and dead reckoning. `peer->roundTripTime` (available on both client and server via ENet) provides latency without requiring client_tick fields in packets.
-
-**Emote state inlined into PeerSnapshot.** `EmoteState` (emote ID, start tick, duration, stop reason) is a nullable struct on `PeerSnapshot`, stored in the ring buffer alongside positional data. No separate emote board — the snapshot ring is the single source of truth. EmoteStartHandler writes emote metadata directly into the snapshot. EmoteStopHandler publishes a stop snapshot. One-shot emote expiry is computed lazily from the view's cached duration at observation time, not eagerly mutated.
-
-**Simulation loop: scan → broadcast → stop → delta.** Each tick, the simulation scans intermediate snapshots and collects the last teleport, emote start, and emote stop. Only the final event of each type is broadcast — intermediate positions or superseded emotes are discarded. An emote that started and stopped in the same batch is invisible to the observer. Discrete events (teleport, emote start) suppress the unreliable delta for that tick to prevent baseline races. Emote stop does not suppress delta — the client needs the position update on resume.
-
-**Protobuf `optional` fields carry delta presence.** The schema expresses intent with `optional`; standard protobuf field presence keeps unchanged fields off the wire. No plugin-generated mask is involved — the plugin only adds the quantized accessors and their step constants.
-
-**Snapshot publishing goes through `PeerSnapshotPublisher`.** Every handler that mutates peer state (`PlayerStateInputHandler`, `EmoteStartHandler`, `TeleportHandler`, the handshake initial-state seed) calls one of two methods on the publisher: `PublishFromPlayerState(from, state, EmoteInput?)` for `PlayerState`-shaped events, or `PublishTeleport(from, teleportRequest)` for teleports (reading the quantized position codes off the request). The publisher owns Seq numbering (`LastSeq + 1`), parcel→global decoding, head-IK lifting from `PlayerState`, the `SnapshotBoard.Publish` + `RealmSpatialGrids.Set` pair (and, on a realm-changing teleport, the `RealmSpatialGrids.Remove` that must precede the publish so the peer is never indexed in one realm under a snapshot naming another), and emote-ledger bookkeeping (`StartSeq` is stamped to the new snapshot's `Seq`, `StartTick` defaults to `ServerTick` when caller leaves it null). Don't reconstruct a `PeerSnapshot` inline in a handler — add it to the publisher.
-
-`EmoteInput(EmoteId, DurationMs?, StartTick?)` is the caller-facing emote-start descriptor. Callers pass only what's semantically theirs (the emote identity, its duration, optionally a backdated start tick for reconnect resume); ledger fields like `StartSeq` are not part of the API. `EmoteStart` callers omit `StartTick` (defaults to "started right now"); the handshake reconnect path passes a backdated `StartTick` so observers scrub forward by the elapsed-since-real-start delta.
-
----
-
-## RTT
-
-ENet maintains `peer->roundTripTime` automatically on both client and server sides via the reliable channel ACK flow. No manual measurement needed. Client uses `peer->roundTripTime / 2` as one-way latency estimate for animation scrubbing on emote start.
-
----
-
-## Code Convention
-
-Authoritative source: `DCLPulse.sln.DotSettings` (Rider code style settings checked into the repo).
-
-Key rules:
-- **Instance fields:** camelCase, no prefix — `messagePipe`, `workerCount`
-- **Constants and static readonly fields:** UPPER_SNAKE_CASE — `SECTION_NAME`, `COUNT`, `RELIABLE`, `TIER_0`
-- **Types:** PascalCase — `PeersManager`, `ENetChannel`
-- **Local variables and parameters:** camelCase — `peerIndex`, `stoppingToken`
-- **Primary constructors** for DI when constructor body is trivial; regular constructors when initialization is complex
-- **File-scoped namespaces** — `namespace Pulse.X;`
-- **`var`** when type is clear from context
-
-When in doubt, check 1–2 nearby files in the same directory.
-
-## Tests Approach
-
-- Use NSubstitute instead of Fake/Null implementations
-- Don't mention line numbers in comments as they can change any time
-- Name fixtures `{Feature}Tests`; name methods for the behavior under test (`Method_Condition_Expectation`, or a `Should…`/`When…` phrase) with a clear arrange/act/assert structure. High coverage for new code.
-
-## Code Design Rules
-
-Inherited from `decentraland/unity-explorer`'s code standards and adapted for this server. The Unity/ECS-specific rules there (`BaseUnityLoopSystem`, `World.Query`, `AssetPromise`, MVC/presenters, `ObjectProxy`, `#if UNITY_EDITOR`, `ReportHub`) **do not apply** here — this is a .NET Generic Host, not Unity. Naming lives in **Code Convention** above; the rules below cover design discipline, memory, async, nullability, comments, and member ordering.
-
-**Hot path** here means the per-tick simulation fan-out (`PeerSimulation`) and per-packet parse/serialize (`MessagePipe`, the generated bit-packed serializers, `BitWriter`/`BitReader`). "Cold path" = startup, DI composition, config, metrics console.
-
-### Design discipline — don't add structure until it pays for itself
-
-Splits, interfaces, and indirections must buy polymorphism, reuse, or a test seam — not exist "for SRP" alone. These are the smells reviewers most often flag in AI-authored code:
-
-- **No bridge/wrapper on the same abstraction layer.** If class `B` exists only to forward to `A` — one caller, no polymorphism, no test seam — inline it. A one-use helper is not a helper.
-- **Pass the object, not per-field delegates.** Don't pass `Func<Config>` or wrap each property in its own `Func<T>`; pass the object. To capture one changing value, store it as a field on the consumer, not a closure threaded through constructors.
-- **Merge over extract.** If `X` does nothing useful without `Y` and has no second consumer, merge them.
-- **One-implementation interfaces only when justified.** Keep an interface only if it buys polymorphism *or* a mock/test seam. NSubstitute mocking counts: `ITransport`, `IPeerIndexAllocator`, `IAreaOfInterest`, `IPeerSimulation` earn their interfaces as DI + test seams. An interface with a single impl that is never mocked and will never have a second impl is dead weight — delete it; the concrete class is the contract.
-- **Trust non-null annotations.** If a declared type is `T` (not `T?`), don't null-check it — a redundant guard lies to the reader about what can happen. If a value can be null, type it `T?`; if it can't, delete the guard.
-- **No debug/mock branches on the hot path.** A runtime `bool` like `DebugRandomize…` still executes every call in Release. Guard debug-only logic behind `#if DEBUG` or a config-gated cold path, never a bare runtime flag on the per-tick/per-packet path.
-- **Retry / resync / sweep loops need a termination predicate.** A loop that re-queues unresolved work spins forever when the source stays empty. Always have a give-up condition (max attempts, a sentinel, a timeout, or a single bounded pass).
-- **Reuse existing primitives.** Before hand-rolling, reach for the existing mechanism: snapshot/state bookkeeping → `SnapshotBoard` + `PeerSnapshotPublisher`; bit packing/quantization → `BitWriter`/`BitReader`; new per-peer shared state → a nullable `PeerSnapshot` ledger column with carry-forward, **not** a new parallel board (see the SnapshotBoard-ledger rule above).
-- **Don't invert the dependency graph.** The Generic Host composition root (`Program.cs`) constructs services top-down; a component reads its injected dependencies and never reaches back to mutate the container or another worker's state. This is the same principle as **Worker-shard isolation** below — cross-worker coordination goes only through the incoming-event pipeline.
-
-### Memory & GC (hot path)
-
-- The per-tick / per-packet path must be **allocation-free**. Backlog is an observable signal, not licence to allocate.
-- **No LINQ on the hot path** (`.Select`/`.Where`/`.Any`/`ToList`/`ToArray` allocate iterators and closures) — write loops. LINQ is tolerated only in cold paths.
-- Prefer `IReadOnlyList<T>` / `IReadOnlyCollection<T>` in signatures over `List<T>`/arrays; avoid `ToList()`/`ToArray()`.
-- Use `Span<T>` / `ReadOnlySpan<T>` / `stackalloc` for slices; avoid intermediate copies.
-- Avoid boxing — don't pass a `struct` as `object` or box it into an interface on the hot path. `PeerIndex`, `PeerSnapshot`, `EmoteState`, framing structs stay value types passed by value or `in`/`ref`.
-- `StringBuilder` (or interpolation, off the hot path) for concatenation; no per-tick string building.
-- Mark hot lambdas / local functions `static` to prevent accidental captures.
-- Pooling: every rent has a matching release in the same lifecycle scope (`using`/`finally`/`Dispose`). Dropping a rented buffer is a silent leak. Honor `IDisposable` (`using` or explicit `Dispose()`).
-
-### Async & cancellation
-
-- Detached / background loops (`BackgroundService.ExecuteAsync`, channel drains, `Task.Run`) must not let exceptions escape silently: catch, treat `OperationCanceledException` as normal shutdown, and log the rest via the injected `ILogger`.
-- In hot loops prefer the cheap `ct.IsCancellationRequested` check over `ThrowIfCancellationRequested()`; reserve throwing for awaited flows that already handle exceptions.
-- Suffix awaitable methods `…Async`. Dispose every `CancellationTokenSource` you own.
-
-### Nullable reference types
-
-NRT is `enable`d in every project. Type nullable params/returns/fields as `T?`. Never use the null-forgiving `!` to silence a warning — fix the root cause; the only acceptable `!` is on an NSubstitute proxy in tests. Never add `#nullable disable`.
-
-### Comments
-
-- XML `/// <summary>` on public types and non-obvious public members.
-- A comment states only what the annotated code itself does or guarantees — **never what a caller or another layer will do with the result.** External behavior can change without this code changing, silently turning the comment into a lie.
-- Sentence case, end with a period. No commented-out code. No `/* */` block comments.
-
-### Member ordering
-
-Within a type: enums/delegates → fields → properties → events → methods → nested types. Within each group, order by visibility public → internal → protected → private. Fields: `const`/`static readonly` → `static` → `readonly` → public → private. Methods: constructor → `Dispose` → public API → private helpers, each private helper placed **after** the method that calls it.
-
-## Worker-shard isolation rule
-
-`PeersManager` shards peers across workers by `PeerIndex.Value % workerCount`. Every worker owns its own `peerStates` dict and its own `observerViews`; the owning worker is the **only** thread that reads or writes those structures. Cross-worker state migration and direct-message-passing between workers are not supported and must not be introduced — ad-hoc handshake/reclamation schemes that try to move a peer's state from one worker's dict to another's race the owning worker's simulation loop (DISCONNECTING cleanup, sweep, message drain) and silently destroy live state.
-
-All cross-worker coordination goes through the one existing channel: the ENet thread writes `MessagePipe.incomingChannel` (lifecycle + data events), the `PeersManager` router fans those out to `workerChannels[shard]`, and each worker processes its own channel sequentially. If a feature seems to need cross-worker orchestration, the right fix is to either keep the coordination at the transport/allocator layer (which is already shared) or route decisions through the incoming-event pipeline so they land on the target worker in order.
-
-Concrete consequences:
-- Same-wallet reconnect always gets a **fresh** server-allocated `PeerIndex` today. We do not rekey the transport to reuse the prior `PeerIndex` — doing so would require cross-worker rekey, which this rule forbids.
-- Observer-facing effect without rekey: after a same-wallet reconnect, observers briefly hold two views for the same wallet — the stale `PeerIndex` (awaiting the next `SweepStaleViews` pass, up to ~(`VIEW_STALE_TICKS` + `SWEEP_CHECK_INTERVAL`) × `BaseTickMs` ≈ 4 s) and the fresh `PeerIndex` for the new session. Clients that key avatars by wallet overwrite transparently; clients that key by `subject_id` see a short-lived duplicate until the `PlayerLeft` from the sweep arrives. No state corruption — only a visual blemish on the reconnect path.
-- Different-wallet on a recycled ENet slot: the allocator's pending-recycle already prevents the server from issuing the same `PeerIndex` to a different wallet within the grace window, so this case does not produce aliased observer views; the original bug is fixed.
-
-## PeerSimulation — method decoupling
-
-`PeerSimulation` is on the hot path and already long. New logic added to it must go into its own private method — do not inline new behavior into existing methods. Keep each method focused on a single concern (e.g. tier gating, delta computation, aliasing detection, profile announcement). The orchestrator `ProcessVisibleSubjects` should read as a short sequence of named calls, not a wall of conditionals. This keeps the per-subject control flow legible and makes it possible to test or reason about each concern in isolation.
-
-## Hardening & Runtime Configuration
-
-Network-level defenses live in `src/DCLPulse/Transport/Hardening/` and `src/DCLPulse/Messaging/Hardening/`, organized as one group per threat. [docs/hardening.md](docs/hardening.md) is the operator reference — threat model, config keys, `DisconnectReason` values, client-recovery contract and metrics for each group.
-
-Hardening knobs are boot-time `appsettings.json` values, with one exception: `Transport:Hardening:IpLimiter` is reconfigurable on a running server from the remote Unleash document. [docs/feature-flags.md](docs/feature-flags.md) covers that mechanism — the `pulse.json` endpoint, `dynamicconfig.json` as the offline defaults and type schema for the remote values, and the procedure for adding a dynamic knob (`IOptionsMonitor<T>`, never `IOptions<T>`).
-
-## Grafana Dashboard
-
-`pulse-server-dashboard.json` (repo root, **gitignored — never commit it**; the repository is public and the export carries deployment names) is the local copy of the Grafana **Pulse Server** dashboard export; Grafana imports it by `uid`, and the operator re-exports after UI edits. Any change that adds, renames or relabels an exported series — `PrometheusFormatter.cs`, `PulseMetrics.*.cs`, a feature with its own counters or histograms — is finished only when the `dashboard-curator` agent (`.claude/agents/dashboard-curator.md`) has added or updated the panels and `python scripts/dashboard-lint.py` reports zero errors. Dispatch the same agent to review a dashboard diff or to consolidate the dashboard; the mechanical rules live in the lint, the judgement rules and field notes in the agent file. This repository is public: a panel's internals — deployment names, hostnames, datasource ids — stay in the dashboard JSON and are never repeated in docs, PR text or reports.
-
----
-
-## Docker — Deployment & Debugging
-
-Three Dockerfiles:
-- `src/DCLPulse/Dockerfile` — production (Release, lean runtime image)
-- `src/DCLPulse/Dockerfile.dev-debug` — Fargate dev debug deploy (Debug build + vsdbg + sshd + RiderRemoteDebugger pre-installed)
-- `Dockerfile.debug` + `docker-compose.debug.yml` — local docker-compose debugging
-
-Deploy pipeline: `main` push builds `Dockerfile` → dev. Manual **Deploy Dev (Debug)** action builds `Dockerfile.dev-debug` → dev. Release tag builds `Dockerfile` → prod.
-
-Every deployment also updates the Pulse Slack channel canvas (per-environment "running" /
-"last deploy" lines, rendered statelessly from the GitHub Deployments API) via
-`.github/workflows/slack-canvas.yml`. Delivery is a webhook-triggered Slack Workflow
-Builder workflow — no Slack app; the canvas is CI-owned (replaced wholesale on every
-deploy). Setup and troubleshooting live in [docs/slack-canvas.md](docs/slack-canvas.md).
-
-For full debugging workflows (local + remote Fargate, Rider setup, logpoints, ports), see [docs/debugging.md](docs/debugging.md). Bastion/tunnel specifics are in the `decentraland/playbooks` repo (internal access only).
-
----
-
-## Files / Components Expected
-
-Proto sources live in the sibling `@dcl/protocol` repo (path resolved via `src/Protocol/Directory.Build.props`); only the generated C# under `src/Protocol/Generated/` is committed here.
-
-- `decentraland/common/options.proto` — defines `QuantizedFloatOptions`, `QuantizedPowerFloatOptions`, and `BitPackedOptions` as protobuf field extensions
-- `decentraland/pulse/pulse_client.proto` — client→server messages and the `ClientMessage` envelope
-- `decentraland/pulse/pulse_server.proto` — server→client messages, the `ServerMessage` envelope, and its only quantized message (`PlayerStateDeltaTier0`)
-- `decentraland/pulse/pulse_shared.proto` — types referenced by both directions (`PlayerState`, `GlideState`, `PlayerAnimationFlags`); imported by both client and server protos
-- `protoc-gen-bitwise` — Node/JS plugin in the protocol repo (wrappers in `tools/protoc-gen-bitwise/`), reads `CodeGeneratorRequest`, emits the `*.Bitwise.cs` quantized-accessor partials
-- `Quantize` (C#, `src/Protocol/Generated/Quantize.cs`) — static quantization helpers (`Encode` / `Decode`, power-law `EncodePower` / `DecodePower`) backing the generated `{Field}Quantized` accessors
-
-## MetaForge — Test Account & Identity Toolkit
-
-**Local copy:** sibling directory `../MetaForge` (same parent as this repo checkout)
-
-MetaForge is a CLI toolkit (.NET 10, self-contained binary) used by `DCLPulseTestClient` for test account management, identity creation, and profile deployment. It provides the Decentraland ECDSA auth chain that the test client needs to connect to the game server.
-
-### How DCLPulseTestClient uses MetaForge
-
-The test client shells out to the `metaforge` CLI via `MetaForge.RunCommandAsync()` (`src/DCLPulseTestClient/MetaForge.cs`). Three integration points:
-
-1. **Account creation:** `metaforge account create <name> --skip-update-check --skip-auto-login` — generates a BIP39 wallet, derives Ethereum address, deploys a default profile to Catalyst
-2. **Auth chain signing:** `metaforge account chain <name> --method connect --path / --metadata {} --json` — returns the 3-link auth chain (SIGNER → ECDSA_EPHEMERAL → ECDSA_SIGNED_ENTITY) that `MetaForgeAuthenticator` formats into `x-identity-auth-chain-{n}` headers for the handshake
-3. **Profile fetching:** `metaforge account info <name> --json` — returns profile metadata (eth address, version, emotes) that `MetaForgeProfileGateway` parses
-
-### Key MetaForge CLI commands
-
-```bash
-metaforge account create [name] [--skip-auto-login] [--env org|zone]
-metaforge account chain <name> --method <m> --path <p> --metadata <json> [--json]
-metaforge account info [name] [--json]
-metaforge account list
-metaforge account remove [name] [--all]
-metaforge account steal-identity <name> [--id <n>] [--env org|zone]
-metaforge explorer install|run|logs|prefs|backup|test [...]
-metaforge mob auth|update-addresses|run <world> [--log-events]
-metaforge launcher install|run|uninstall|log
-```
-
-### MetaForge project structure
-
-```
-MetaForge/
-├── MetaForgeCLI/              # Main CLI application
-│   ├── Auth/                  # Identity.cs, AuthChain.cs — wallet + ephemeral key delegation
-│   ├── Wallet/                # WalletService.cs — BIP39 HD wallet (m/44'/60'/0'/0/0)
-│   ├── Commands/              # Account/, Explorer/, Launcher/, Mob/ command groups
-│   ├── Services/              # CatalystService, SignedHttpClient, ExplorerVersionService, AltTesterService, etc.
-│   ├── Persistency/           # AccountStore.cs (JSON), MobConfigStore.cs (.env)
-│   └── Config/                # EnvironmentConfig.cs — org vs zone environment URLs
-└── MoB/                       # LiveKit bot controller (BotManager, LiveKitBot, LiveTui)
-```
-
-### Environments
-
-| Environment | Auth API | Catalyst |
-|---|---|---|
-| `org` (default) | `https://auth-api.decentraland.org` | `https://peer.decentraland.org` |
-| `zone` | `https://auth-api.decentraland.zone` | `https://peer.decentraland.zone` |
-
----
-
-## Build instructions
-
-- The project targets .NET 10. The SDK is installed at `~/.dotnet` (user-local). Always prefix all `dotnet` commands with the environment override — no probing needed:
-  ```bash
-  DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet build src/DCLPulse/DCLPulse.sln -p:GenerateProto=false
-  ```
-- The solution file is `src/DCLPulse/DCLPulse.sln` — always pass it explicitly since it's not in the repo root.
-- Use `-p:GenerateProto=false` unless the user explicitly asks to regenerate proto files.
-- To run tests: `DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false`
-- **Benchmarks** live in `src/DCLPulseBenchmarks` (BenchmarkDotNet). `Program.cs` uses `BenchmarkSwitcher`, so every `[Benchmark]` class in the assembly is selectable from the command line — never edit it to choose a suite. Always `-c Release`:
-  ```bash
-  dotnet run -c Release --project src/DCLPulseBenchmarks -p:GenerateProto=false -- --list flat
-  dotnet run -c Release --project src/DCLPulseBenchmarks -p:GenerateProto=false -- --filter '*ClusterTracker*'
-  ```
-  `DCLPulse.csproj` grants `InternalsVisibleTo` to the benchmarks project, so `internal` entry points (e.g. `ClusterTracker.RunPass`) are callable. Prefer adding a benchmark class here over a throwaway harness in the test project — a measurement nobody can re-run is a measurement nobody will trust. When a benchmark disproves an optimization, record that in the class docs so it is not retried blind (see `ClusterTrackerBenchmarks`).
-- `dotnet restore` auto-fetches `Decentraland.RustEthereum.<version>.nupkg` into the gitignored `packages/` local NuGet source via `src/Directory.Build.targets`. Bump `RustEthereumVersion` in `src/Directory.Build.props` and the next restore pulls the new version from the GitHub Release. The underlying script is `tools/fetch-rust-eth.{sh,ps1}`.
-- **If you touched anything in the restore/build pipeline** — csprojs (especially `<PackageReference>` or `<ProjectReference>`), `src/Directory.Build.{props,targets}`, `src/NuGet.config`, `tools/fetch-rust-eth.{sh,ps1}`, or the `.gitignore` rules around `packages/` — also build the Docker images to catch layered-COPY misses that `dotnet build` won't surface:
-  ```bash
-  docker build -f src/DCLPulse/Dockerfile          -t pulse-prod-test      .
-  docker build -f src/DCLPulse/Dockerfile.dev-debug -t pulse-dev-debug-test .
-  docker build -f Dockerfile.debug                 -t pulse-debug-test     .
-  ```
-  The prod and dev-debug Dockerfiles selectively COPY pre-restore files for layer caching, so a new file in the build pipeline must be added to those COPY lines explicitly. `Dockerfile.debug` does `COPY . .` and is usually safe.
+The local `pulse-server-dashboard.json` export stays gitignored and requires operator import into Grafana. Deployment names, hostnames and datasource IDs stay in that JSON; this public repository's docs, PR text and reports must omit them.

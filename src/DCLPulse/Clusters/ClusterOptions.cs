@@ -35,4 +35,10 @@ public sealed class ClusterOptions
     ///     holds. Zero disables the annotation.
     /// </summary>
     public int SessionRetentionPasses { get; set; } = 300;
+
+    /// <summary>Maximum retained room plans. Capacity exhaustion blocks new admission without evicting cleanup.</summary>
+    public int MaxRecoveryWallets { get; set; } = 8192;
+
+    /// <summary>Maximum unfinished rooms per wallet. Unrecorded transitions remain blocked until space is available.</summary>
+    public int MaxRecoveryRoomsPerWallet { get; set; } = 32;
 }

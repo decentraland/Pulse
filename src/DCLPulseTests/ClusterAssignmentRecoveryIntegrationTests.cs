@@ -1,14 +1,19 @@
 using Decentraland.Pulse;
+using Google.Protobuf;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NATS.Client.Core;
+using NSubstitute;
 using Pulse.Clusters;
+using Pulse.InterestManagement;
+using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 
 namespace DCLPulseTests;
 
@@ -53,7 +58,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
                 ServerName = "recovery-integration-" + wallet,
                 DiscoveryIntervalMs = 0,
                 AssignmentRefreshIntervalMs = 50,
-            }), new SnapshotBoard(10, 4), board);
+            }), new SnapshotBoard(10, 4), board, TestRoomRecovery.Identities(board));
         client = new NatsConnection(NatsOpts.Default with
         {
             Url = brokerUrl,
@@ -179,7 +184,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
         };
         if (otherHasDifferentSession)
             assignments[wallet] = new("wrong-room", "other-realm", OTHER_SESSION);
-        otherBoard.PublishAssignments(assignments);
+        otherBoard.PublishRecoveryAssignmentsForTest(assignments);
         using NatsPublisher other = CreateAdditionalPublisher(otherBoard);
         await other.StartAsync(deadline.Token);
         try
@@ -206,7 +211,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     {
         string probeWallet = RandomWallet();
         var otherBoard = new ClusterBoard();
-        void SetRealm(string realm) => otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        void SetRealm(string realm) => otherBoard.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [probeWallet] = new("probe", realm, SESSION),
         });
@@ -243,7 +248,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     {
         string probeWallet = RandomWallet();
         var otherBoard = new ClusterBoard();
-        void SetRoom(string room) => otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        void SetRoom(string room) => otherBoard.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [probeWallet] = new(room, "realm", SESSION),
         });
@@ -255,7 +260,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
                 Url = proxy.Url,
                 DiscoveryIntervalMs = 0,
                 AssignmentRefreshIntervalMs = 50,
-            }), new SnapshotBoard(10, 4), otherBoard);
+            }), new SnapshotBoard(10, 4), otherBoard, TestRoomRecovery.Identities(otherBoard));
         await using INatsSub<byte[]> hints = await client.SubscribeCoreAsync<byte[]>(
             $"peer.{probeWallet}.cluster_snapshot", cancellationToken: deadline.Token);
         await client.PingAsync(deadline.Token);
@@ -291,7 +296,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     [Test]
     public void Request_AfterPeerDeparture_TimesOutRatherThanReturningRetainedAssignment()
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>());
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>());
 
         Assert.ThrowsAsync<NatsNoReplyException>(async () => await RequestBytesAsync(SESSION));
     }
@@ -331,7 +336,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
     {
         string probeWallet = RandomWallet();
         var otherBoard = new ClusterBoard();
-        otherBoard.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        otherBoard.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [probeWallet] = new("probe", "realm", SESSION),
         });
@@ -363,9 +368,116 @@ public class ClusterAssignmentRecoveryIntegrationTests
         Assert.That(publisher.IsConnected, Is.False);
     }
 
+    [Test]
+    public async Task BackendConfirmations_ReleaseAdmissionOnlyAfterExactEpochBootstrapAndCleanup()
+    {
+        // This case exercises real-time retirement grace as well as the backend observation acknowledgement.
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        string probeWallet = RandomWallet();
+        var tracked = new ClusterBoard();
+        var identities = new IdentityBoard(4);
+        var snapshots = new SnapshotBoard(4, 4);
+        var grids = new RealmSpatialGrids(50, 4);
+        var peer = new PeerIndex(0);
+        identities.Set(peer, probeWallet, SESSION);
+        snapshots.SetActive(peer);
+        snapshots.Publish(peer, new PeerSnapshot { Realm = "realm", GlobalPosition = Vector3.Zero });
+        grids.Set(peer, "realm", Vector3.Zero);
+        using var tracker = new ClusterTracker(NullLogger<ClusterTracker>.Instance,
+            Options.Create(new ClusterOptions { Enabled = true }), Options.Create(new NatsOptions { Url = brokerUrl }),
+            grids, snapshots, identities, tracked, Substitute.For<IClusterFeedPublisher>(), 4);
+        tracker.RunPass();
+        using var producer = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
+            Options.Create(new NatsOptions { Url = brokerUrl, DiscoveryIntervalMs = 0, AssignmentRefreshIntervalMs = 0 }),
+            snapshots, tracked, identities);
+        await producer.StartAsync(deadline.Token);
+        try
+        {
+            PeerClusterChange initial = await WaitForAssignmentAsync(probeWallet, "the tracker-backed responder never became ready");
+            Assert.That(initial.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
+            Assert.That(initial.RoomRecovery.Operations, Is.Empty);
+            await client.PublishAsync("pulse.room_recovery.bootstrap_completed",
+                new RoomRecoveryBootstrapCompleted { Epoch = "obsolete" }.ToByteArray(), cancellationToken: deadline.Token);
+            await Task.Delay(20, deadline.Token);
+            tracker.RunPass();
+            Assert.That(tracked.RoomRecoveryStatus.BootstrapRequired, Is.True);
+            PeerClusterChange stillPending = await WaitForAssignmentAsync(probeWallet, "the initial plan disappeared");
+            Assert.That(stillPending.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
+            while (tracked.RoomRecoveryStatus.BootstrapRequired)
+            {
+                await client.PublishAsync("pulse.room_recovery.bootstrap_completed",
+                    new RoomRecoveryBootstrapCompleted { Epoch = initial.RoomRecovery.Epoch }.ToByteArray(), cancellationToken: deadline.Token);
+                await Task.Delay(10, deadline.Token);
+                tracker.RunPass();
+            }
+
+            PeerClusterChange ready = await WaitForAssignmentAsync(probeWallet, "the confirmed plan disappeared");
+            Assert.Multiple(() =>
+            {
+                Assert.That(ready.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Ready));
+                Assert.That(ready.RoomRecovery.TokenNotBefore, Is.Zero);
+                Assert.That(ready.RoomRecovery.Operations, Is.Empty);
+            });
+
+            grids.Remove(peer);
+            snapshots.ClearActive(peer);
+            identities.Remove(peer);
+            tracker.RunPass();
+            PeerClusterChange departed = await WaitForAssignmentAsync(probeWallet, "the cleanup-only plan disappeared");
+            Assert.Multiple(() =>
+            {
+                Assert.That(departed.ClusterId, Is.Empty);
+                Assert.That(departed.Realm, Is.Empty);
+                Assert.That(departed.Session, Is.EqualTo(SESSION));
+                Assert.That(departed.RoomRecovery.CleanupOnly, Is.True);
+                Assert.That(departed.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
+                Assert.That(departed.RoomRecovery.Operations[0].ClusterId, Is.EqualTo(initial.ClusterId));
+                Assert.That(departed.RoomRecovery.Operations[0].MinimumRevokeBefore, Is.GreaterThan(ready.RoomRecovery.TokenNotBefore));
+            });
+            RoomCleanupOperation operation = departed.RoomRecovery.Operations[0];
+            var completion = new RoomCleanupCompleted
+            {
+                Epoch = departed.RoomRecovery.Epoch,
+                Revision = departed.RoomRecovery.Revision,
+                OperationId = operation.OperationId,
+                ClusterId = operation.ClusterId,
+                RevokeBefore = operation.MinimumRevokeBefore,
+            };
+            while (tracked.RoomRecoveryStatus.PendingOperations != 0)
+            {
+                await client.PublishAsync($"peer.{probeWallet}.room_cleanup_completed", completion.ToByteArray(), cancellationToken: deadline.Token);
+                await Task.Delay(10, deadline.Token);
+                tracker.RunPass();
+            }
+
+            PeerClusterChange retired = await WaitForAssignmentAsync(probeWallet, "the completed tombstone disappeared before observation");
+            Assert.Multiple(() =>
+            {
+                Assert.That(retired.RoomRecovery.CleanupOnly, Is.True);
+                Assert.That(retired.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Ready));
+                Assert.That(retired.RoomRecovery.Operations, Is.Empty);
+                Assert.That(retired.RoomRecovery.TokenNotBefore, Is.EqualTo(completion.RevokeBefore));
+            });
+            while (tracked.RoomRecoveryStatus.RetainedWallets != 0)
+            {
+                await client.PublishAsync($"peer.{probeWallet}.room_cleanup_completed", new RoomCleanupCompleted
+                {
+                    Epoch = retired.RoomRecovery.Epoch,
+                    Revision = retired.RoomRecovery.Revision,
+                    ObservedReady = true,
+                }.ToByteArray(), cancellationToken: deadline.Token);
+                await Task.Delay(10, deadline.Token);
+                tracker.RunPass();
+            }
+            Assert.ThrowsAsync<NatsNoReplyException>(async () => await client.RequestAsync<byte[], byte[]>(
+                $"peer.{probeWallet}.cluster_assignment", Encoding.UTF8.GetBytes(SESSION), cancellationToken: deadline.Token));
+        }
+        finally { await producer.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
     private void PublishAssignment(string clusterId, string realm)
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [wallet] = new(clusterId, realm, SESSION),
         });
@@ -381,7 +493,7 @@ public class ClusterAssignmentRecoveryIntegrationTests
                 Url = brokerUrl,
                 DiscoveryIntervalMs = 0,
                 AssignmentRefreshIntervalMs = assignmentRefreshIntervalMs,
-            }), new SnapshotBoard(10, 4), assignments);
+            }), new SnapshotBoard(10, 4), assignments, TestRoomRecovery.Identities(assignments));
 
     private async Task<PeerClusterChange> WaitForAssignmentAsync(string targetWallet, string timeoutMessage)
     {

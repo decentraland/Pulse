@@ -69,6 +69,17 @@ public sealed class ClusterBoard
 {
     private ClusterPass current = ClusterPass.EMPTY;
     private IReadOnlyDictionary<string, ClusterAssignment> assignments = new Dictionary<string, ClusterAssignment>();
+    private RoomRecoverySnapshot roomRecovery = new(new Dictionary<string, RoomRecoveryAssignment>(), default);
+
+    /// <summary>Backend confirmations awaiting the owning tracker's next pass.</summary>
+    public RoomRecoveryInbox RecoveryInbox { get; } = new();
+
+    /// <summary>Immutable room obligations and admission decisions from the last tracker pass.</summary>
+    public IReadOnlyDictionary<string, RoomRecoveryAssignment> RoomRecoveryAssignments =>
+        Volatile.Read(ref roomRecovery).Assignments;
+
+    /// <summary>Progress of the controlled reset required for the current process epoch.</summary>
+    public RoomRecoveryStatus RoomRecoveryStatus => Volatile.Read(ref roomRecovery).Status;
 
     public ClusterPass Current =>
         Volatile.Read(ref current);
@@ -93,6 +104,11 @@ public sealed class ClusterBoard
     {
         Volatile.Write(ref assignments, snapshot);
     }
+
+    internal void PublishRoomRecovery(IReadOnlyDictionary<string, RoomRecoveryAssignment> snapshot, RoomRecoveryStatus status) =>
+        Volatile.Write(ref roomRecovery, new RoomRecoverySnapshot(snapshot, status));
+
+    private sealed record RoomRecoverySnapshot(IReadOnlyDictionary<string, RoomRecoveryAssignment> Assignments, RoomRecoveryStatus Status);
 }
 
 /// <summary>An active session's published assignment, independent of the retained takeover ledger.</summary>

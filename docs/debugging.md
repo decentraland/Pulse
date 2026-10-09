@@ -29,8 +29,9 @@ Two debugging paths are supported: **local** (docker-compose) and **remote** (EC
 - **JetBrains RiderRemoteDebugger** at `/root/.local/share/JetBrains/RiderRemoteDebugger/<version>/` — pre-installed so Rider skips the "Install tools to remote computer" prompt on every deploy. Version is resolved from the JetBrains redirect filename at build time:
   ```
   https://data.services.jetbrains.com/products/download?code=RRD&platform=linux64
-    → .../JetBrains.Rider.RemoteDebuggerUploads.linux-x64.<version>.zip
+    → .../JetBrains.Rider.RemoteDebuggerUploads.linux-x64.<version>.zip[?signed-query]
   ```
+  A single GET downloads the archive while following redirects, then the final URL supplies the version. Query strings and fragments are excluded when extracting the version and reporting a parsing failure, so signatures stay out of the install path and error message. An unrecognized filename or an HTTP error fails the build before unpacking.
 
 ### Workflow
 

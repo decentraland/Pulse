@@ -31,7 +31,7 @@ Two debugging paths are supported: **local** (docker-compose) and **remote** (EC
   https://data.services.jetbrains.com/products/download?code=RRD&platform=linux64
     → .../JetBrains.Rider.RemoteDebuggerUploads.linux-x64.<version>.zip[?signed-query]
   ```
-  Query strings and fragments are excluded when extracting the version; the download uses the full resolved URL so signed links remain valid. An unrecognized filename or an HTTP error fails the build before extraction.
+  A single GET downloads the archive while following redirects, then the final URL supplies the version. Query strings and fragments are excluded when extracting the version and reporting a parsing failure, so signatures stay out of the install path and error message. An unrecognized filename or an HTTP error fails the build before unpacking.
 
 ### Workflow
 

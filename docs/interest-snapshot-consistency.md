@@ -2,15 +2,13 @@
 
 Interest management owns subject eligibility. Simulation preserves that decision by reading the exact sequence accepted by the query. A missing accepted sequence enters a measured, explicitly undesired hard fallback to the previous comparison logic.
 
-These findings describe the sequence implementation on `fix/interest-snapshot-consistency`, verified on 2026-10-07. The [implementation history](superpowers/plans/2026-10-07-interest-snapshot-consistency.md) records the earlier snapshot-copy implementation and verification results.
-
 ## Accepted sequence and registration
 
 Realm grids supply candidates. A reader can retain a cell set after a subject moves or teleports, so the grid alone cannot establish eligibility. `SpatialHashAreaOfInterest` validates one snapshot against the player realm and distance, or the listener's announced realm and parcels, and calculates the tier from that same snapshot.
 
 `InterestEntry` retains `(Subject, Tier, uint Seq, Identity)`. `InterestCollector` uses a reusable `HashSet<uint>` to accept each subject once; the first accepted sequence, tier, and registration win. Deduplication matters when movement during enumeration exposes the same subject through old and new cells or through two listener realms. Replacing the snapshot with its sequence reduces entry copying; it preserves this deduplication contract.
 
-`PeerSimulation.TryResolveInterestSnapshot` reads that exact sequence. Active-state and `IdentityRegistration` reference checks fence the read. Wallet or sequence equality alone cannot identify a connection: a recycled slot can repeat both. Retained targets require no second eligibility comparison, even if the subject has since teleported. Later publications normally participate in the next query; the query does not create a global snapshot across workers.
+`InterestSnapshotReader` reads that exact sequence for simulation and the retained-target benchmark. `SnapshotBoard.TryRead` rejects inactive slots; a post-read active-state and `IdentityRegistration` reference check rejects disconnects and slot reuse during the read. Interest already captured the registration, so an additional pre-read registration check is unnecessary. Wallet or sequence equality alone cannot identify a connection: a recycled slot can repeat both. Retained targets require no second eligibility comparison, even if the subject has since teleported. Later publications normally participate in the next query; the query does not create a global snapshot across workers.
 
 ## Why a recorded sequence can disappear
 
@@ -18,7 +16,9 @@ Realm grids supply candidates. A reader can retain a cell set after a subject mo
 
 Collection and delivery run sequentially on the observer's worker, while another worker can keep publishing the subject. The gap includes the remainder of collection and delivery to earlier subjects, as well as thread scheduling delays. There is no bound that guarantees fewer than one ring's worth of publications during that gap.
 
-At the configuration inspected during this investigation, a 20-entry ring covers roughly one second only under steady movement publishing at 20 Hz. Movement and discrete events have separate token buckets, each configured for a burst of 16. A subject worker drains queued events before its simulation tick, so allowed mixed bursts can overwrite a selected slot much faster than one second. These facts establish a possible interleaving; they do not establish its production frequency. Resolve current capacities and rate limits from runtime configuration when investigating an occurrence.
+Movement and discrete events have separate token buckets. A subject worker drains queued events before its simulation tick, so allowed mixed bursts can overwrite a selected slot faster than steady publishing would suggest. Resolve current capacities and rate limits from runtime configuration when investigating an occurrence; production frequency is measured by the target-eviction counter.
+
+A retained target preserves its own state, while earlier event markers can already be overwritten. If both teleports in an A-to-B-to-A round trip disappear from history, the observer receives a delta to the retained target instead of a teleport snap. This historical loss also occurs for same-realm teleports and does not increment the target-eviction counter. A sequence gap alone cannot distinguish movement from a lost teleport.
 
 ## Eviction hard fallback
 
@@ -31,9 +31,9 @@ Only an exact-sequence miss with the accepted registration still active incremen
 
 The player comparison checks realm only. Distance and tier remain the original interest query's decision, including on this fallback. A rejected existing view is removed and receives one `PlayerLeft`; a rejected new subject receives no `PlayerJoined`.
 
-Resolve the target before aliasing and realm lifecycle handling. History scans and resync responses remain bounded by the resolved target. A pending resync bypasses tier pacing and receives the resolved state; a skipped ordinary tier tick still stamps an existing accepted view as visible.
+Resolve the target before aliasing, realm lifecycle handling, and tier pacing. An evicted target outside the observer's realm still retires its view on a skipped tier tick; inactive or recycled entries do not refresh the stale-view deadline. Comparing only the entry and view registrations before skipping would bypass these checks. History scans and resync responses remain bounded by the resolved target. A pending resync bypasses tier pacing and receives the resolved state; a skipped ordinary tier tick still stamps an existing accepted view as visible.
 
-The fallback deliberately weakens the snapshot-copy guarantee. An overwritten teleport, emote event, or original stop reason may be lost; latest state cannot reconstruct that event. Three prior eviction expectations changed for this reason. Retained-target expectations remain intact. Keep the comparison isolated in the named hard fallback when modifying this code.
+The fallback can also lose the accepted target's own teleport, emote event, or stop reason. Latest state cannot reconstruct that event. Keep the comparison isolated in the named hard fallback when modifying this code; it preserves the previous guard rather than re-running the full interest query.
 
 ## Eviction metric and investigation
 
@@ -43,9 +43,9 @@ For an increase, compare the effective history capacity with admitted publisher 
 
 ## Performance findings
 
-The accepted-state implementation adds eligibility validation, registration fences, and deduplication to the legacy query. The larger copied entries also increased buffer traffic. The bitmap experiment improved collector cost modestly but left the complete query substantially slower; the simpler HashSet was restored. Sequence entries reduce buffer traffic while adding an exact historical read at consumption.
+Accepted-sequence queries add eligibility validation, registration fences, and HashSet deduplication to the legacy query. Compact entries reduce buffer traffic compared with storing full snapshots, while consumption requires an exact historical read.
 
-The [benchmark records](superpowers/plans/2026-10-07-interest-snapshot-consistency.md#follow-up-verification) contain entry sizes, timings, confidence limits, and the reproduction command. The retained-target run excludes concurrent writers, hard fallback frequency and cost, history scans, and network encoding. Its ratios describe query and consumption cost, not complete server throughput or production eviction risk.
+[InterestSnapshotBenchmarks](../src/DCLPulseBenchmarks/InterestSnapshotBenchmarks.cs) compares query and consumption using the production reader. Targets remain retained throughout the static run; missing targets fail the benchmark instead of using fallback or recording a production metric. The run excludes tier pacing, concurrent writers, history scans, and network encoding. Ratios describe query and consumption cost; peak-density tick headroom requires a complete fan-out workload with scheduling and transport costs.
 
 ## Regression evidence
 
@@ -53,6 +53,5 @@ Preserve the behavioral assertions in these tests when changing the contract:
 
 - `InterestCollectorTests` and `SpatialHashAreaOfInterestTests`: stale candidates, first acceptance across duplicates, matching tier and registration, and retained sequences after later publications.
 - `PeerSimulationTests.InterestSnapshots` and `PeerSimulationTests.InterestSequenceFallback`: exact retained targets, overwritten events, fallback acceptance and rejection for both observer types, realm lifecycle ordering, skipped tiers, resync, disconnects, and same-sequence slot reuse.
+- `PeerSimulationTests.ReviewRegressions`: overwritten teleport history with a retained target, registration changes during aliasing retirement before reseeding, and eviction/disconnect/recycling checks before skipped tier ticks.
 - `InterestSnapshotMetricsTests`: counter aggregation, Prometheus export at zero, and absence of peer labels. Simulation cases distinguish real fallback attempts from retained targets and inactive or recycled entries.
-
-The [follow-up verification record](superpowers/plans/2026-10-07-interest-snapshot-consistency.md#follow-up-verification) holds the TDD results, full-suite result, build status, dashboard lint, and independent review.

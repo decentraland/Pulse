@@ -2,7 +2,6 @@ using BenchmarkDotNet.Attributes;
 using Decentraland.Pulse;
 using Microsoft.Extensions.Options;
 using Pulse.InterestManagement;
-using Pulse.Metrics;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
 using System.Numerics;
@@ -17,9 +16,9 @@ namespace DCLPulseBenchmarks;
 ///     reproduces the old ID/tier-only list, no deduplication, and the second latest-snapshot read
 ///     with its realm guard. The accepted path uses the production collector, including deduplication,
 ///     identity fencing, compact sequence entries, and the simulation's active/registration veto.
-///     Consumption reads that exact sequence; only eviction permits the latest-state realm guard.
+///     Consumption calls the production accepted-sequence reader and requires a retained target.
 ///     <para />
-///     This is a warmed, single-threaded microbenchmark. There are no concurrent writers, worker
+///     This is a warmed, single-threaded microbenchmark. There are no tier skips, concurrent writers, worker
 ///     scheduling, historical scans, profile lookups, or network encoding. Consumption reads pose,
 ///     sequence, animation, tier, and identity fields into an observable checksum. It does not measure
 ///     the complete simulation tick or prove concurrent correctness. Targets are retained throughout
@@ -29,6 +28,11 @@ namespace DCLPulseBenchmarks;
 ///     deduplication storage. MemoryDiagnoser reports steady-state allocation; setup prints entry
 ///     sizes and retained list capacity separately, since retaining a larger buffer is not a
 ///     per-operation allocation. The production collector's deduplication storage is additional.
+///     <para />
+///     A reverted bitmap experiment on the superseded full-snapshot variant reduced collection
+///     and consumption means by only 2–6%; complete query and consumption still cost about 3x
+///     legacy time. The largest case was noisy. The simpler HashSet was retained; those results
+///     do not measure this accepted-sequence variant.
 /// </summary>
 [MemoryDiagnoser]
 public class InterestSnapshotBenchmarks
@@ -138,23 +142,9 @@ public class InterestSnapshotBenchmarks
         ReadOnlySpan<InterestEntry> entries = CollectionsMarshal.AsSpan(current.AcceptedCollector.Entries);
         foreach (ref readonly InterestEntry entry in entries)
         {
-            if (!current.SnapshotBoard.IsActive(entry.Subject)
-                || !ReferenceEquals(current.IdentityBoard.GetIdentity(entry.Subject), entry.Identity))
-                continue;
-
-            if (!current.SnapshotBoard.TryRead(entry.Subject, entry.Seq, out PeerSnapshot target))
-            {
-                if (!IsRegistered(current, in entry))
-                    continue;
-
-                PulseMetrics.Simulation.INTEREST_SNAPSHOT_EVICTED.Add(1);
-                if (!current.SnapshotBoard.TryRead(entry.Subject, out target)
-                    || !string.Equals(target.Realm, observerSnapshot.Realm, StringComparison.Ordinal))
-                    continue;
-            }
-
-            if (!IsRegistered(current, in entry))
-                continue;
+            if (InterestSnapshotReader.Read(current.SnapshotBoard, current.IdentityBoard, in entry,
+                    out PeerSnapshot target) != InterestSnapshotReadResult.Retained)
+                throw new InvalidOperationException("The static benchmark requires retained targets and live registrations.");
 
             checksum += ConsumeSnapshot(in target, entry.Tier.Value, entry.Identity.Wallet.Length);
         }
@@ -183,11 +173,6 @@ public class InterestSnapshotBenchmarks
             current.LegacyEntries.Add(new LegacyInterestEntry(subject, tier));
         }
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsRegistered(BenchmarkState current, in InterestEntry entry) =>
-        current.SnapshotBoard.IsActive(entry.Subject)
-        && ReferenceEquals(current.IdentityBoard.GetIdentity(entry.Subject), entry.Identity);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ulong ConsumeSnapshot(in PeerSnapshot snapshot, byte tier, int walletLength) =>

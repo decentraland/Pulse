@@ -1,5 +1,7 @@
 # AoI snapshot consistency implementation history and sequence plan
 
+> Historical record: implementation instructions below describe completed or superseded work. Use [interest snapshot consistency](../../interest-snapshot-consistency.md) for the current contract. Measurements identify their implementation variant; earlier experiments are not results for the current sequence reader.
+
 The initial implementation returned a copy of the exact subject snapshot accepted by interest management. Its contract and results below describe commit `85476d3`. The sequence follow-up retains the accepted sequence instead, with a measured hard fallback on eviction; its plan follows the initial results.
 
 Branch: `fix/interest-snapshot-consistency`. Baseline commit: `e42f167` (`fix: simplify realm view lifecycle`). Baseline validation: 951 tests passed, 14 skipped.
@@ -150,3 +152,41 @@ The static single-threaded run retains every target and measures neither fallbac
 ```powershell
 dotnet run --project src/DCLPulseBenchmarks/DCLPulseBenchmarks.csproj --configuration Release --no-build --no-restore -- --filter '*InterestSnapshotBenchmarks.*QueryAndConsume*' --warmupCount 5 --iterationCount 12 --launchCount 1 --iterationTime 250
 ```
+
+## PR review follow-up
+
+Review on 2026-10-08 identified ten non-blocking findings. The follow-up removes the redundant observer-mode argument, marks the announced wallet as diagnostic, shares the production accepted-sequence reader with the benchmark, and removes benchmark fallback/counter side effects. Clustering comments now describe first-collected grid attribution under weakly consistent reads. The standing consistency document describes the current contract without branch/date or development-history dependencies.
+
+Historical event loss is distinct from accepted-target eviction. The existing subject round-trip case already covers both teleports being overwritten; additional same-realm and round-trip cases assert that the retained target becomes a delta and records no target eviction. A sequence gap does not prove a teleport, so the implementation does not invent a snap from missing history.
+
+The reseeding registration guard remains: alias retirement emits a message and calls the logger between target resolution and seeding. Two deterministic disconnect/recycle cases passed with the guard and failed with an extra stale `PlayerJoined` when it was temporarily removed. The post-history and resync-baseline fences protect separate shared reads. The explicitly requested hard fallback retains its previous realm-only player or realm/parcel listener check; using the full interest eligibility predicate would change the player distance/tier contract. HashSet deduplication remains the chosen implementation.
+
+Dashboard-curator confirmed its original create flow and reviewed panel 97, `Interest Snapshot Evictions`, against the actual local export and PR-head formatter. Strict lint reports zero errors and warnings; live import remains an operator step.
+
+Verification: 244 focused cases and the full suite passed (1,015 passed, 14 skipped). Release solution build, documentation links, and whitespace checks passed. The benchmark rerun used the same five warmups and twelve 250 ms iterations:
+
+| Peer count | Legacy query and consumption | Accepted sequence query and consumption | Reported ratio |
+| --- | --- | --- | --- |
+| 128 | 1.072 us | 1.863 us | 1.74 |
+| 512 | 4.497 us | 7.732 us | 1.72 |
+| 4095 | 48.820 us | 76.727 us | 1.59 |
+
+These ratios mean roughly 59–74% more query/consumption time than legacy, not a throughput improvement. The 4,095-peer accepted mean has a 99.9% confidence interval of 71.226–82.227 us; the baseline is also variable. Cross-run differences do not isolate the effect of extraction or inlining. MemoryDiagnoser again reports zero bytes at 128/512 peers and 1 byte for both paths at 4,095. This retained-target microbenchmark excludes full fan-out, encoding, transport, concurrent writers and scheduling; peak-density tick-budget headroom remains unestablished.
+
+## Second review follow-up
+
+The exact-sequence reader now checks the captured registration only after `SnapshotBoard.TryRead`. The board rejects inactive slots, and the post-read active/identity veto rejects disconnects and recycling even when sequence numbers repeat. Latest-read collectors still capture identity before reading; their discovery step differs from consumption of an already accepted registration.
+
+Resolution remains before tier pacing. Four new cases cover TIER_1/TIER_2 eviction outside the observer realm and disconnect/recycling on a skipped tick. All four passed with the existing ordering and failed when the proposed same-registration shortcut was temporarily moved ahead of resolution: it missed `PlayerLeft`/the eviction metric and refreshed stale views. Preserving the explicitly requested fallback avoids this change in behavior.
+
+The protocol contract now describes subject A-to-B-to-A retention and overwritten teleport markers. Health counters have their own metrics section, the plan is marked historical, and benchmark documentation records the reverted bitmap experiment and excludes tier pacing from its scope. Optional wallet/logging, send-context, and cross-component helper refactors remain outside this follow-up; the wallet field is diagnostic, send bypasses can combine, and clustering also verifies the wallet's live binding. The eviction counter remains available in Prometheus/Grafana; the console omission is documented.
+
+Verification: Release solution build and all tests passed (1,019 passed, 14 skipped); documentation links and whitespace checks passed. The same five-warmup, twelve-iteration benchmark produced:
+
+| Peer count | Legacy query and consumption | Accepted sequence query and consumption | Reported ratio |
+| --- | --- | --- | --- |
+| 128 | 1.161 us | 1.823 us | 1.58 |
+| 512 | 4.833 us | 7.269 us | 1.51 |
+| 4095 | 46.511 us | 72.755 us | 1.57 |
+
+This run measures roughly 51–58% more query/consumption time than legacy. The 4,095-peer accepted mean has a 99.9% confidence interval of 66.328–79.181 us. Cross-run differences do not isolate the removed check's benefit. Allocation results and workload limits are unchanged; peak-density tick headroom remains unverified.

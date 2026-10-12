@@ -782,7 +782,7 @@ public class NatsPublisherTests
     }
 
     [Test]
-    public void RecycledChange_ClearsThePreviousWalletsRoomRecoveryPlan()
+    public void RecycledChange_ClearsThePreviousWalletsPendingTakeoversAndCapability()
     {
         var board = new ClusterBoard();
         board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
@@ -792,14 +792,16 @@ public class NatsPublisherTests
         using NatsPublisher publisher = CreatePublisher(url: BROKER_URL, assignments: board);
         publisher.PublishClusterChange("0xwallet0", "C1", "realm-a", new ClusterSession("0xsession-a", null, null));
         (string _, IMessage first) = DequeueNext(publisher);
-        Assert.That(((PeerClusterChange)first).RoomRecovery, Is.Not.Null);
+        Assert.That(((PeerClusterChange)first).HasTokenNotBefore, Is.True);
+        ((PeerClusterChange)first).PendingTakeovers.Add(new PendingTakeover { TakeoverId = "old-wallet" });
         publisher.Return(first);
         publisher.PublishClusterChange("0xwallet1", "C2", "realm-b", new ClusterSession("0xsession-b", null, null));
         (string _, IMessage second) = DequeueNext(publisher);
         Assert.Multiple(() =>
         {
             Assert.That(second, Is.SameAs(first));
-            Assert.That(((PeerClusterChange)second).RoomRecovery, Is.Null);
+            Assert.That(((PeerClusterChange)second).HasTokenNotBefore, Is.False);
+            Assert.That(((PeerClusterChange)second).PendingTakeovers, Is.Empty);
         });
         publisher.Return(second);
     }

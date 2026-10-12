@@ -141,7 +141,7 @@ public sealed class ClusterTracker : BackgroundService
         logger.LogInformation(
             "Cluster tracker started — pass every {PassIntervalMs}ms, dwell {DwellPasses} passes, id prefix {IdPrefix}",
             options.PassIntervalMs, options.DwellPasses, options.IdPrefix);
-        logger.LogWarning("Room admission requires controlled reset confirmation for epoch {Epoch}", roomRecovery.Epoch);
+
 
         // Long-running so the pass never occupies a thread-pool worker.
         await Task.Factory.StartNew(
@@ -619,7 +619,7 @@ public sealed class ClusterTracker : BackgroundService
 
     private string MintClusterId()
     {
-        var id = $"{options.IdPrefix}{roomRecovery.Epoch}-{++nextClusterNumber}";
+        var id = $"{options.IdPrefix}{roomRecovery.BootId}-{++nextClusterNumber}";
 
         // Inheritance only reads previous-pass assignments, so a freshly minted ID is uncontested.
         clusterRecords[id] = new ClusterRecord

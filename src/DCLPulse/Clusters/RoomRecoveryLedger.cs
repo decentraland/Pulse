@@ -1,71 +1,55 @@
 using Decentraland.Pulse;
 using Pulse.Peers;
 using Pulse.Peers.Simulation;
-using System.Globalization;
 
 namespace Pulse.Clusters;
 
-/// <summary>One immutable operation still required before the wallet can receive room credentials.</summary>
-public readonly record struct PendingRoomCleanup(string OperationId, string ClusterId, ulong MinimumRevokeBefore);
+/// <summary>One retained displacement, identified independently of its room or current assignment.</summary>
+public readonly record struct PendingSessionTakeover(string TakeoverId, string DisplacedSession, string DisplacedClusterId);
 
-/// <summary>A complete immutable backend room plan and its captured live registration.</summary>
+/// <summary>An immutable assignment, pending takeovers and captured live registration.</summary>
 public sealed record RoomRecoveryAssignment(
-    ClusterAssignment Assignment, PeerIndex? Peer, IdentityRegistration? Identity, string Epoch, string Revision,
-    bool CleanupOnly, bool Ready, bool BootstrapRequired, ulong TokenNotBefore,
-    IReadOnlyList<PendingRoomCleanup> Operations);
+    ClusterAssignment Assignment, PeerIndex? Peer, IdentityRegistration? Identity,
+    bool Active, bool CapacityBlocked, ulong TokenNotBefore, IReadOnlyList<PendingSessionTakeover> PendingTakeovers);
 
-/// <summary>Operator-visible progress for this process's controlled room reset.</summary>
-public readonly record struct RoomRecoveryStatus(string Epoch, bool BootstrapRequired, int PendingOperations, int RetainedWallets);
+/// <summary>Diagnostic counts for retained takeover recovery.</summary>
+public readonly record struct RoomRecoveryStatus(string BootId, int PendingOperations, int RetainedWallets, bool CapacityBlocked);
 
 internal readonly record struct DesiredRoomAssignment(ClusterAssignment Assignment, PeerIndex Peer, IdentityRegistration Identity);
 
-/// <summary>
-///     Retains room obligations independently of notification delivery. Only the cluster tracker may mutate it.
-/// </summary>
+/// <summary>Retains unfinished takeovers independently of notification delivery, with one tracker writer.</summary>
 internal sealed class RoomRecoveryLedger
 {
-    // Covers up to five seconds of credential backdating and ten seconds between Pulse and Gatekeeper clocks.
-    // Both service clocks must remain within five seconds of LiveKit Cloud for retirement pruning to be safe.
+    internal const ulong MAX_SAFE_CUTOFF = 9007199254740991;
     internal const ulong RETIREMENT_CLOCK_GRACE_SECONDS = 15;
-
     private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
     private readonly int maxWallets;
-    private readonly int maxRooms;
-    private ulong nextRevision;
-    private ulong nextOperation;
+    private readonly int maxTakeovers;
+    private readonly ulong retentionSeconds;
     private ulong currentTime;
-    private bool bootstrapRequired = true;
+    private IReadOnlyDictionary<string, DesiredRoomAssignment> currentDesired = new Dictionary<string, DesiredRoomAssignment>();
 
-    internal RoomRecoveryLedger(ClusterOptions options, string? epoch = null)
+    internal RoomRecoveryLedger(ClusterOptions options, string? bootId = null)
     {
-        Epoch = epoch ?? Guid.NewGuid().ToString("N");
+        BootId = bootId ?? Guid.NewGuid().ToString("N");
         maxWallets = Math.Max(0, options.MaxRecoveryWallets);
-        maxRooms = Math.Max(0, options.MaxRecoveryRoomsPerWallet);
+        maxTakeovers = Math.Max(0, options.MaxRecoveryRoomsPerWallet);
+        retentionSeconds = (ulong)Math.Max(0, (long)options.SessionRetentionPasses * options.PassIntervalMs / 1000);
     }
 
-    internal string Epoch { get; }
-
+    internal string BootId { get; }
     internal bool CapacityBlocked { get; private set; }
 
     internal void Reconcile(IReadOnlyDictionary<string, DesiredRoomAssignment> desired, ulong now)
     {
         currentTime = now;
-        CapacityBlocked = false;
+        currentDesired = desired;
         foreach ((string wallet, Entry entry) in entries)
         {
             if (desired.ContainsKey(wallet)) continue;
-            if (entry.Active)
-            {
-                entry.Active = false;
-                entry.Peer = null;
-                entry.Identity = null;
-                entry.Revision = NewRevision();
-                entry.NeedsRetirement = true;
-                entry.RetirementObserved = false;
-            }
-
-            RetirePotentialRoom(entry, now);
-            entry.NeedsRetirement = entry.PotentialRoom is not null;
+            entry.Active = false;
+            entry.Peer = null;
+            entry.Identity = null;
             if (CanForget(entry)) entries.Remove(wallet);
         }
 
@@ -73,170 +57,104 @@ internal sealed class RoomRecoveryLedger
         {
             if (!entries.TryGetValue(wallet, out Entry? entry))
             {
-                if (entries.Count >= maxWallets)
-                {
-                    CapacityBlocked = true;
-                    continue;
-                }
-
-                // Unique epoch-scoped rooms and the mandatory controlled reset establish the first baseline.
-                entry = new Entry { Assignment = target.Assignment, Revision = NewRevision() };
+                if (entries.Count >= maxWallets) continue;
+                entry = new Entry { Assignment = target.Assignment };
                 entries.Add(wallet, entry);
             }
-            else if (!entry.Active || entry.Assignment != target.Assignment)
+            if (entry.PotentialAssignment is { } exposed
+                && !string.Equals(exposed.Session, target.Assignment.Session, StringComparison.OrdinalIgnoreCase)
+                && entry.Pending.Count < maxTakeovers)
             {
-                entry.Revision = NewRevision();
-                entry.NeedsRetirement = true;
-                entry.TargetFloor = 0;
-                entry.RetirementObserved = false;
+                var pending = new PendingSessionTakeover(Guid.NewGuid().ToString("N"), exposed.Session, exposed.ClusterId);
+                entry.Pending.Add(pending.TakeoverId, pending);
+                entry.PendingFloors.Add(pending.TakeoverId, entry.TokenNotBefore);
+                entry.PotentialAssignment = null;
             }
-
             entry.Assignment = target.Assignment;
             entry.Active = true;
             entry.Peer = target.Peer;
             entry.Identity = target.Identity;
-            entry.Blocked = false;
-            if (entry.NeedsRetirement)
-            {
-                RetirePotentialRoom(entry, now);
-                entry.NeedsRetirement = entry.PotentialRoom is not null;
-            }
-
-            if (entry.Blocked) CapacityBlocked = true;
+            entry.LastSeen = now;
         }
+        UpdateCapacity();
     }
 
     internal void Apply(RoomRecoveryConfirmation confirmation, ulong now)
     {
         currentTime = now;
-        if (!string.Equals(confirmation.Epoch, Epoch, StringComparison.Ordinal)) return;
-        if (confirmation.Bootstrap)
-        {
-            bootstrapRequired = false;
-            return;
-        }
-
         if (!entries.TryGetValue(confirmation.Wallet, out Entry? entry)
-            || !string.Equals(entry.Revision, confirmation.Revision, StringComparison.Ordinal)) return;
-
-        if (confirmation.ObservedReady)
-        {
-            if (!entry.Active && entry.Pending.Count == 0 && entry.PotentialRoom is null && !bootstrapRequired
-                && !entry.NeedsRetirement && !entry.Blocked && confirmation.OperationId.Length == 0
-                && confirmation.ClusterId.Length == 0 && confirmation.RevokeBefore == 0)
-                entry.RetirementObserved = true;
-            return;
-        }
-
-        if (!entry.Pending.TryGetValue(confirmation.ClusterId, out PendingRoomCleanup operation)
-            || !string.Equals(operation.OperationId, confirmation.OperationId, StringComparison.Ordinal)
-            || confirmation.RevokeBefore < operation.MinimumRevokeBefore
-            || confirmation.RevokeBefore > now + 60)
-            return;
-
-        entry.Pending.Remove(confirmation.ClusterId);
-        entry.CutoffFloor = Math.Max(entry.CutoffFloor, confirmation.RevokeBefore);
-        if (entry.Active && string.Equals(entry.Assignment.ClusterId, confirmation.ClusterId, StringComparison.Ordinal))
-            entry.TargetFloor = Math.Max(entry.TargetFloor, confirmation.RevokeBefore);
+            || !entry.PendingFloors.TryGetValue(confirmation.TakeoverId, out ulong previousFloor)
+            || confirmation.RevokeBefore == 0 || confirmation.RevokeBefore > MAX_SAFE_CUTOFF
+            || confirmation.RevokeBefore <= previousFloor) return;
+        entry.Pending.Remove(confirmation.TakeoverId);
+        entry.PendingFloors.Remove(confirmation.TakeoverId);
+        entry.TokenNotBefore = Math.Max(entry.TokenNotBefore, confirmation.RevokeBefore);
+        UpdateCapacity();
     }
 
     internal IReadOnlyDictionary<string, RoomRecoveryAssignment> Snapshot(out RoomRecoveryStatus status)
     {
         var snapshot = new Dictionary<string, RoomRecoveryAssignment>(entries.Count, StringComparer.Ordinal);
-        var pending = 0;
+        var pendingCount = 0;
         foreach ((string wallet, Entry entry) in entries)
         {
-            if (CanForget(entry))
-            {
-                entries.Remove(wallet);
-                continue;
-            }
-
-            bool ready = !bootstrapRequired && !entry.Blocked
-                         && !entry.NeedsRetirement && entry.Pending.Count == 0;
-            if (ready && entry.Active)
-            {
-                entry.PotentialRoom = entry.Assignment.ClusterId;
-                entry.PotentialFloor = Math.Max(entry.TargetFloor, entry.CutoffFloor);
-            }
-
-            var operations = new PendingRoomCleanup[entry.Pending.Count];
-            entry.Pending.Values.CopyTo(operations, 0);
-            pending += operations.Length;
+            bool blocked = IsBlocked(entry);
+            if (entry.Active && !blocked && entry.Pending.Count == 0) entry.PotentialAssignment = entry.Assignment;
+            var pending = new PendingSessionTakeover[entry.Pending.Count];
+            entry.Pending.Values.CopyTo(pending, 0);
+            pendingCount += pending.Length;
             snapshot.Add(wallet, new RoomRecoveryAssignment(entry.Assignment, entry.Peer, entry.Identity,
-                Epoch, entry.Revision, !entry.Active, ready, bootstrapRequired, Math.Max(entry.TargetFloor, entry.CutoffFloor),
-                Array.AsReadOnly(operations)));
+                entry.Active, blocked,
+                entry.TokenNotBefore, Array.AsReadOnly(pending)));
         }
-
-        status = new RoomRecoveryStatus(Epoch, bootstrapRequired, pending, entries.Count);
+        foreach ((string wallet, DesiredRoomAssignment desired) in currentDesired)
+            if (!snapshot.ContainsKey(wallet))
+                snapshot.Add(wallet, new RoomRecoveryAssignment(desired.Assignment, desired.Peer, desired.Identity,
+                    true, true, 0, Array.Empty<PendingSessionTakeover>()));
+        status = new RoomRecoveryStatus(BootId, pendingCount, entries.Count, CapacityBlocked);
         return snapshot;
     }
 
-    internal static RoomRecoveryPlan Message(RoomRecoveryAssignment assignment)
+    internal static void Stamp(PeerClusterChange message, RoomRecoveryAssignment? assignment)
     {
-        var plan = new RoomRecoveryPlan
-        {
-            Epoch = assignment.Epoch,
-            Revision = assignment.Revision,
-            Admission = assignment.Ready ? RoomAdmissionState.Ready : RoomAdmissionState.Pending,
-            CleanupOnly = assignment.CleanupOnly,
-            BootstrapRequired = assignment.BootstrapRequired,
-            TokenNotBefore = assignment.TokenNotBefore,
-        };
-        foreach (PendingRoomCleanup operation in assignment.Operations)
-            plan.Operations.Add(new RoomCleanupOperation
+        message.PendingTakeovers.Clear();
+        message.ClearTokenNotBefore();
+        if (assignment is null) return;
+        if (!assignment.CapacityBlocked) message.TokenNotBefore = assignment.TokenNotBefore;
+        foreach (PendingSessionTakeover pending in assignment.PendingTakeovers)
+            message.PendingTakeovers.Add(new PendingTakeover
             {
-                OperationId = operation.OperationId,
-                ClusterId = operation.ClusterId,
-                MinimumRevokeBefore = operation.MinimumRevokeBefore,
+                TakeoverId = pending.TakeoverId,
+                DisplacedSession = pending.DisplacedSession,
+                DisplacedClusterId = pending.DisplacedClusterId,
             });
-        return plan;
     }
 
-    private string NewRevision() => (++nextRevision).ToString(CultureInfo.InvariantCulture);
+    private bool CanForget(Entry entry) => entry.Pending.Count == 0 && !IsBlocked(entry)
+        && currentTime > entry.LastSeen + retentionSeconds
+        && currentTime > entry.TokenNotBefore + RETIREMENT_CLOCK_GRACE_SECONDS;
 
-    private bool CanForget(Entry entry) => !entry.Active && entry.Pending.Count == 0
-                                          && entry.PotentialRoom is null && entry.RetirementObserved
-                                          && currentTime > entry.CutoffFloor + RETIREMENT_CLOCK_GRACE_SECONDS;
+    private static bool IsBlocked(Entry entry) => entry.PotentialAssignment is { } exposed
+        && !string.Equals(exposed.Session, entry.Assignment.Session, StringComparison.OrdinalIgnoreCase);
 
-    private void RetirePotentialRoom(Entry entry, ulong now)
+    private void UpdateCapacity()
     {
-        if (entry.PotentialRoom is not { } room) return;
-        if (EnsureCleanup(entry, room, entry.PotentialFloor, now))
-            entry.PotentialRoom = null;
+        CapacityBlocked = false;
+        foreach (string wallet in currentDesired.Keys)
+            if (!entries.ContainsKey(wallet)) CapacityBlocked = true;
+        foreach (Entry entry in entries.Values)
+            if (IsBlocked(entry)) CapacityBlocked = true;
     }
-
-    private bool EnsureCleanup(Entry entry, string room, ulong floor, ulong now)
-    {
-        if (entry.Pending.ContainsKey(room)) return true;
-        if (entry.Pending.Count >= maxRooms)
-        {
-            entry.Blocked = true;
-            CapacityBlocked = true;
-            return false;
-        }
-
-        entry.Pending.Add(room, new PendingRoomCleanup((++nextOperation).ToString(CultureInfo.InvariantCulture),
-            room, Math.Max(now, Math.Max(floor, entry.CutoffFloor) + 1)));
-        return true;
-    }
-
     private sealed class Entry
     {
-        public readonly Dictionary<string, PendingRoomCleanup> Pending = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, PendingSessionTakeover> Pending = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, ulong> PendingFloors = new(StringComparer.Ordinal);
+        public ClusterAssignment? PotentialAssignment;
         public ClusterAssignment Assignment;
         public PeerIndex? Peer;
         public IdentityRegistration? Identity;
-        public string Revision = string.Empty;
         public bool Active;
-        public bool NeedsRetirement;
-        public bool RetirementObserved;
-        public bool Blocked;
-        // Ready is permission to mint, so this room remains potentially occupied even without delivery evidence.
-        public string? PotentialRoom;
-        public ulong PotentialFloor;
-        public ulong TargetFloor;
-        // A wallet-wide maximum bounds memory while preserving same-room floors after confirmed movement.
-        public ulong CutoffFloor;
+        public ulong LastSeen;
+        public ulong TokenNotBefore;
     }
 }

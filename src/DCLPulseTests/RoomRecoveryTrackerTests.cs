@@ -63,182 +63,93 @@ public class RoomRecoveryTrackerTests
     }
 
     [Test]
-    public void ProcessEpoch_ScopesClusterIdsAndIsAvailableBeforeBootstrap()
-    {
-        RoomRecoveryStatus status = board.RoomRecoveryStatus;
-        Assert.Multiple(() =>
-        {
-            Assert.That(status.Epoch, Has.Length.EqualTo(32));
-            Assert.That(status.BootstrapRequired, Is.True);
-            Assert.That(status.PendingOperations, Is.Zero);
-            Assert.That(status.RetainedWallets, Is.EqualTo(3));
-            Assert.That(board.Assignments[WALLET].ClusterId, Does.Contain(status.Epoch));
-        });
-    }
-
-    [Test]
-    public void Lookup_ContainsFullPendingPlanAndCannotBypassBootstrap()
+    public void FirstAssignment_IsReadyWithoutBootstrapAndRoomIdsRemainBootUnique()
     {
         PeerClusterChange response = Resolve(A);
-        Assert.Multiple(() =>
-        {
-            Assert.That(response.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
-            Assert.That(response.RoomRecovery.BootstrapRequired, Is.True);
-            Assert.That(response.RoomRecovery.Operations, Is.Empty);
-        });
-        Complete(response);
-        tracker.RunPass();
-        Assert.That(Resolve(A).RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
-        Bootstrap(response.RoomRecovery.Epoch);
-        tracker.RunPass();
-        Assert.That(Resolve(A).RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Ready));
-    }
-
-    [TestCase(A)]
-    [TestCase(B)]
-    public void Lookup_RegistrationLagDefersAuthorityEvenWhenSessionRepeats(string replacement)
-    {
-        PeerClusterChange first = Resolve(A);
-        identities.Set(peer, WALLET, replacement);
-        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(A), out _), Is.False);
-        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(replacement), out _), Is.False);
-        tracker.RunPass();
-        PeerClusterChange adopted = Resolve(replacement);
-        Assert.That(adopted.RoomRecovery.Revision, replacement == A
-            ? Is.EqualTo(first.RoomRecovery.Revision) : Is.Not.EqualTo(first.RoomRecovery.Revision));
+        Assert.That(response.HasTokenNotBefore, Is.True);
+        Assert.That(response.TokenNotBefore, Is.Zero);
+        Assert.That(response.PendingTakeovers, Is.Empty);
+        Assert.That(response.ClusterId, Does.Match(@"C[0-9a-f]{32}-"));
     }
 
     [Test]
-    public void TakeoverBeforeQueuedCompletion_IsReconciledBeforeAcknowledgement()
+    public void LiveRegistrationChange_FencesStaleLookupUntilNextPass()
     {
-        Bootstrap(board.RoomRecoveryStatus.Epoch);
-        tracker.RunPass();
-        identities.Set(peer, WALLET, B);
-        tracker.RunPass();
-        PeerClusterChange first = Resolve(B);
-        Complete(first);
-        identities.Set(peer, WALLET, A);
-        tracker.RunPass();
-        PeerClusterChange replacement = Resolve(A);
-        Assert.Multiple(() =>
-        {
-            Assert.That(replacement.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
-            Assert.That(replacement.RoomRecovery.Operations, Has.Count.EqualTo(1));
-            Assert.That(replacement.RoomRecovery.Operations[0].OperationId, Is.EqualTo(first.RoomRecovery.Operations[0].OperationId));
-        });
-    }
-
-    [Test]
-    public void DepartedTombstone_IsExplicitAndRejectsAuthorityDuringAnUnadoptedReconnect()
-    {
-        Bootstrap(board.RoomRecoveryStatus.Epoch);
-        tracker.RunPass();
-        PeerClusterChange first = Resolve(A);
-        grids.Remove(peer);
-        snapshots.ClearActive(peer);
-        identities.Remove(peer);
-        tracker.RunPass();
-        PeerClusterChange tombstone = Resolve(A);
-        Assert.Multiple(() =>
-        {
-            Assert.That(tombstone.RoomRecovery.CleanupOnly, Is.True);
-            Assert.That(tombstone.ClusterId, Is.Empty);
-            Assert.That(tombstone.Realm, Is.Empty);
-            Assert.That(tombstone.Session, Is.EqualTo(A));
-            Assert.That(tombstone.RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
-            Assert.That(tombstone.RoomRecovery.Operations[0].ClusterId, Is.EqualTo(first.ClusterId));
-        });
         identities.Set(peer, WALLET, A);
         Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(A), out _), Is.False);
-    }
-
-    [Test]
-    public void MalformedOrOversizedConfirmations_DoNotEnterTheInbox()
-    {
-        Assert.Multiple(() =>
-        {
-            Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed", [255]), Is.False);
-            Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed", new byte[4097]), Is.False);
-            Assert.That(publisher.TryAcceptBootstrapConfirmation([255]), Is.False);
-            Assert.That(publisher.TryAcceptBootstrapConfirmation(new byte[129]), Is.False);
-        });
-    }
-
-    [Test]
-    public void BootstrapConfirmation_IsExactEpochAndIdempotent()
-    {
-        string epoch = board.RoomRecoveryStatus.Epoch;
-        Bootstrap("previous-boot");
         tracker.RunPass();
-        Assert.That(board.RoomRecoveryStatus.BootstrapRequired, Is.True);
-        Bootstrap(epoch);
-        Bootstrap(epoch);
-        tracker.RunPass();
-        Assert.That(board.RoomRecoveryStatus.BootstrapRequired, Is.False);
-        Assert.That(Resolve(A).RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Ready));
-    }
-
-    [Test]
-    public void FullConfirmationInbox_DefersCleanupAndAllowsRetryAfterTheNextPass()
-    {
-        Bootstrap(board.RoomRecoveryStatus.Epoch);
-        tracker.RunPass();
+        Assert.That(Resolve(A).PendingTakeovers, Is.Empty);
         identities.Set(peer, WALLET, B);
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(A), out _), Is.False);
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(B), out _), Is.False);
         tracker.RunPass();
+        Assert.That(Resolve(B).PendingTakeovers[0].DisplacedSession, Is.EqualTo(A));
+    }
+
+    [Test]
+    public void RecycledSlotForAnotherWallet_CannotResolvePreviousAssignment()
+    {
+        const string other = "0x2222222222222222222222222222222222222222";
+        identities.Set(peer, other, A);
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(A), out _), Is.False);
+        tracker.RunPass();
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(A), out _), Is.False);
+        Assert.That(publisher.TryResolveAssignment($"peer.{other}.cluster_assignment", Encoding.UTF8.GetBytes(A), out PeerClusterChange? response), Is.True);
+        Assert.That(response?.PendingTakeovers, Is.Empty);
+    }
+    [Test]
+    public void QueuedCompletionAndNewWinner_ApplyAgainstRetainedTakeoverId()
+    {
+        identities.Set(peer, WALLET, B); tracker.RunPass();
         PeerClusterChange pending = Resolve(B);
-        byte[] bootstrap = new RoomRecoveryBootstrapCompleted { Epoch = pending.RoomRecovery.Epoch }.ToByteArray();
-        for (var confirmation = 0; confirmation < RoomRecoveryInbox.MAX_CONFIRMATIONS_PER_PASS; confirmation++)
-            Assert.That(publisher.TryAcceptBootstrapConfirmation(bootstrap), Is.True);
-        Assert.That(publisher.TryAcceptBootstrapConfirmation(bootstrap), Is.False);
-        tracker.RunPass();
-        Assert.That(Resolve(B).RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Pending));
-        Complete(pending);
-        tracker.RunPass();
-        Assert.That(Resolve(B).RoomRecovery.Admission, Is.EqualTo(RoomAdmissionState.Ready));
+        QueueCompletion(pending, 101);
+        identities.Set(peer, WALLET, A); tracker.RunPass();
+        PeerClusterChange ready = Resolve(A);
+        Assert.That(ready.PendingTakeovers, Is.Empty);
+        Assert.That(ready.TokenNotBefore, Is.EqualTo(101));
+        identities.Set(peer, WALLET, B); tracker.RunPass();
+        PeerClusterChange newer = Resolve(B);
+        Assert.That(newer.PendingTakeovers[0].TakeoverId, Is.Not.EqualTo(pending.PendingTakeovers[0].TakeoverId));
+        QueueCompletion(pending, 999); tracker.RunPass();
+        Assert.That(Resolve(B).PendingTakeovers, Has.Count.EqualTo(1));
     }
 
     [Test]
-    public void ReadyObservation_RequiresTheCanonicalEmptyOperationEncoding()
+    public void Departure_HasNoAssignmentReplyButUnfinishedWorkSurvivesReturn()
     {
-        var observed = new RoomCleanupCompleted
-        {
-            Epoch = board.RoomRecoveryStatus.Epoch,
-            Revision = "1",
-            ObservedReady = true,
-        };
-        Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed", observed.ToByteArray()), Is.True);
-        observed.OperationId = "not-empty";
-        Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed", observed.ToByteArray()), Is.False);
-        observed.OperationId = "";
-        observed.ClusterId = "not-empty";
-        Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed", observed.ToByteArray()), Is.False);
-        observed.ClusterId = "";
-        observed.RevokeBefore = 1;
-        Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed", observed.ToByteArray()), Is.False);
+        identities.Set(peer, WALLET, B); tracker.RunPass();
+        PeerClusterChange pending = Resolve(B);
+        grids.Remove(peer); snapshots.ClearActive(peer); identities.Remove(peer); tracker.RunPass();
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(B), out _), Is.False);
+        identities.Set(peer, WALLET, A); grids.Set(peer, "realm", Vector3.Zero); snapshots.SetActive(peer); tracker.RunPass();
+        Assert.That(Resolve(A).PendingTakeovers, Is.EqualTo(pending.PendingTakeovers));
+    }
+
+    [Test]
+    public void Confirmation_RequiresValidWalletIdAndPositiveSafeCutoff()
+    {
+        var completion = new TakeoverCompleted { TakeoverId = "id", RevokeBefore = 101 };
+        Assert.That(publisher.TryAcceptTakeoverConfirmation($"peer.{WALLET}.takeover_completed", completion.ToByteArray()), Is.True);
+        Assert.That(publisher.TryAcceptTakeoverConfirmation("peer.invalid.takeover_completed", completion.ToByteArray()), Is.False);
+        completion.TakeoverId = "";
+        Assert.That(publisher.TryAcceptTakeoverConfirmation($"peer.{WALLET}.takeover_completed", completion.ToByteArray()), Is.False);
+        completion.TakeoverId = "id"; completion.RevokeBefore = 0;
+        Assert.That(publisher.TryAcceptTakeoverConfirmation($"peer.{WALLET}.takeover_completed", completion.ToByteArray()), Is.False);
+        completion.RevokeBefore = RoomRecoveryLedger.MAX_SAFE_CUTOFF + 1;
+        Assert.That(publisher.TryAcceptTakeoverConfirmation($"peer.{WALLET}.takeover_completed", completion.ToByteArray()), Is.False);
     }
 
     private PeerClusterChange Resolve(string session)
     {
-        bool found = publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session),
-            out PeerClusterChange? response);
-        Assert.That(found, Is.True);
-        return response ?? throw new AssertionException("Expected positive room authority.");
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(session),
+            out PeerClusterChange? response), Is.True);
+        return response ?? throw new AssertionException("Expected positive assignment authority.");
     }
 
-    private void Bootstrap(string epoch) => Assert.That(publisher.TryAcceptBootstrapConfirmation(
-        new RoomRecoveryBootstrapCompleted { Epoch = epoch }.ToByteArray()), Is.True);
-
-    private void Complete(PeerClusterChange response)
-    {
-        foreach (RoomCleanupOperation operation in response.RoomRecovery.Operations)
-            Assert.That(publisher.TryAcceptCleanupConfirmation($"peer.{WALLET}.room_cleanup_completed",
-                new RoomCleanupCompleted
-                {
-                    Epoch = response.RoomRecovery.Epoch,
-                    Revision = response.RoomRecovery.Revision,
-                    OperationId = operation.OperationId,
-                    ClusterId = operation.ClusterId,
-                    RevokeBefore = operation.MinimumRevokeBefore,
-                }.ToByteArray()), Is.True);
-    }
+    private void QueueCompletion(PeerClusterChange response, ulong cutoff) => Assert.That(
+        publisher.TryAcceptTakeoverConfirmation($"peer.{WALLET}.takeover_completed", new TakeoverCompleted
+        {
+            TakeoverId = response.PendingTakeovers[0].TakeoverId,
+            RevokeBefore = cutoff,
+        }.ToByteArray()), Is.True);
 }

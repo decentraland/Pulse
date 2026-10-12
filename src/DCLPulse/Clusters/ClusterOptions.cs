@@ -36,9 +36,9 @@ public sealed class ClusterOptions
     /// </summary>
     public int SessionRetentionPasses { get; set; } = 300;
 
-    /// <summary>Maximum retained room plans. Capacity exhaustion blocks new admission without evicting cleanup.</summary>
+    /// <summary>Maximum retained wallets. Overflow assignments omit the capability marker and cannot receive credentials.</summary>
     public int MaxRecoveryWallets { get; set; } = 8192;
 
-    /// <summary>Maximum unfinished rooms per wallet. Unrecorded transitions remain blocked until space is available.</summary>
+    /// <summary>Maximum unfinished takeovers per wallet. Unrecorded displacement remains retained and blocks credentials.</summary>
     public int MaxRecoveryRoomsPerWallet { get; set; } = 32;
 }

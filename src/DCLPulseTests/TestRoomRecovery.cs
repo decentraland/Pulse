@@ -24,10 +24,10 @@ internal static class TestRoomRecovery
             var peer = new PeerIndex(slot++);
             identities.Set(peer, wallet, assignment.Session);
             recovery.Add(wallet, new RoomRecoveryAssignment(assignment, peer, identities.GetIdentity(peer),
-                "test-epoch", "1", false, false, true, 0, []));
+                true, false, 0, []));
         }
 
         board.PublishAssignments(assignments);
-        board.PublishRoomRecovery(recovery, new RoomRecoveryStatus("test-epoch", true, 0, recovery.Count));
+        board.PublishRoomRecovery(recovery, new RoomRecoveryStatus("test-boot", 0, recovery.Count, false));
     }
 }

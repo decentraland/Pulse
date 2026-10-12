@@ -25,47 +25,28 @@ namespace Decentraland.Pulse {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "CidkZWNlbnRyYWxhbmQvcHVsc2UvcHVsc2VfY2x1c3RlcnMucHJvdG8SEmRl",
-            "Y2VudHJhbGFuZC5wdWxzZSK9AQoRUGVlckNsdXN0ZXJDaGFuZ2USEgoKY2x1",
+            "Y2VudHJhbGFuZC5wdWxzZSKJAgoRUGVlckNsdXN0ZXJDaGFuZ2USEgoKY2x1",
             "c3Rlcl9pZBgBIAEoCRINCgVyZWFsbRgCIAEoCRIPCgdzZXNzaW9uGAMgASgJ",
             "EhkKEWRpc3BsYWNlZF9zZXNzaW9uGAQgASgJEhwKFGRpc3BsYWNlZF9jbHVz",
-            "dGVyX2lkGAUgASgJEjsKDXJvb21fcmVjb3ZlcnkYBiABKAsyJC5kZWNlbnRy",
-            "YWxhbmQucHVsc2UuUm9vbVJlY292ZXJ5UGxhbiL4AQoQUm9vbVJlY292ZXJ5",
-            "UGxhbhINCgVlcG9jaBgBIAEoCRIQCghyZXZpc2lvbhgCIAEoCRI5CglhZG1p",
-            "c3Npb24YAyABKA4yJi5kZWNlbnRyYWxhbmQucHVsc2UuUm9vbUFkbWlzc2lv",
-            "blN0YXRlEhQKDGNsZWFudXBfb25seRgEIAEoCBI8CgpvcGVyYXRpb25zGAUg",
-            "AygLMiguZGVjZW50cmFsYW5kLnB1bHNlLlJvb21DbGVhbnVwT3BlcmF0aW9u",
-            "EhgKEHRva2VuX25vdF9iZWZvcmUYBiABKAQSGgoSYm9vdHN0cmFwX3JlcXVp",
-            "cmVkGAcgASgIIl8KFFJvb21DbGVhbnVwT3BlcmF0aW9uEhQKDG9wZXJhdGlv",
-            "bl9pZBgBIAEoCRISCgpjbHVzdGVyX2lkGAIgASgJEh0KFW1pbmltdW1fcmV2",
-            "b2tlX2JlZm9yZRgDIAEoBCKQAQoUUm9vbUNsZWFudXBDb21wbGV0ZWQSDQoF",
-            "ZXBvY2gYASABKAkSEAoIcmV2aXNpb24YAiABKAkSFAoMb3BlcmF0aW9uX2lk",
-            "GAMgASgJEhIKCmNsdXN0ZXJfaWQYBCABKAkSFQoNcmV2b2tlX2JlZm9yZRgF",
-            "IAEoBBIWCg5vYnNlcnZlZF9yZWFkeRgGIAEoCCIvCh5Sb29tUmVjb3ZlcnlC",
-            "b290c3RyYXBDb21wbGV0ZWQSDQoFZXBvY2gYASABKAkqPQoSUm9vbUFkbWlz",
-            "c2lvblN0YXRlEg8KC1VOU1BFQ0lGSUVEEAASCwoHUEVORElORxABEgkKBVJF",
-            "QURZEAJiBnByb3RvMw=="));
+            "dGVyX2lkGAUgASgJEj4KEXBlbmRpbmdfdGFrZW92ZXJzGAcgAygLMiMuZGVj",
+            "ZW50cmFsYW5kLnB1bHNlLlBlbmRpbmdUYWtlb3ZlchIdChB0b2tlbl9ub3Rf",
+            "YmVmb3JlGAggASgESACIAQFCEwoRX3Rva2VuX25vdF9iZWZvcmVKBAgGEAdS",
+            "DXJvb21fcmVjb3ZlcnkiXwoPUGVuZGluZ1Rha2VvdmVyEhMKC3Rha2VvdmVy",
+            "X2lkGAEgASgJEhkKEWRpc3BsYWNlZF9zZXNzaW9uGAIgASgJEhwKFGRpc3Bs",
+            "YWNlZF9jbHVzdGVyX2lkGAMgASgJIj8KEVRha2VvdmVyQ29tcGxldGVkEhMK",
+            "C3Rha2VvdmVyX2lkGAEgASgJEhUKDXJldm9rZV9iZWZvcmUYAiABKARiBnBy",
+            "b3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
-          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Decentraland.Pulse.RoomAdmissionState), }, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PeerClusterChange), global::Decentraland.Pulse.PeerClusterChange.Parser, new[]{ "ClusterId", "Realm", "Session", "DisplacedSession", "DisplacedClusterId", "RoomRecovery" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.RoomRecoveryPlan), global::Decentraland.Pulse.RoomRecoveryPlan.Parser, new[]{ "Epoch", "Revision", "Admission", "CleanupOnly", "Operations", "TokenNotBefore", "BootstrapRequired" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.RoomCleanupOperation), global::Decentraland.Pulse.RoomCleanupOperation.Parser, new[]{ "OperationId", "ClusterId", "MinimumRevokeBefore" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.RoomCleanupCompleted), global::Decentraland.Pulse.RoomCleanupCompleted.Parser, new[]{ "Epoch", "Revision", "OperationId", "ClusterId", "RevokeBefore", "ObservedReady" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.RoomRecoveryBootstrapCompleted), global::Decentraland.Pulse.RoomRecoveryBootstrapCompleted.Parser, new[]{ "Epoch" }, null, null, null, null)
+          new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PeerClusterChange), global::Decentraland.Pulse.PeerClusterChange.Parser, new[]{ "ClusterId", "Realm", "Session", "DisplacedSession", "DisplacedClusterId", "PendingTakeovers", "TokenNotBefore" }, new[]{ "TokenNotBefore" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.PendingTakeover), global::Decentraland.Pulse.PendingTakeover.Parser, new[]{ "TakeoverId", "DisplacedSession", "DisplacedClusterId" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Decentraland.Pulse.TakeoverCompleted), global::Decentraland.Pulse.TakeoverCompleted.Parser, new[]{ "TakeoverId", "RevokeBefore" }, null, null, null, null)
           }));
     }
     #endregion
 
   }
-  #region Enums
-  public enum RoomAdmissionState {
-    [pbr::OriginalName("UNSPECIFIED")] Unspecified = 0,
-    [pbr::OriginalName("PENDING")] Pending = 1,
-    [pbr::OriginalName("READY")] Ready = 2,
-  }
-
-  #endregion
-
   #region Messages
   /// <summary>
   /// Published by Pulse to NATS on `peer.{address}.cluster_change` whenever a peer's post-debounce
@@ -76,7 +57,7 @@ namespace Decentraland.Pulse {
   /// clusters have no size cap, are realm-partitioned, and carry no transport connection details.
   /// Comms Gatekeeper subscribes here, mints the LiveKit connection string (the ban check is
   /// authority-local to gatekeeper), and re-emits the legacy
-  /// decentraland.kernel.comms.v3.IslandChangedMessage on `engine.peer.{address}.island_changed`,
+  /// decentraland.kernel.comms.v3.IslandChangedMessage on `engine.peer.{address}.island_changed.{session}`,
   /// so the WebSocket Connector and clients stay untouched.
   /// </summary>
   public sealed partial class PeerClusterChange : pb::IMessage<PeerClusterChange>
@@ -86,6 +67,7 @@ namespace Decentraland.Pulse {
   {
     private static readonly pb::MessageParser<PeerClusterChange> _parser = new pb::MessageParser<PeerClusterChange>(() => new PeerClusterChange());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<PeerClusterChange> Parser { get { return _parser; } }
@@ -113,12 +95,14 @@ namespace Decentraland.Pulse {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public PeerClusterChange(PeerClusterChange other) : this() {
+      _hasBits0 = other._hasBits0;
       clusterId_ = other.clusterId_;
       realm_ = other.realm_;
       session_ = other.session_;
       displacedSession_ = other.displacedSession_;
       displacedClusterId_ = other.displacedClusterId_;
-      roomRecovery_ = other.roomRecovery_ != null ? other.roomRecovery_.Clone() : null;
+      pendingTakeovers_ = other.pendingTakeovers_.Clone();
+      tokenNotBefore_ = other.tokenNotBefore_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -205,21 +189,49 @@ namespace Decentraland.Pulse {
       }
     }
 
-    /// <summary>Field number for the "room_recovery" field.</summary>
-    public const int RoomRecoveryFieldNumber = 6;
-    private global::Decentraland.Pulse.RoomRecoveryPlan roomRecovery_;
+    /// <summary>Field number for the "pending_takeovers" field.</summary>
+    public const int PendingTakeoversFieldNumber = 7;
+    private static readonly pb::FieldCodec<global::Decentraland.Pulse.PendingTakeover> _repeated_pendingTakeovers_codec
+        = pb::FieldCodec.ForMessage(58, global::Decentraland.Pulse.PendingTakeover.Parser);
+    private readonly pbc::RepeatedField<global::Decentraland.Pulse.PendingTakeover> pendingTakeovers_ = new pbc::RepeatedField<global::Decentraland.Pulse.PendingTakeover>();
     /// <summary>
-    /// Authoritative backend room plan, also returned by assignment lookup and periodic hints.
-    /// Absent plans and unspecified admission never permit issuing island credentials.
-    /// Older readers ignore this barrier, so Pulse and Gatekeeper require coordinated activation.
+    /// Unfinished takeovers survive notification loss and later ownership changes.
+    /// Gatekeeper must complete every entry before issuing current-session credentials.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public global::Decentraland.Pulse.RoomRecoveryPlan RoomRecovery {
-      get { return roomRecovery_; }
+    public pbc::RepeatedField<global::Decentraland.Pulse.PendingTakeover> PendingTakeovers {
+      get { return pendingTakeovers_; }
+    }
+
+    /// <summary>Field number for the "token_not_before" field.</summary>
+    public const int TokenNotBeforeFieldNumber = 8;
+    private ulong tokenNotBefore_;
+    /// <summary>
+    /// Confirmed revocation floor in whole Unix seconds. Present zero is a first assignment;
+    /// absence means this response cannot authorize credentials (old producer or blocked state).
+    /// Consumers reject uint64 values outside the JavaScript safe-integer range.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TokenNotBefore {
+      get { if ((_hasBits0 & 1) != 0) { return tokenNotBefore_; } else { return 0UL; } }
       set {
-        roomRecovery_ = value;
+        _hasBits0 |= 1;
+        tokenNotBefore_ = value;
       }
+    }
+    /// <summary>Gets whether the "token_not_before" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasTokenNotBefore {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "token_not_before" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearTokenNotBefore() {
+      _hasBits0 &= ~1;
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -242,7 +254,8 @@ namespace Decentraland.Pulse {
       if (Session != other.Session) return false;
       if (DisplacedSession != other.DisplacedSession) return false;
       if (DisplacedClusterId != other.DisplacedClusterId) return false;
-      if (!object.Equals(RoomRecovery, other.RoomRecovery)) return false;
+      if(!pendingTakeovers_.Equals(other.pendingTakeovers_)) return false;
+      if (TokenNotBefore != other.TokenNotBefore) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -255,7 +268,8 @@ namespace Decentraland.Pulse {
       if (Session.Length != 0) hash ^= Session.GetHashCode();
       if (DisplacedSession.Length != 0) hash ^= DisplacedSession.GetHashCode();
       if (DisplacedClusterId.Length != 0) hash ^= DisplacedClusterId.GetHashCode();
-      if (roomRecovery_ != null) hash ^= RoomRecovery.GetHashCode();
+      hash ^= pendingTakeovers_.GetHashCode();
+      if (HasTokenNotBefore) hash ^= TokenNotBefore.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -294,9 +308,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(42);
         output.WriteString(DisplacedClusterId);
       }
-      if (roomRecovery_ != null) {
-        output.WriteRawTag(50);
-        output.WriteMessage(RoomRecovery);
+      pendingTakeovers_.WriteTo(output, _repeated_pendingTakeovers_codec);
+      if (HasTokenNotBefore) {
+        output.WriteRawTag(64);
+        output.WriteUInt64(TokenNotBefore);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -328,9 +343,10 @@ namespace Decentraland.Pulse {
         output.WriteRawTag(42);
         output.WriteString(DisplacedClusterId);
       }
-      if (roomRecovery_ != null) {
-        output.WriteRawTag(50);
-        output.WriteMessage(RoomRecovery);
+      pendingTakeovers_.WriteTo(ref output, _repeated_pendingTakeovers_codec);
+      if (HasTokenNotBefore) {
+        output.WriteRawTag(64);
+        output.WriteUInt64(TokenNotBefore);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -357,8 +373,9 @@ namespace Decentraland.Pulse {
       if (DisplacedClusterId.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(DisplacedClusterId);
       }
-      if (roomRecovery_ != null) {
-        size += 1 + pb::CodedOutputStream.ComputeMessageSize(RoomRecovery);
+      size += pendingTakeovers_.CalculateSize(_repeated_pendingTakeovers_codec);
+      if (HasTokenNotBefore) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(TokenNotBefore);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -387,11 +404,9 @@ namespace Decentraland.Pulse {
       if (other.DisplacedClusterId.Length != 0) {
         DisplacedClusterId = other.DisplacedClusterId;
       }
-      if (other.roomRecovery_ != null) {
-        if (roomRecovery_ == null) {
-          RoomRecovery = new global::Decentraland.Pulse.RoomRecoveryPlan();
-        }
-        RoomRecovery.MergeFrom(other.RoomRecovery);
+      pendingTakeovers_.Add(other.pendingTakeovers_);
+      if (other.HasTokenNotBefore) {
+        TokenNotBefore = other.TokenNotBefore;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -428,11 +443,12 @@ namespace Decentraland.Pulse {
             DisplacedClusterId = input.ReadString();
             break;
           }
-          case 50: {
-            if (roomRecovery_ == null) {
-              RoomRecovery = new global::Decentraland.Pulse.RoomRecoveryPlan();
-            }
-            input.ReadMessage(RoomRecovery);
+          case 58: {
+            pendingTakeovers_.AddEntriesFrom(input, _repeated_pendingTakeovers_codec);
+            break;
+          }
+          case 64: {
+            TokenNotBefore = input.ReadUInt64();
             break;
           }
         }
@@ -470,11 +486,12 @@ namespace Decentraland.Pulse {
             DisplacedClusterId = input.ReadString();
             break;
           }
-          case 50: {
-            if (roomRecovery_ == null) {
-              RoomRecovery = new global::Decentraland.Pulse.RoomRecoveryPlan();
-            }
-            input.ReadMessage(RoomRecovery);
+          case 58: {
+            pendingTakeovers_.AddEntriesFrom(ref input, _repeated_pendingTakeovers_codec);
+            break;
+          }
+          case 64: {
+            TokenNotBefore = input.ReadUInt64();
             break;
           }
         }
@@ -484,16 +501,20 @@ namespace Decentraland.Pulse {
 
   }
 
-  public sealed partial class RoomRecoveryPlan : pb::IMessage<RoomRecoveryPlan>
+  /// <summary>
+  /// Retained by Pulse until the matching completion is applied. IDs are globally unique;
+  /// another takeover in the same room receives a new ID. Hints never create new IDs.
+  /// </summary>
+  public sealed partial class PendingTakeover : pb::IMessage<PendingTakeover>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
   #endif
   {
-    private static readonly pb::MessageParser<RoomRecoveryPlan> _parser = new pb::MessageParser<RoomRecoveryPlan>(() => new RoomRecoveryPlan());
+    private static readonly pb::MessageParser<PendingTakeover> _parser = new pb::MessageParser<PendingTakeover>(() => new PendingTakeover());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<RoomRecoveryPlan> Parser { get { return _parser; } }
+    public static pb::MessageParser<PendingTakeover> Parser { get { return _parser; } }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -509,7 +530,7 @@ namespace Decentraland.Pulse {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomRecoveryPlan() {
+    public PendingTakeover() {
       OnConstruction();
     }
 
@@ -517,140 +538,73 @@ namespace Decentraland.Pulse {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomRecoveryPlan(RoomRecoveryPlan other) : this() {
-      epoch_ = other.epoch_;
-      revision_ = other.revision_;
-      admission_ = other.admission_;
-      cleanupOnly_ = other.cleanupOnly_;
-      operations_ = other.operations_.Clone();
-      tokenNotBefore_ = other.tokenNotBefore_;
-      bootstrapRequired_ = other.bootstrapRequired_;
+    public PendingTakeover(PendingTakeover other) : this() {
+      takeoverId_ = other.takeoverId_;
+      displacedSession_ = other.displacedSession_;
+      displacedClusterId_ = other.displacedClusterId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomRecoveryPlan Clone() {
-      return new RoomRecoveryPlan(this);
+    public PendingTakeover Clone() {
+      return new PendingTakeover(this);
     }
 
-    /// <summary>Field number for the "epoch" field.</summary>
-    public const int EpochFieldNumber = 1;
-    private string epoch_ = "";
-    /// <summary>
-    /// Random Pulse lifetime identifier. A new epoch starts blocked until controlled room reset.
-    /// </summary>
+    /// <summary>Field number for the "takeover_id" field.</summary>
+    public const int TakeoverIdFieldNumber = 1;
+    private string takeoverId_ = "";
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string Epoch {
-      get { return epoch_; }
+    public string TakeoverId {
+      get { return takeoverId_; }
       set {
-        epoch_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+        takeoverId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
       }
     }
 
-    /// <summary>Field number for the "revision" field.</summary>
-    public const int RevisionFieldNumber = 2;
-    private string revision_ = "";
-    /// <summary>
-    /// Positive decimal revision, kept as a string to preserve arbitrary uint64 precision in JS.
-    /// </summary>
+    /// <summary>Field number for the "displaced_session" field.</summary>
+    public const int DisplacedSessionFieldNumber = 2;
+    private string displacedSession_ = "";
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string Revision {
-      get { return revision_; }
+    public string DisplacedSession {
+      get { return displacedSession_; }
       set {
-        revision_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+        displacedSession_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
       }
     }
 
-    /// <summary>Field number for the "admission" field.</summary>
-    public const int AdmissionFieldNumber = 3;
-    private global::Decentraland.Pulse.RoomAdmissionState admission_ = global::Decentraland.Pulse.RoomAdmissionState.Unspecified;
+    /// <summary>Field number for the "displaced_cluster_id" field.</summary>
+    public const int DisplacedClusterIdFieldNumber = 3;
+    private string displacedClusterId_ = "";
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public global::Decentraland.Pulse.RoomAdmissionState Admission {
-      get { return admission_; }
+    public string DisplacedClusterId {
+      get { return displacedClusterId_; }
       set {
-        admission_ = value;
-      }
-    }
-
-    /// <summary>Field number for the "cleanup_only" field.</summary>
-    public const int CleanupOnlyFieldNumber = 4;
-    private bool cleanupOnly_;
-    /// <summary>
-    /// Retained departure record: never grants credentials, including when cleanup is complete.
-    /// </summary>
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool CleanupOnly {
-      get { return cleanupOnly_; }
-      set {
-        cleanupOnly_ = value;
-      }
-    }
-
-    /// <summary>Field number for the "operations" field.</summary>
-    public const int OperationsFieldNumber = 5;
-    private static readonly pb::FieldCodec<global::Decentraland.Pulse.RoomCleanupOperation> _repeated_operations_codec
-        = pb::FieldCodec.ForMessage(42, global::Decentraland.Pulse.RoomCleanupOperation.Parser);
-    private readonly pbc::RepeatedField<global::Decentraland.Pulse.RoomCleanupOperation> operations_ = new pbc::RepeatedField<global::Decentraland.Pulse.RoomCleanupOperation>();
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public pbc::RepeatedField<global::Decentraland.Pulse.RoomCleanupOperation> Operations {
-      get { return operations_; }
-    }
-
-    /// <summary>Field number for the "token_not_before" field.</summary>
-    public const int TokenNotBeforeFieldNumber = 6;
-    private ulong tokenNotBefore_;
-    /// <summary>
-    /// Whole Unix seconds; token nbf must be at least this confirmed revocation cutoff.
-    /// </summary>
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public ulong TokenNotBefore {
-      get { return tokenNotBefore_; }
-      set {
-        tokenNotBefore_ = value;
-      }
-    }
-
-    /// <summary>Field number for the "bootstrap_required" field.</summary>
-    public const int BootstrapRequiredFieldNumber = 7;
-    private bool bootstrapRequired_;
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool BootstrapRequired {
-      get { return bootstrapRequired_; }
-      set {
-        bootstrapRequired_ = value;
+        displacedClusterId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
       }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
-      return Equals(other as RoomRecoveryPlan);
+      return Equals(other as PendingTakeover);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(RoomRecoveryPlan other) {
+    public bool Equals(PendingTakeover other) {
       if (ReferenceEquals(other, null)) {
         return false;
       }
       if (ReferenceEquals(other, this)) {
         return true;
       }
-      if (Epoch != other.Epoch) return false;
-      if (Revision != other.Revision) return false;
-      if (Admission != other.Admission) return false;
-      if (CleanupOnly != other.CleanupOnly) return false;
-      if(!operations_.Equals(other.operations_)) return false;
-      if (TokenNotBefore != other.TokenNotBefore) return false;
-      if (BootstrapRequired != other.BootstrapRequired) return false;
+      if (TakeoverId != other.TakeoverId) return false;
+      if (DisplacedSession != other.DisplacedSession) return false;
+      if (DisplacedClusterId != other.DisplacedClusterId) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -658,13 +612,9 @@ namespace Decentraland.Pulse {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override int GetHashCode() {
       int hash = 1;
-      if (Epoch.Length != 0) hash ^= Epoch.GetHashCode();
-      if (Revision.Length != 0) hash ^= Revision.GetHashCode();
-      if (Admission != global::Decentraland.Pulse.RoomAdmissionState.Unspecified) hash ^= Admission.GetHashCode();
-      if (CleanupOnly != false) hash ^= CleanupOnly.GetHashCode();
-      hash ^= operations_.GetHashCode();
-      if (TokenNotBefore != 0UL) hash ^= TokenNotBefore.GetHashCode();
-      if (BootstrapRequired != false) hash ^= BootstrapRequired.GetHashCode();
+      if (TakeoverId.Length != 0) hash ^= TakeoverId.GetHashCode();
+      if (DisplacedSession.Length != 0) hash ^= DisplacedSession.GetHashCode();
+      if (DisplacedClusterId.Length != 0) hash ^= DisplacedClusterId.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -683,30 +633,17 @@ namespace Decentraland.Pulse {
     #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       output.WriteRawMessage(this);
     #else
-      if (Epoch.Length != 0) {
+      if (TakeoverId.Length != 0) {
         output.WriteRawTag(10);
-        output.WriteString(Epoch);
+        output.WriteString(TakeoverId);
       }
-      if (Revision.Length != 0) {
+      if (DisplacedSession.Length != 0) {
         output.WriteRawTag(18);
-        output.WriteString(Revision);
+        output.WriteString(DisplacedSession);
       }
-      if (Admission != global::Decentraland.Pulse.RoomAdmissionState.Unspecified) {
-        output.WriteRawTag(24);
-        output.WriteEnum((int) Admission);
-      }
-      if (CleanupOnly != false) {
-        output.WriteRawTag(32);
-        output.WriteBool(CleanupOnly);
-      }
-      operations_.WriteTo(output, _repeated_operations_codec);
-      if (TokenNotBefore != 0UL) {
-        output.WriteRawTag(48);
-        output.WriteUInt64(TokenNotBefore);
-      }
-      if (BootstrapRequired != false) {
-        output.WriteRawTag(56);
-        output.WriteBool(BootstrapRequired);
+      if (DisplacedClusterId.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(DisplacedClusterId);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -718,30 +655,17 @@ namespace Decentraland.Pulse {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (Epoch.Length != 0) {
+      if (TakeoverId.Length != 0) {
         output.WriteRawTag(10);
-        output.WriteString(Epoch);
+        output.WriteString(TakeoverId);
       }
-      if (Revision.Length != 0) {
+      if (DisplacedSession.Length != 0) {
         output.WriteRawTag(18);
-        output.WriteString(Revision);
+        output.WriteString(DisplacedSession);
       }
-      if (Admission != global::Decentraland.Pulse.RoomAdmissionState.Unspecified) {
-        output.WriteRawTag(24);
-        output.WriteEnum((int) Admission);
-      }
-      if (CleanupOnly != false) {
-        output.WriteRawTag(32);
-        output.WriteBool(CleanupOnly);
-      }
-      operations_.WriteTo(ref output, _repeated_operations_codec);
-      if (TokenNotBefore != 0UL) {
-        output.WriteRawTag(48);
-        output.WriteUInt64(TokenNotBefore);
-      }
-      if (BootstrapRequired != false) {
-        output.WriteRawTag(56);
-        output.WriteBool(BootstrapRequired);
+      if (DisplacedClusterId.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(DisplacedClusterId);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -753,24 +677,14 @@ namespace Decentraland.Pulse {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public int CalculateSize() {
       int size = 0;
-      if (Epoch.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(Epoch);
+      if (TakeoverId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(TakeoverId);
       }
-      if (Revision.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(Revision);
+      if (DisplacedSession.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(DisplacedSession);
       }
-      if (Admission != global::Decentraland.Pulse.RoomAdmissionState.Unspecified) {
-        size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Admission);
-      }
-      if (CleanupOnly != false) {
-        size += 1 + 1;
-      }
-      size += operations_.CalculateSize(_repeated_operations_codec);
-      if (TokenNotBefore != 0UL) {
-        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(TokenNotBefore);
-      }
-      if (BootstrapRequired != false) {
-        size += 1 + 1;
+      if (DisplacedClusterId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(DisplacedClusterId);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -780,28 +694,18 @@ namespace Decentraland.Pulse {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(RoomRecoveryPlan other) {
+    public void MergeFrom(PendingTakeover other) {
       if (other == null) {
         return;
       }
-      if (other.Epoch.Length != 0) {
-        Epoch = other.Epoch;
+      if (other.TakeoverId.Length != 0) {
+        TakeoverId = other.TakeoverId;
       }
-      if (other.Revision.Length != 0) {
-        Revision = other.Revision;
+      if (other.DisplacedSession.Length != 0) {
+        DisplacedSession = other.DisplacedSession;
       }
-      if (other.Admission != global::Decentraland.Pulse.RoomAdmissionState.Unspecified) {
-        Admission = other.Admission;
-      }
-      if (other.CleanupOnly != false) {
-        CleanupOnly = other.CleanupOnly;
-      }
-      operations_.Add(other.operations_);
-      if (other.TokenNotBefore != 0UL) {
-        TokenNotBefore = other.TokenNotBefore;
-      }
-      if (other.BootstrapRequired != false) {
-        BootstrapRequired = other.BootstrapRequired;
+      if (other.DisplacedClusterId.Length != 0) {
+        DisplacedClusterId = other.DisplacedClusterId;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -819,31 +723,15 @@ namespace Decentraland.Pulse {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 10: {
-            Epoch = input.ReadString();
+            TakeoverId = input.ReadString();
             break;
           }
           case 18: {
-            Revision = input.ReadString();
+            DisplacedSession = input.ReadString();
             break;
           }
-          case 24: {
-            Admission = (global::Decentraland.Pulse.RoomAdmissionState) input.ReadEnum();
-            break;
-          }
-          case 32: {
-            CleanupOnly = input.ReadBool();
-            break;
-          }
-          case 42: {
-            operations_.AddEntriesFrom(input, _repeated_operations_codec);
-            break;
-          }
-          case 48: {
-            TokenNotBefore = input.ReadUInt64();
-            break;
-          }
-          case 56: {
-            BootstrapRequired = input.ReadBool();
+          case 26: {
+            DisplacedClusterId = input.ReadString();
             break;
           }
         }
@@ -862,31 +750,15 @@ namespace Decentraland.Pulse {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 10: {
-            Epoch = input.ReadString();
+            TakeoverId = input.ReadString();
             break;
           }
           case 18: {
-            Revision = input.ReadString();
+            DisplacedSession = input.ReadString();
             break;
           }
-          case 24: {
-            Admission = (global::Decentraland.Pulse.RoomAdmissionState) input.ReadEnum();
-            break;
-          }
-          case 32: {
-            CleanupOnly = input.ReadBool();
-            break;
-          }
-          case 42: {
-            operations_.AddEntriesFrom(ref input, _repeated_operations_codec);
-            break;
-          }
-          case 48: {
-            TokenNotBefore = input.ReadUInt64();
-            break;
-          }
-          case 56: {
-            BootstrapRequired = input.ReadBool();
+          case 26: {
+            DisplacedClusterId = input.ReadString();
             break;
           }
         }
@@ -896,16 +768,20 @@ namespace Decentraland.Pulse {
 
   }
 
-  public sealed partial class RoomCleanupOperation : pb::IMessage<RoomCleanupOperation>
+  /// <summary>
+  /// Gatekeeper-only publication on peer.{wallet}.takeover_completed. A duplicate or unknown
+  /// ID has no effect. The effective cutoff must exceed the takeover's prior token floor.
+  /// </summary>
+  public sealed partial class TakeoverCompleted : pb::IMessage<TakeoverCompleted>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
   #endif
   {
-    private static readonly pb::MessageParser<RoomCleanupOperation> _parser = new pb::MessageParser<RoomCleanupOperation>(() => new RoomCleanupOperation());
+    private static readonly pb::MessageParser<TakeoverCompleted> _parser = new pb::MessageParser<TakeoverCompleted>(() => new TakeoverCompleted());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<RoomCleanupOperation> Parser { get { return _parser; } }
+    public static pb::MessageParser<TakeoverCompleted> Parser { get { return _parser; } }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -921,7 +797,7 @@ namespace Decentraland.Pulse {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomCleanupOperation() {
+    public TakeoverCompleted() {
       OnConstruction();
     }
 
@@ -929,342 +805,32 @@ namespace Decentraland.Pulse {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomCleanupOperation(RoomCleanupOperation other) : this() {
-      operationId_ = other.operationId_;
-      clusterId_ = other.clusterId_;
-      minimumRevokeBefore_ = other.minimumRevokeBefore_;
-      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomCleanupOperation Clone() {
-      return new RoomCleanupOperation(this);
-    }
-
-    /// <summary>Field number for the "operation_id" field.</summary>
-    public const int OperationIdFieldNumber = 1;
-    private string operationId_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string OperationId {
-      get { return operationId_; }
-      set {
-        operationId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "cluster_id" field.</summary>
-    public const int ClusterIdFieldNumber = 2;
-    private string clusterId_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string ClusterId {
-      get { return clusterId_; }
-      set {
-        clusterId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "minimum_revoke_before" field.</summary>
-    public const int MinimumRevokeBeforeFieldNumber = 3;
-    private ulong minimumRevokeBefore_;
-    /// <summary>
-    /// Whole Unix seconds, bounded to the JavaScript safe-integer range by consumers.
-    /// </summary>
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public ulong MinimumRevokeBefore {
-      get { return minimumRevokeBefore_; }
-      set {
-        minimumRevokeBefore_ = value;
-      }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override bool Equals(object other) {
-      return Equals(other as RoomCleanupOperation);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(RoomCleanupOperation other) {
-      if (ReferenceEquals(other, null)) {
-        return false;
-      }
-      if (ReferenceEquals(other, this)) {
-        return true;
-      }
-      if (OperationId != other.OperationId) return false;
-      if (ClusterId != other.ClusterId) return false;
-      if (MinimumRevokeBefore != other.MinimumRevokeBefore) return false;
-      return Equals(_unknownFields, other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override int GetHashCode() {
-      int hash = 1;
-      if (OperationId.Length != 0) hash ^= OperationId.GetHashCode();
-      if (ClusterId.Length != 0) hash ^= ClusterId.GetHashCode();
-      if (MinimumRevokeBefore != 0UL) hash ^= MinimumRevokeBefore.GetHashCode();
-      if (_unknownFields != null) {
-        hash ^= _unknownFields.GetHashCode();
-      }
-      return hash;
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override string ToString() {
-      return pb::JsonFormatter.ToDiagnosticString(this);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void WriteTo(pb::CodedOutputStream output) {
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      output.WriteRawMessage(this);
-    #else
-      if (OperationId.Length != 0) {
-        output.WriteRawTag(10);
-        output.WriteString(OperationId);
-      }
-      if (ClusterId.Length != 0) {
-        output.WriteRawTag(18);
-        output.WriteString(ClusterId);
-      }
-      if (MinimumRevokeBefore != 0UL) {
-        output.WriteRawTag(24);
-        output.WriteUInt64(MinimumRevokeBefore);
-      }
-      if (_unknownFields != null) {
-        _unknownFields.WriteTo(output);
-      }
-    #endif
-    }
-
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (OperationId.Length != 0) {
-        output.WriteRawTag(10);
-        output.WriteString(OperationId);
-      }
-      if (ClusterId.Length != 0) {
-        output.WriteRawTag(18);
-        output.WriteString(ClusterId);
-      }
-      if (MinimumRevokeBefore != 0UL) {
-        output.WriteRawTag(24);
-        output.WriteUInt64(MinimumRevokeBefore);
-      }
-      if (_unknownFields != null) {
-        _unknownFields.WriteTo(ref output);
-      }
-    }
-    #endif
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int CalculateSize() {
-      int size = 0;
-      if (OperationId.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(OperationId);
-      }
-      if (ClusterId.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(ClusterId);
-      }
-      if (MinimumRevokeBefore != 0UL) {
-        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(MinimumRevokeBefore);
-      }
-      if (_unknownFields != null) {
-        size += _unknownFields.CalculateSize();
-      }
-      return size;
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(RoomCleanupOperation other) {
-      if (other == null) {
-        return;
-      }
-      if (other.OperationId.Length != 0) {
-        OperationId = other.OperationId;
-      }
-      if (other.ClusterId.Length != 0) {
-        ClusterId = other.ClusterId;
-      }
-      if (other.MinimumRevokeBefore != 0UL) {
-        MinimumRevokeBefore = other.MinimumRevokeBefore;
-      }
-      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(pb::CodedInputStream input) {
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      input.ReadRawMessage(this);
-    #else
-      uint tag;
-      while ((tag = input.ReadTag()) != 0) {
-        switch(tag) {
-          default:
-            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
-            break;
-          case 10: {
-            OperationId = input.ReadString();
-            break;
-          }
-          case 18: {
-            ClusterId = input.ReadString();
-            break;
-          }
-          case 24: {
-            MinimumRevokeBefore = input.ReadUInt64();
-            break;
-          }
-        }
-      }
-    #endif
-    }
-
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
-      uint tag;
-      while ((tag = input.ReadTag()) != 0) {
-        switch(tag) {
-          default:
-            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
-            break;
-          case 10: {
-            OperationId = input.ReadString();
-            break;
-          }
-          case 18: {
-            ClusterId = input.ReadString();
-            break;
-          }
-          case 24: {
-            MinimumRevokeBefore = input.ReadUInt64();
-            break;
-          }
-        }
-      }
-    }
-    #endif
-
-  }
-
-  /// <summary>
-  /// Gatekeeper-only publication on peer.{wallet}.room_cleanup_completed. Pulse matches all
-  /// identifiers against the current plan before recording this effective whole-second cutoff.
-  /// </summary>
-  public sealed partial class RoomCleanupCompleted : pb::IMessage<RoomCleanupCompleted>
-  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      , pb::IBufferMessage
-  #endif
-  {
-    private static readonly pb::MessageParser<RoomCleanupCompleted> _parser = new pb::MessageParser<RoomCleanupCompleted>(() => new RoomCleanupCompleted());
-    private pb::UnknownFieldSet _unknownFields;
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<RoomCleanupCompleted> Parser { get { return _parser; } }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pbr::MessageDescriptor Descriptor {
-      get { return global::Decentraland.Pulse.PulseClustersReflection.Descriptor.MessageTypes[3]; }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    pbr::MessageDescriptor pb::IMessage.Descriptor {
-      get { return Descriptor; }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomCleanupCompleted() {
-      OnConstruction();
-    }
-
-    partial void OnConstruction();
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomCleanupCompleted(RoomCleanupCompleted other) : this() {
-      epoch_ = other.epoch_;
-      revision_ = other.revision_;
-      operationId_ = other.operationId_;
-      clusterId_ = other.clusterId_;
+    public TakeoverCompleted(TakeoverCompleted other) : this() {
+      takeoverId_ = other.takeoverId_;
       revokeBefore_ = other.revokeBefore_;
-      observedReady_ = other.observedReady_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomCleanupCompleted Clone() {
-      return new RoomCleanupCompleted(this);
+    public TakeoverCompleted Clone() {
+      return new TakeoverCompleted(this);
     }
 
-    /// <summary>Field number for the "epoch" field.</summary>
-    public const int EpochFieldNumber = 1;
-    private string epoch_ = "";
+    /// <summary>Field number for the "takeover_id" field.</summary>
+    public const int TakeoverIdFieldNumber = 1;
+    private string takeoverId_ = "";
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string Epoch {
-      get { return epoch_; }
+    public string TakeoverId {
+      get { return takeoverId_; }
       set {
-        epoch_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "revision" field.</summary>
-    public const int RevisionFieldNumber = 2;
-    private string revision_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string Revision {
-      get { return revision_; }
-      set {
-        revision_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "operation_id" field.</summary>
-    public const int OperationIdFieldNumber = 3;
-    private string operationId_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string OperationId {
-      get { return operationId_; }
-      set {
-        operationId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "cluster_id" field.</summary>
-    public const int ClusterIdFieldNumber = 4;
-    private string clusterId_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string ClusterId {
-      get { return clusterId_; }
-      set {
-        clusterId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+        takeoverId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
       }
     }
 
     /// <summary>Field number for the "revoke_before" field.</summary>
-    public const int RevokeBeforeFieldNumber = 5;
+    public const int RevokeBeforeFieldNumber = 2;
     private ulong revokeBefore_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -1275,44 +841,23 @@ namespace Decentraland.Pulse {
       }
     }
 
-    /// <summary>Field number for the "observed_ready" field.</summary>
-    public const int ObservedReadyFieldNumber = 6;
-    private bool observedReady_;
-    /// <summary>
-    /// Gatekeeper has positively observed this exact cleanup-only ready revision, retired its
-    /// confirmed journal receipts and re-read readiness. Retirement observations carry no operation,
-    /// cluster or cutoff; ordinary operation completions leave this false. Cross-purpose fields reject.
-    /// </summary>
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool ObservedReady {
-      get { return observedReady_; }
-      set {
-        observedReady_ = value;
-      }
-    }
-
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
-      return Equals(other as RoomCleanupCompleted);
+      return Equals(other as TakeoverCompleted);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(RoomCleanupCompleted other) {
+    public bool Equals(TakeoverCompleted other) {
       if (ReferenceEquals(other, null)) {
         return false;
       }
       if (ReferenceEquals(other, this)) {
         return true;
       }
-      if (Epoch != other.Epoch) return false;
-      if (Revision != other.Revision) return false;
-      if (OperationId != other.OperationId) return false;
-      if (ClusterId != other.ClusterId) return false;
+      if (TakeoverId != other.TakeoverId) return false;
       if (RevokeBefore != other.RevokeBefore) return false;
-      if (ObservedReady != other.ObservedReady) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1320,12 +865,8 @@ namespace Decentraland.Pulse {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override int GetHashCode() {
       int hash = 1;
-      if (Epoch.Length != 0) hash ^= Epoch.GetHashCode();
-      if (Revision.Length != 0) hash ^= Revision.GetHashCode();
-      if (OperationId.Length != 0) hash ^= OperationId.GetHashCode();
-      if (ClusterId.Length != 0) hash ^= ClusterId.GetHashCode();
+      if (TakeoverId.Length != 0) hash ^= TakeoverId.GetHashCode();
       if (RevokeBefore != 0UL) hash ^= RevokeBefore.GetHashCode();
-      if (ObservedReady != false) hash ^= ObservedReady.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1344,29 +885,13 @@ namespace Decentraland.Pulse {
     #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       output.WriteRawMessage(this);
     #else
-      if (Epoch.Length != 0) {
+      if (TakeoverId.Length != 0) {
         output.WriteRawTag(10);
-        output.WriteString(Epoch);
-      }
-      if (Revision.Length != 0) {
-        output.WriteRawTag(18);
-        output.WriteString(Revision);
-      }
-      if (OperationId.Length != 0) {
-        output.WriteRawTag(26);
-        output.WriteString(OperationId);
-      }
-      if (ClusterId.Length != 0) {
-        output.WriteRawTag(34);
-        output.WriteString(ClusterId);
+        output.WriteString(TakeoverId);
       }
       if (RevokeBefore != 0UL) {
-        output.WriteRawTag(40);
+        output.WriteRawTag(16);
         output.WriteUInt64(RevokeBefore);
-      }
-      if (ObservedReady != false) {
-        output.WriteRawTag(48);
-        output.WriteBool(ObservedReady);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -1378,29 +903,13 @@ namespace Decentraland.Pulse {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (Epoch.Length != 0) {
+      if (TakeoverId.Length != 0) {
         output.WriteRawTag(10);
-        output.WriteString(Epoch);
-      }
-      if (Revision.Length != 0) {
-        output.WriteRawTag(18);
-        output.WriteString(Revision);
-      }
-      if (OperationId.Length != 0) {
-        output.WriteRawTag(26);
-        output.WriteString(OperationId);
-      }
-      if (ClusterId.Length != 0) {
-        output.WriteRawTag(34);
-        output.WriteString(ClusterId);
+        output.WriteString(TakeoverId);
       }
       if (RevokeBefore != 0UL) {
-        output.WriteRawTag(40);
+        output.WriteRawTag(16);
         output.WriteUInt64(RevokeBefore);
-      }
-      if (ObservedReady != false) {
-        output.WriteRawTag(48);
-        output.WriteBool(ObservedReady);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -1412,24 +921,12 @@ namespace Decentraland.Pulse {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public int CalculateSize() {
       int size = 0;
-      if (Epoch.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(Epoch);
-      }
-      if (Revision.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(Revision);
-      }
-      if (OperationId.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(OperationId);
-      }
-      if (ClusterId.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(ClusterId);
+      if (TakeoverId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(TakeoverId);
       }
       if (RevokeBefore != 0UL) {
         size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RevokeBefore);
       }
-      if (ObservedReady != false) {
-        size += 1 + 1;
-      }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -1438,28 +935,16 @@ namespace Decentraland.Pulse {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(RoomCleanupCompleted other) {
+    public void MergeFrom(TakeoverCompleted other) {
       if (other == null) {
         return;
       }
-      if (other.Epoch.Length != 0) {
-        Epoch = other.Epoch;
-      }
-      if (other.Revision.Length != 0) {
-        Revision = other.Revision;
-      }
-      if (other.OperationId.Length != 0) {
-        OperationId = other.OperationId;
-      }
-      if (other.ClusterId.Length != 0) {
-        ClusterId = other.ClusterId;
+      if (other.TakeoverId.Length != 0) {
+        TakeoverId = other.TakeoverId;
       }
       if (other.RevokeBefore != 0UL) {
         RevokeBefore = other.RevokeBefore;
       }
-      if (other.ObservedReady != false) {
-        ObservedReady = other.ObservedReady;
-      }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -1476,27 +961,11 @@ namespace Decentraland.Pulse {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 10: {
-            Epoch = input.ReadString();
+            TakeoverId = input.ReadString();
             break;
           }
-          case 18: {
-            Revision = input.ReadString();
-            break;
-          }
-          case 26: {
-            OperationId = input.ReadString();
-            break;
-          }
-          case 34: {
-            ClusterId = input.ReadString();
-            break;
-          }
-          case 40: {
+          case 16: {
             RevokeBefore = input.ReadUInt64();
-            break;
-          }
-          case 48: {
-            ObservedReady = input.ReadBool();
             break;
           }
         }
@@ -1515,220 +984,11 @@ namespace Decentraland.Pulse {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 10: {
-            Epoch = input.ReadString();
+            TakeoverId = input.ReadString();
             break;
           }
-          case 18: {
-            Revision = input.ReadString();
-            break;
-          }
-          case 26: {
-            OperationId = input.ReadString();
-            break;
-          }
-          case 34: {
-            ClusterId = input.ReadString();
-            break;
-          }
-          case 40: {
+          case 16: {
             RevokeBefore = input.ReadUInt64();
-            break;
-          }
-          case 48: {
-            ObservedReady = input.ReadBool();
-            break;
-          }
-        }
-      }
-    }
-    #endif
-
-  }
-
-  /// <summary>
-  /// Operator-only publication on pulse.room_recovery.bootstrap_completed, after a controlled
-  /// reset of old rooms. Confirmation authorizes this exact epoch; it is never automatic.
-  /// </summary>
-  public sealed partial class RoomRecoveryBootstrapCompleted : pb::IMessage<RoomRecoveryBootstrapCompleted>
-  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      , pb::IBufferMessage
-  #endif
-  {
-    private static readonly pb::MessageParser<RoomRecoveryBootstrapCompleted> _parser = new pb::MessageParser<RoomRecoveryBootstrapCompleted>(() => new RoomRecoveryBootstrapCompleted());
-    private pb::UnknownFieldSet _unknownFields;
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<RoomRecoveryBootstrapCompleted> Parser { get { return _parser; } }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pbr::MessageDescriptor Descriptor {
-      get { return global::Decentraland.Pulse.PulseClustersReflection.Descriptor.MessageTypes[4]; }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    pbr::MessageDescriptor pb::IMessage.Descriptor {
-      get { return Descriptor; }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomRecoveryBootstrapCompleted() {
-      OnConstruction();
-    }
-
-    partial void OnConstruction();
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomRecoveryBootstrapCompleted(RoomRecoveryBootstrapCompleted other) : this() {
-      epoch_ = other.epoch_;
-      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RoomRecoveryBootstrapCompleted Clone() {
-      return new RoomRecoveryBootstrapCompleted(this);
-    }
-
-    /// <summary>Field number for the "epoch" field.</summary>
-    public const int EpochFieldNumber = 1;
-    private string epoch_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string Epoch {
-      get { return epoch_; }
-      set {
-        epoch_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override bool Equals(object other) {
-      return Equals(other as RoomRecoveryBootstrapCompleted);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(RoomRecoveryBootstrapCompleted other) {
-      if (ReferenceEquals(other, null)) {
-        return false;
-      }
-      if (ReferenceEquals(other, this)) {
-        return true;
-      }
-      if (Epoch != other.Epoch) return false;
-      return Equals(_unknownFields, other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override int GetHashCode() {
-      int hash = 1;
-      if (Epoch.Length != 0) hash ^= Epoch.GetHashCode();
-      if (_unknownFields != null) {
-        hash ^= _unknownFields.GetHashCode();
-      }
-      return hash;
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override string ToString() {
-      return pb::JsonFormatter.ToDiagnosticString(this);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void WriteTo(pb::CodedOutputStream output) {
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      output.WriteRawMessage(this);
-    #else
-      if (Epoch.Length != 0) {
-        output.WriteRawTag(10);
-        output.WriteString(Epoch);
-      }
-      if (_unknownFields != null) {
-        _unknownFields.WriteTo(output);
-      }
-    #endif
-    }
-
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (Epoch.Length != 0) {
-        output.WriteRawTag(10);
-        output.WriteString(Epoch);
-      }
-      if (_unknownFields != null) {
-        _unknownFields.WriteTo(ref output);
-      }
-    }
-    #endif
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int CalculateSize() {
-      int size = 0;
-      if (Epoch.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(Epoch);
-      }
-      if (_unknownFields != null) {
-        size += _unknownFields.CalculateSize();
-      }
-      return size;
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(RoomRecoveryBootstrapCompleted other) {
-      if (other == null) {
-        return;
-      }
-      if (other.Epoch.Length != 0) {
-        Epoch = other.Epoch;
-      }
-      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(pb::CodedInputStream input) {
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      input.ReadRawMessage(this);
-    #else
-      uint tag;
-      while ((tag = input.ReadTag()) != 0) {
-        switch(tag) {
-          default:
-            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
-            break;
-          case 10: {
-            Epoch = input.ReadString();
-            break;
-          }
-        }
-      }
-    #endif
-    }
-
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
-      uint tag;
-      while ((tag = input.ReadTag()) != 0) {
-        switch(tag) {
-          default:
-            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
-            break;
-          case 10: {
-            Epoch = input.ReadString();
             break;
           }
         }

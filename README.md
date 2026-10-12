@@ -157,7 +157,7 @@ The test client stays a client — it holds no broker connection and never publi
 See [docs/e2e-livekit.md](docs/e2e-livekit.md) for prerequisites, the bridge modes, and how to read a failure.
 
 See [cluster assignment recovery](docs/cluster-assignment-recovery.md) for the NATS lookup,
-Pulse-owned room admission, required restart bootstrap, and broker-test setup.
+retained pending takeovers, token floors, recovery limits, and broker-test setup.
 
 ### What the bot does
 

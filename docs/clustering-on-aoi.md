@@ -80,12 +80,12 @@ The original clustering cutover replaces archipelago-core with Pulse as cluster 
 
 For iteration 2 use the workspace `archipelago-workers/Claude outputs/iteration-2-implementation-plan.md` (revision 4), its `iteration-2-direct-cutover-rev4.md` task matrix, and the [release tree](https://app.notion.com/p/3db5f41146a58116aaf2c6e738f9cdaf). Those supersede historical flag/parking instructions. Release removes legacy producers only after their consumers migrate; rollback coordinates previous images, compatible clients and routing. This document supplies no deployment authorization.
 
-For the additive PR #51 recovery rollout, use [assignment recovery](cluster-assignment-recovery.md#rollout).
+For the additive PR #51 recovery rollout, use [assignment recovery](cluster-assignment-recovery.md#limits-and-rollout).
 
 ## Open questions
 
 Boot-scoped IDs prevent room-name reuse after restart. The recovery ledger remains in memory,
-so each new epoch requires controlled bootstrap. Replicas and overlapping ownership would need
+so automated restart recovery is outside the takeover contract. Replicas and overlapping ownership would need
 distributed fencing; the current contract assumes one Pulse and one active Gatekeeper.
 
 Shadow measurements should determine whether cell resolution, exact-distance refinement, cluster size or diameter needs bounding. Scene listeners already contribute no snapshots or cluster members. Broader endpoint advertisement and WS Connector retirement remain separate work.

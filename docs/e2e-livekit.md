@@ -3,7 +3,7 @@
 > **Historical harness.** The evidence and parking/metadata scenarios below describe the earlier
 > implementation. They do not validate Pulse-owned recovery. Use the
 > [current plan](demand-driven-recovery-protocol-plan.md) and
-> [bootstrap procedure](https://github.com/decentraland/comms-gatekeeper/blob/fix/pulse-owned-room-recovery/docs/room-recovery-operations.md)
+> [takeover recovery operations](https://github.com/decentraland/comms-gatekeeper/blob/fix/pulse-owned-room-recovery/docs/room-recovery-operations.md)
 > before testing the new backend pair; old scripts do not satisfy its admission barrier.
 
 How to run the harness that checks Pulse's cluster feed all the way to the LiveKit connection

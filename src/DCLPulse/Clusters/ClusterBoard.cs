@@ -78,7 +78,7 @@ public sealed class ClusterBoard
     public IReadOnlyDictionary<string, RoomRecoveryAssignment> RoomRecoveryAssignments =>
         Volatile.Read(ref roomRecovery).Assignments;
 
-    /// <summary>Progress of the controlled reset required for the current process epoch.</summary>
+    /// <summary>Diagnostic retained takeover counts and capacity state.</summary>
     public RoomRecoveryStatus RoomRecoveryStatus => Volatile.Read(ref roomRecovery).Status;
 
     public ClusterPass Current =>

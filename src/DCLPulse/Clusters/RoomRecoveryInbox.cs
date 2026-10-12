@@ -22,6 +22,4 @@ public sealed class RoomRecoveryInbox
     internal bool TryRead(out RoomRecoveryConfirmation confirmation) => confirmations.Reader.TryRead(out confirmation);
 }
 
-internal readonly record struct RoomRecoveryConfirmation(
-    string Wallet, string Epoch, string Revision, string OperationId, string ClusterId, ulong RevokeBefore,
-    bool Bootstrap = false, bool ObservedReady = false);
+internal readonly record struct RoomRecoveryConfirmation(string Wallet, string TakeoverId, ulong RevokeBefore);

@@ -1,84 +1,73 @@
 # Cluster assignment recovery
 
-A missed Core NATS change or lost Gatekeeper mirror can strand a stationary peer without
-credentials. Pulse exposes the last completed pass's assignment and retained room obligations
-independently of the change feed. For the design and failure cases, read the
-[Pulse-owned recovery plan](demand-driven-recovery-protocol-plan.md); for field definitions, read
-the [protocol contract](https://github.com/decentraland/protocol/blob/feat/pulse-room-recovery/docs/pulse-room-recovery.md).
+A missed Core NATS event or lost Gatekeeper mirror can strand a stationary peer without credentials.
+Pulse exposes its current assignment and retained pending takeovers independently of the change feed.
+Read the [takeover recovery plan](demand-driven-recovery-protocol-plan.md) for the design and limits.
 
 ## Broker contract
 
 | Operation | Contract |
 | --- | --- |
-| Request `peer.{wallet}.cluster_assignment` | Body: raw UTF-8 session address, exactly 42 bytes. Wallet/session comparisons accept any casing. Active plans require the captured live registration still to match. Retained departures use their last session selector and reply only while the wallet has no live registration. Unknown wallets, malformed or mismatched sessions receive no reply; callers enforce a bounded timeout. |
-| Reply | `PeerClusterChange` with desired assignment and additive `room_recovery` state. Cleanup-only replies have empty cluster/realm. Sent only to `_INBOX.` reply subjects; other subjects are rejected before spending request budget. |
-| Hint `peer.{lowercase-wallet}.cluster_snapshot` | Same current-state payload for active assignments and retained departures, including unchanged ones. A delayed hint can be stale: query before acting. |
-| Completion `peer.{wallet}.room_cleanup_completed` | Gatekeeper reports confirmed removal or observation of a completed departure. The tracker accepts only the current epoch/revision and matching operation. |
-| Bootstrap `pulse.room_recovery.bootstrap_completed` | An operator confirms controlled recovery for an exact Pulse epoch. Every new epoch starts blocked. |
+| Request `peer.{wallet}.cluster_assignment` | Raw UTF-8 session address, exactly 42 bytes. Wallet/session comparisons accept any casing. Only a matching active assignment whose captured live registration still matches receives a reply. Unknown, departed, malformed or mismatched requests receive no reply; callers use bounded timeouts and treat silence as unknown. |
+| Reply | `PeerClusterChange` with assignment, repeated `pending_takeovers` and optional `token_not_before`. A supported assignment includes the token floor even when zero. Its absence means unsupported or capacity blocked. Only `_INBOX.` reply subjects are accepted. |
+| Hint `peer.{lowercase-wallet}.cluster_snapshot` | Same active assignment payload, including unchanged pending work. A delayed hint can be stale: query before acting. |
+| Completion `peer.{wallet}.takeover_completed` | `TakeoverCompleted` with a unique takeover ID and positive JavaScript-safe `revoke_before`. Only a matching pending ID for that wallet is accepted. |
 
-Consumers query on connect and before applying changes or hints. Only an exact ready plan
-permits island credentials. Pending operations survive notification loss and coalescing; legacy
-displaced-session fields are not the recovery ledger. Producer feed semantics live in
-[clustering](clustering-on-aoi.md#feed). The session address is a selector, not a credential.
+Gatekeeper can issue island credentials only when the capability marker is present and pending takeovers
+are empty. Every token uses the retained `token_not_before` floor. Legacy displaced-session fields remain
+compatible feed annotations and are not the retained recovery state. Field 6 and `room_recovery` are reserved.
 
 | Setting | Default | Non-positive value |
 | --- | --- | --- |
 | `Nats__AssignmentRefreshIntervalMs` | 30000 | Disables hints; lookup remains available. |
 | `Nats__MaxAssignmentRequestsPerSecond` | 5000 | Disables the request cap. |
 
-The cap uses fixed one-second windows, counting drops immediately and logging their total when the next window opens. Over-budget requests receive no reply. The subscription has no queue group: every connected instance spends budget before checking ownership, so with multiple responders the limit covers all requested wallets, not just locally owned peers. Both operations require configured NATS and the cluster tracker.
+The request cap uses fixed one-second windows. Over-budget requests receive no reply. The subscription
+has no queue group, so each connected responder spends budget before checking ownership. Lookup and
+hints require configured NATS and the tracker. Core NATS delivery loss is repaired by another lookup or
+hint; publication success does not prove consumer receipt.
 
 ### Broker permissions
 
-Scope recovery subjects to Pulse and Gatekeeper. Only Gatekeeper publishes wallet completions;
-only the operator publishes bootstrap confirmation. Connector/client identities receive neither
-permission. Pulse needs response permissions (`allow_responses`, one response per request), and
-Gatekeeper subscribes to `_INBOX.>` for replies. `engine.islands` already exposes cluster rosters,
-so withholding the session from hints would not provide broker isolation.
+Only Gatekeeper publishes takeover completions. Connector/client identities receive no completion
+permissions. Pulse needs response permissions (`allow_responses`, one response per request), and
+Gatekeeper subscribes to `_INBOX.>` for replies. The session selector is not authentication.
 
 ## Assignment consistency
 
-The tracker reconciles desired assignments before applying completion messages, then publishes
-an immutable recovery snapshot. A stale completion cannot clear a newer plan. Lookup and hints
-also check the live registration, deferring during takeover lag or recycled-slot mismatch.
-An unchanged reconnect keeps its revision after the tracker adopts the new registration.
+The tracker adopts desired assignments before applying queued completions, then publishes an immutable
+snapshot. Lookup and hints check the captured live registration, including same-session reconnects and
+recycled slots. A stale completion cannot clear a fresh same-room takeover because IDs are globally unique.
 
-The active assignment map remains separate from retained recovery state. Departures stay
-queryable until cleanup is confirmed, Gatekeeper has observed retirement and the last cutoff
-has passed. Unfinished work never expires. Capacity exhaustion blocks admission rather than
-discarding room obligations. Topology and recovery publication are separate; a lookup can
-briefly name a cluster absent from the latest topology.
+A ready assignment is conservatively treated as potentially credentialed. Displacing it creates retained
+pending work. An unadmitted A -> B -> C chain keeps A's pending takeover; B cannot receive credentials
+while A remains pending and therefore creates no additional removal obligation. Same-session ordinary
+moves create no takeover work. A later admitted same-room ABA transition receives a fresh ID.
 
-## Rollout
+Unfinished takeovers survive temporary departures and never expire. Departed wallets have no lookup
+reply or cleanup-only schema. Completed records use the existing session retention window and retain
+the token floor until its cutoff and clock grace have passed. Completion cutoffs must exceed the floor
+captured when that takeover was created; accepted cutoffs raise the wallet floor using their maximum.
 
-This hardening builds on [Pulse #51](https://github.com/decentraland/Pulse/pull/51),
-[Gatekeeper #300](https://github.com/decentraland/comms-gatekeeper/pull/300) and
-[connector #136](https://github.com/decentraland/archipelago-workers/pull/136). Additive protobuf
-compatibility does not make old Gatekeepers safe: they ignore the admission barrier. Activate
-the backend pair under closed admission with the journal migration and restricted broker
-permissions in place. Follow the
-[bootstrap procedure](https://github.com/decentraland/comms-gatekeeper/blob/fix/pulse-owned-room-recovery/docs/room-recovery-operations.md).
+Capacity limits are hard bounds on retained wallets and pending takeovers. At capacity, Pulse retains
+existing pending work and any exposed displacement it cannot yet record. A blocked or overflow
+assignment omits `token_not_before`, even when its pending list is empty, and cannot authorize credentials.
 
-After Pulse confirms readiness, Gatekeeper preserves existing room membership and can recover
-credentials for an absent wallet. Unknown authority defers work. Connector deduplication permits
-replacement credentials for the same room; Explorer keeps its existing metadata and token
-contract. A Pulse connection is still required for an active assignment.
+## Limits and rollout
 
-## Limits
+This contract covers in-process session takeover recovery and credential recovery. Ordinary move/departure
+cleanup, crash-safe durable state and automated Pulse restart recovery are outside this scope. Room IDs
+retain a local boot identifier; it is not a restart recovery handshake. There is no bootstrap, revision,
+retirement observation or general all-room cleanup orchestrator.
 
-- **Pulse restart:** room IDs include the boot epoch, but the ledger is in memory. Every restart
-  requires controlled old-room recovery and explicit bootstrap; seamless restart is additional scope.
-- **Uncertain removal:** Gatekeeper's durable dispatch journal blocks the affected wallet until
-  operator reconciliation. A timer, broker flush or membership absence cannot prove revocation.
-- **Deployment topology:** one Pulse and one active Gatekeeper. There is no distributed fence
-  for overlapping instances. Actual Cloud revocation, clock bounds and future-token admission
-  remain controlled acceptance requirements.
+One Pulse and one active Gatekeeper are supported. Paired backend rollout requires closed admission
+through the incompatible interval. Old Gatekeepers ignore the pending-work barrier. Existing Cloud
+revocation, current-holder guards, token clock bounds and actual Cloud acceptance remain separate
+requirements. Timeout or no responders is unknown authority and cannot authorize destructive cleanup.
 
 ## Verification
 
-Tracker/resolver tests cover assignment consistency, takeover chains, movement, capacity,
-bootstrap and retained departures. `ClusterAssignmentRecoveryIntegrationTests` uses a real
-broker through `NATS_TEST_URL`, including completion and retirement observation through the
-actual tracker. These tests do not establish LiveKit Cloud enforcement.
-
-Reply/hint publish successes and failures use existing NATS counters. Intentional silence for a non-owned session is not a publish failure; [metrics](metrics.md#cluster-metrics) defines the counting scopes.
+Ledger and tracker tests cover lost hints/completions, repeated pending state, unadmitted chains,
+ABA, live-registration fencing, cutoffs and capacity. `ClusterAssignmentRecoveryIntegrationTests`
+uses a real broker through `NATS_TEST_URL`, including the takeover completion subject. These tests
+do not establish LiveKit Cloud enforcement. Reply/hint publication uses the existing NATS counters.

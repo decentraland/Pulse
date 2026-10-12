@@ -23,9 +23,9 @@ ARG COMMIT_HASH=unknown
 ENV COMMIT_HASH=$COMMIT_HASH
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip procps openssh-server \
     && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
-    && RRD_URL=$(curl -sSIL -o /dev/null -w '%{url_effective}' "https://data.services.jetbrains.com/products/download?code=RRD&platform=linux64") \
-    && RRD_VERSION=$(echo "$RRD_URL" | sed 's/.*linux-x64\.\(.*\)\.zip/\1/') \
-    && curl -sSL -o /tmp/rrd.zip "$RRD_URL" \
+    && RRD_URL=$(curl -fsSL -o /tmp/rrd.zip -w '%{url_effective}' "https://data.services.jetbrains.com/products/download?code=RRD&platform=linux64") \
+    && RRD_VERSION=$(printf '%s\n' "${RRD_URL%%[?#]*}" | sed -n 's/.*linux-x64\.\([0-9][0-9.]*\)\.zip$/\1/p') \
+    && { test -n "$RRD_VERSION" || { printf 'Could not parse Rider debugger version from %s\n' "${RRD_URL%%[?#]*}" >&2; exit 1; }; } \
     && mkdir -p "/root/.local/share/JetBrains/RiderRemoteDebugger/${RRD_VERSION}" \
     && unzip -oq /tmp/rrd.zip -d "/root/.local/share/JetBrains/RiderRemoteDebugger/${RRD_VERSION}" \
     && rm /tmp/rrd.zip \

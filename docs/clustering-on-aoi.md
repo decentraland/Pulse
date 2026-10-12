@@ -43,6 +43,10 @@ Pulse owns assignments, retained cleanup and admission readiness. Gatekeeper exe
 checks bans and mints credentials only for a ready plan; WS Connector delivers them to the
 authenticated session. Pulse publishes no LiveKit tokens or client cluster messages.
 
+A Pulse connection without a matching authenticated WS Connector session has no credential
+receiver; a WS-only connection has no Pulse assignment. Check both connections and their session
+keys before treating missing credentials as broker loss.
+
 | Subject | Payload | Trigger |
 | --- | --- | --- |
 | `peer.{lowercase-wallet}.cluster_change` | `PeerClusterChange` | Published assignment changes |
@@ -78,9 +82,13 @@ Use `ClusterOptions`, `NatsOptions` and runtime configuration for defaults. `Pas
 
 The original clustering cutover replaces archipelago-core with Pulse as cluster author and gatekeeper as token issuer; WS Connector retains session delivery. Stats/client heartbeat retirement belongs to iteration 2, with `/hot-scenes` owned by gatekeeper's Catalyst integration.
 
+The legacy heartbeat's `desiredRoom` field remains in the protocol for wire compatibility and
+is ignored after Core removal. It formerly biased merge targets when the 100-peer room cap split
+co-located crowds; Pulse's uncapped clustering has no equivalent preference.
+
 For iteration 2 use the workspace `archipelago-workers/Claude outputs/iteration-2-implementation-plan.md` (revision 4), its `iteration-2-direct-cutover-rev4.md` task matrix, and the [release tree](https://app.notion.com/p/3db5f41146a58116aaf2c6e738f9cdaf). Those supersede historical flag/parking instructions. Release removes legacy producers only after their consumers migrate; rollback coordinates previous images, compatible clients and routing. This document supplies no deployment authorization.
 
-For the additive PR #51 recovery rollout, use [assignment recovery](cluster-assignment-recovery.md#limits-and-rollout).
+For the current takeover recovery rollout, use [assignment recovery](cluster-assignment-recovery.md#limits-and-rollout).
 
 ## Open questions
 
@@ -88,4 +96,8 @@ Boot-scoped IDs prevent room-name reuse after restart. The recovery ledger remai
 so automated restart recovery is outside the takeover contract. Replicas and overlapping ownership would need
 distributed fencing; the current contract assumes one Pulse and one active Gatekeeper.
 
-Shadow measurements should determine whether cell resolution, exact-distance refinement, cluster size or diameter needs bounding. Scene listeners already contribute no snapshots or cluster members. Broader endpoint advertisement and WS Connector retirement remain separate work.
+Shadow measurements should determine whether cell resolution, exact-distance refinement, cluster size or diameter needs bounding. Scene listeners already contribute no snapshots or cluster members.
+
+Before revisiting crowd rendering, WS Connector retirement, ban consolidation or endpoint
+advertisement, read the [deferred proposals](archive/clustering-proposals.md) for the original
+rationale and prerequisites.

@@ -37,6 +37,9 @@ immediate rejection path defined in the consistency contract.
 
 Reliable emote events carry full state. `server_tick` is monotonic milliseconds, shared by movement and events; ENet RTT/2 estimates one-way latency. Delta state flags are always present because boolean transitions drive animation.
 
+Clients own the movement pause during emotes. Pulse continues to validate and accept movement
+input while an emote is active; it relays the reported state rather than enforcing an emote movement lock.
+
 ## Scene listeners
 
 A listener authenticates with one entry per announced realm and inclusive parcel rectangles. It receives positional/emote events, omits profile announcements, and never registers as a visible subject or cluster member. Only resync and listener-update messages remain accepted.

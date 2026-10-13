@@ -1,0 +1,47 @@
+name: PR container images
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-images-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - src/DCLPulse/Dockerfile
+          - src/DCLPulse/Dockerfile.dev-debug
+          - Dockerfile.debug
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Build image
+        id: build
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: pulse-server
+          tags: ${{ github.event.pull_request.head.sha }}
+          dockerfiles: ${{ matrix.dockerfile }}
+          build-args: |
+            COMMIT_HASH=${{ github.event.pull_request.head.sha }}
+
+      - name: Publish release image
+        if: matrix.dockerfile == 'src/DCLPulse/Dockerfile'
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
+          registry: quay.io/decentraland
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}

@@ -115,14 +115,30 @@ public class RoomRecoveryTrackerTests
     }
 
     [Test]
-    public void Departure_HasNoAssignmentReplyButUnfinishedWorkSurvivesReturn()
+    public void Departure_PendingCleanupSurvivesReturnAndQueuedCompletion()
     {
         identities.Set(peer, WALLET, B); tracker.RunPass();
         PeerClusterChange pending = Resolve(B);
         grids.Remove(peer); snapshots.ClearActive(peer); identities.Remove(peer); tracker.RunPass();
-        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(B), out _), Is.False);
+        Assert.That(Resolve(B).PendingTakeovers, Is.EqualTo(pending.PendingTakeovers));
         identities.Set(peer, WALLET, A); grids.Set(peer, "realm", Vector3.Zero); snapshots.SetActive(peer); tracker.RunPass();
         Assert.That(Resolve(A).PendingTakeovers, Is.EqualTo(pending.PendingTakeovers));
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(B), out _), Is.False);
+        QueueCompletion(pending, 101); tracker.RunPass();
+        Assert.That(Resolve(A).PendingTakeovers, Is.Empty);
+        Assert.That(Resolve(A).TokenNotBefore, Is.EqualTo(101));
+    }
+
+    [Test]
+    public void Departure_CompletedCleanupNeverReturnsReadyAssignment()
+    {
+        identities.Set(peer, WALLET, B); tracker.RunPass();
+        PeerClusterChange pending = Resolve(B);
+        grids.Remove(peer); snapshots.ClearActive(peer); identities.Remove(peer); tracker.RunPass();
+        QueueCompletion(pending, 101); tracker.RunPass();
+        Assert.That(publisher.TryResolveAssignment($"peer.{WALLET}.cluster_assignment", Encoding.UTF8.GetBytes(B), out _), Is.False);
+        Assert.That(board.RoomRecoveryAssignments[WALLET].PendingTakeovers, Is.Empty);
+        Assert.That(board.RoomRecoveryAssignments[WALLET].Active, Is.False);
     }
 
     [Test]

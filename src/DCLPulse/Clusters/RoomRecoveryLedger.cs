@@ -120,7 +120,8 @@ internal sealed class RoomRecoveryLedger
         message.PendingTakeovers.Clear();
         message.ClearTokenNotBefore();
         if (assignment is null) return;
-        if (!assignment.CapacityBlocked) message.TokenNotBefore = assignment.TokenNotBefore;
+        if (!assignment.CapacityBlocked && (assignment.Active || assignment.PendingTakeovers.Count > 0))
+            message.TokenNotBefore = assignment.TokenNotBefore;
         foreach (PendingSessionTakeover pending in assignment.PendingTakeovers)
             message.PendingTakeovers.Add(new PendingTakeover
             {

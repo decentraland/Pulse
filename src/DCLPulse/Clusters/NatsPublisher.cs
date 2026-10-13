@@ -667,8 +667,8 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     ///     Resolves a <c>peer.{wallet}.cluster_assignment</c> request whose body is the requester's
     ///     42-byte ephemeral session. Returns false for a malformed subject or body, an unknown wallet,
     ///     or a session other than the one that published the assignment — there is no session-less
-    ///     mode. Departed records retain unfinished takeovers but have no lookup reply while the wallet
-    ///     has no live binding. Active assignments require the registration captured by the tracker.
+    ///     mode. Departed records expose only unfinished takeovers for their retained session and never
+    ///     a ready assignment. Active assignments require the registration captured by the tracker.
     /// </summary>
     internal bool TryResolveAssignment(string subject, ReadOnlySpan<byte> data, [NotNullWhen(true)] out PeerClusterChange? response)
     {
@@ -759,7 +759,7 @@ public sealed class NatsPublisher : BackgroundService, IClusterFeedPublisher
     }
     private bool IsCurrentRecovery(string wallet, RoomRecoveryAssignment assignment)
     {
-        if (!assignment.Active) return false;
+        if (!assignment.Active) return assignment.PendingTakeovers.Count > 0;
 
         return assignment.Peer is { } peer && assignment.Identity is { } identity
                && identityBoard.TryGetPeerIndexByWallet(wallet, out PeerIndex current) && current == peer

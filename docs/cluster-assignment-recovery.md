@@ -8,9 +8,9 @@ Read the [takeover recovery plan](demand-driven-recovery-protocol-plan.md) for t
 
 | Operation | Contract |
 | --- | --- |
-| Request `peer.{wallet}.cluster_assignment` | Raw UTF-8 session address, exactly 42 bytes. Wallet/session comparisons accept any casing. Only a matching active assignment whose captured live registration still matches receives a reply. Unknown, departed, malformed or mismatched requests receive no reply; callers use bounded timeouts and treat silence as unknown. |
+| Request `peer.{wallet}.cluster_assignment` | Raw UTF-8 session address, exactly 42 bytes. Wallet/session comparisons accept any casing. A matching active assignment requires its captured live registration. Explicitly departed records reply only while pending takeovers remain, using the retained winner session. Unknown, completed departed, malformed or mismatched requests receive no reply; callers use bounded timeouts and treat silence as unknown. |
 | Reply | `PeerClusterChange` with assignment, repeated `pending_takeovers` and optional `token_not_before`. A supported assignment includes the token floor even when zero. Its absence means unsupported or capacity blocked. Only `_INBOX.` reply subjects are accepted. |
-| Hint `peer.{lowercase-wallet}.cluster_snapshot` | Same active assignment payload, including unchanged pending work. A delayed hint can be stale: query before acting. |
+| Hint `peer.{lowercase-wallet}.cluster_snapshot` | Same assignment payload for active registrations or explicitly departed records with pending work. A delayed hint can be stale: query before acting. |
 | Completion `peer.{wallet}.takeover_completed` | `TakeoverCompleted` with a unique takeover ID and positive JavaScript-safe `revoke_before`. Only a matching pending ID for that wallet is accepted. |
 
 Gatekeeper can issue island credentials only when the capability marker is present and pending takeovers
@@ -44,8 +44,9 @@ pending work. An unadmitted A -> B -> C chain keeps A's pending takeover; B cann
 while A remains pending and therefore creates no additional removal obligation. Same-session ordinary
 moves create no takeover work. A later admitted same-room ABA transition receives a fresh ID.
 
-Unfinished takeovers survive temporary departures and never expire. Departed wallets have no lookup
-reply or cleanup-only schema. Completed records use the existing session retention window and retain
+Unfinished takeovers survive departures and never expire. Explicitly departed records remain discoverable
+through hints and exact retained-session lookup only while pending work exists. After completion they
+never return a ready assignment. Completed records use the existing session retention window and retain
 the token floor until its cutoff and clock grace have passed. Completion cutoffs must exceed the floor
 captured when that takeover was created; accepted cutoffs raise the wallet floor using their maximum.
 

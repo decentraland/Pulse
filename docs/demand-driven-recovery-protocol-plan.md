@@ -54,6 +54,10 @@ Pulse -> Gatekeeper: current assignment, no pending takeover, token floor
 Gatekeeper -> Connector -> Explorer: existing island_changed credentials
 ```
 
+Explicitly departed wallets keep publishing pending takeovers and answer lookup for the retained winner
+session. Once pending work drains, departed lookup and hints become silent; they never authorize
+credentials. Completed entries can then expire and release retained-wallet capacity.
+
 Gatekeeper waits until Pulse applies completion before issuing credentials. A successful
 completion publish alone is insufficient. This prevents a later hint from removing the winner.
 

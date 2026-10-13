@@ -131,6 +131,35 @@ public class RoomRecoveryLedgerTests
     }
 
     [Test]
+    public void DepartedTakeover_CompletionReleasesWalletCapacityAfterRetention()
+    {
+        ledger = new RoomRecoveryLedger(new ClusterOptions { MaxRecoveryWallets = 1, SessionRetentionPasses = 1 });
+        Desired("A"); Plan(); Desired("B");
+        RoomRecoveryAssignment pending = Plan();
+        var next = new Dictionary<string, DesiredRoomAssignment> { ["other"] = Target("C", "other-room") };
+        ledger.Reconcile(next, NOW + 1000);
+        RoomRecoveryAssignment departed = Plan();
+        Assert.Multiple(() =>
+        {
+            Assert.That(departed.Active, Is.False);
+            Assert.That(departed.Peer, Is.Null);
+            Assert.That(departed.Identity, Is.Null);
+            Assert.That(departed.PendingTakeovers, Is.EqualTo(pending.PendingTakeovers));
+            Assert.That(ledger.Snapshot(out _)["other"].CapacityBlocked, Is.True);
+        });
+        Complete(pending, 101);
+        ledger.Reconcile(next, NOW + 1001);
+        IReadOnlyDictionary<string, RoomRecoveryAssignment> snapshot = ledger.Snapshot(out RoomRecoveryStatus status);
+        Assert.Multiple(() =>
+        {
+            Assert.That(snapshot.ContainsKey("wallet"), Is.False);
+            Assert.That(snapshot["other"].CapacityBlocked, Is.False);
+            Assert.That(status.RetainedWallets, Is.EqualTo(1));
+            Assert.That(status.CapacityBlocked, Is.False);
+        });
+    }
+
+    [Test]
     public void Inbox_IsBoundedAndRetainsAcceptedConfirmation()
     {
         var inbox = new RoomRecoveryInbox(1);

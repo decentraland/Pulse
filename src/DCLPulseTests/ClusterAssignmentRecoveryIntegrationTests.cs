@@ -341,6 +341,39 @@ public class ClusterAssignmentRecoveryIntegrationTests
     }
 
     [Test]
+    public async Task DepartedPendingTakeover_RepeatsHintsAndLookupThenBecomesSilent()
+    {
+        RoomRecoveryAssignment departed = board.RoomRecoveryAssignments[wallet] with
+        {
+            Active = false, Peer = null, Identity = null,
+            PendingTakeovers = Array.AsReadOnly(new[] { new PendingSessionTakeover("departed-id", OTHER_SESSION, "old-room") }),
+        };
+        board.PublishRoomRecovery(new Dictionary<string, RoomRecoveryAssignment> { [wallet] = departed }, default);
+        await using INatsSub<byte[]> hints = await client.SubscribeCoreAsync<byte[]>(
+            $"peer.{wallet}.cluster_snapshot", cancellationToken: deadline.Token);
+        await client.PingAsync(deadline.Token);
+        PeerClusterChange lookup = await RequestAssignmentAsync(SESSION);
+        PeerClusterChange first = PeerClusterChange.Parser.ParseFrom((await hints.Msgs.ReadAsync(deadline.Token)).Data ?? []);
+        PeerClusterChange second = PeerClusterChange.Parser.ParseFrom((await hints.Msgs.ReadAsync(deadline.Token)).Data ?? []);
+        Assert.Multiple(() =>
+        {
+            Assert.That(lookup.PendingTakeovers, Has.Count.EqualTo(1));
+            Assert.That(first, Is.EqualTo(lookup));
+            Assert.That(second, Is.EqualTo(first));
+        });
+        board.PublishRoomRecovery(new Dictionary<string, RoomRecoveryAssignment>
+        {
+            [wallet] = departed with { PendingTakeovers = Array.Empty<PendingSessionTakeover>() },
+        }, default);
+        Assert.ThrowsAsync<NatsNoReplyException>(async () => await RequestBytesAsync(SESSION));
+        await using INatsSub<byte[]> completedHints = await client.SubscribeCoreAsync<byte[]>(
+            $"peer.{wallet}.cluster_snapshot", cancellationToken: deadline.Token);
+        await client.PingAsync(deadline.Token);
+        using var quiet = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        Assert.ThrowsAsync<OperationCanceledException>(async () => await completedHints.Msgs.ReadAsync(quiet.Token));
+    }
+
+    [Test]
     public async Task RecoveryHints_CountAsPublished()
     {
         string probeWallet = RandomWallet();

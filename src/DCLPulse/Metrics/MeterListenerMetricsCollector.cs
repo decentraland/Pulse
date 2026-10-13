@@ -105,6 +105,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
     private int clusterCount;
     private int clusterPeers;
     private int clusterSizeMax;
+    private int recoveryRetainedWallets;
+    private int recoveryPendingOperations;
+    private int recoveryCapacityBlocked;
 
     // Cluster-size histogram: non-cumulative per-bucket counts plus the sum/count pair. The formatter
     // turns the counts into the cumulative form Prometheus expects.
@@ -223,6 +226,9 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 ClusterCount = Volatile.Read(ref clusterCount),
                 ClusterPeers = Volatile.Read(ref clusterPeers),
                 ClusterSizeMax = Volatile.Read(ref clusterSizeMax),
+                RecoveryRetainedWallets = Volatile.Read(ref recoveryRetainedWallets),
+                RecoveryPendingOperations = Volatile.Read(ref recoveryPendingOperations),
+                RecoveryCapacityBlocked = Volatile.Read(ref recoveryCapacityBlocked),
                 ClusterSize = clusterSize.Snapshot(),
                 TotalPasses = Interlocked.Read(ref clusterPasses),
                 TotalPassDurationUs = Interlocked.Read(ref clusterPassDurationUs),
@@ -453,6 +459,15 @@ public sealed class MeterListenerMetricsCollector : IMetricsCollector, IHostedSe
                 break;
             case "pulse.clusters.size_max":
                 Interlocked.Add(ref clusterSizeMax, value);
+                break;
+            case "pulse.clusters.recovery_retained_wallets":
+                Interlocked.Add(ref recoveryRetainedWallets, value);
+                break;
+            case "pulse.clusters.recovery_pending_operations":
+                Interlocked.Add(ref recoveryPendingOperations, value);
+                break;
+            case "pulse.clusters.recovery_capacity_blocked":
+                Interlocked.Add(ref recoveryCapacityBlocked, value);
                 break;
             case "pulse.nats.connected":
                 Interlocked.Add(ref natsConnected, value);

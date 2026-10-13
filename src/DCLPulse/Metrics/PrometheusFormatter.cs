@@ -113,6 +113,9 @@ internal static class PrometheusFormatter
         WriteHistogramHeader(writer, "dcl_pulse_cluster_size", "Cluster sizes observed, one measurement per cluster per pass. Quantiles are query-time: histogram_quantile(0.95, sum by (le) (rate(dcl_pulse_cluster_size_bucket[5m]))).");
         WriteHistogramSeries(writer, "dcl_pulse_cluster_size", snap.Clusters.ClusterSize, labels: null);
         WriteGauge(writer, "dcl_pulse_cluster_size_max", "Largest cluster in the last pass. Far above the mean means the partition has collapsed; see the percolation limit in docs/clustering-on-aoi.md.", snap.Clusters.ClusterSizeMax);
+        WriteGauge(writer, "dcl_pulse_cluster_recovery_retained_wallets", "Wallets retained for active assignments, token floors or unfinished takeovers. Size MaxRecoveryWallets for concurrent users plus distinct departures during retention and unresolved cleanup.", snap.Clusters.RecoveryRetainedWallets);
+        WriteGauge(writer, "dcl_pulse_cluster_recovery_pending_operations", "Unfinished takeover operations, including departed wallets. Persistent growth indicates cleanup cannot drain.", snap.Clusters.RecoveryPendingOperations);
+        WriteGauge(writer, "dcl_pulse_cluster_recovery_capacity_blocked", "1 while recovery capacity blocks credential eligibility, 0 otherwise. Alert on nonzero; retained recovery history is never evicted to admit new wallets.", snap.Clusters.RecoveryCapacityBlocked);
         WriteCounter(writer, "dcl_pulse_cluster_passes_total", "Clustering passes completed", snap.Clusters.TotalPasses);
         WriteCounter(writer, "dcl_pulse_cluster_pass_duration_us_total", "Cumulative clustering pass wall time in microseconds. Divide by dcl_pulse_cluster_passes_total for the mean.", snap.Clusters.TotalPassDurationUs);
         WriteCounter(writer, "dcl_pulse_cluster_reassignments_total", "Published cluster assignment changes, counted after the dwell debounce", snap.Clusters.TotalReassignments);

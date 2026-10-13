@@ -83,6 +83,9 @@ public sealed class ClusterTracker : BackgroundService
     // Last value published for each gauge. An up-down counter takes a delta, not an absolute.
     private int lastClusterCount;
     private int lastClusterPeers;
+    private int lastRecoveryRetainedWallets;
+    private int lastRecoveryPendingOperations;
+    private int lastRecoveryCapacityBlocked;
     private int lastSizeMax;
 
     public ClusterTracker(
@@ -272,6 +275,9 @@ public sealed class ClusterTracker : BackgroundService
             roomRecovery.Apply(confirmation, now);
 
         clusterBoard.PublishRoomRecovery(roomRecovery.Snapshot(out RoomRecoveryStatus status), status);
+        RecordGauge(PulseMetrics.Clusters.RECOVERY_RETAINED_WALLETS, status.RetainedWallets, ref lastRecoveryRetainedWallets);
+        RecordGauge(PulseMetrics.Clusters.RECOVERY_PENDING_OPERATIONS, status.PendingOperations, ref lastRecoveryPendingOperations);
+        RecordGauge(PulseMetrics.Clusters.RECOVERY_CAPACITY_BLOCKED, status.CapacityBlocked ? 1 : 0, ref lastRecoveryCapacityBlocked);
         if (roomRecovery.CapacityBlocked != recoveryCapacityBlocked)
         {
             recoveryCapacityBlocked = roomRecovery.CapacityBlocked;

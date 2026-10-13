@@ -54,6 +54,27 @@ Capacity limits are hard bounds on retained wallets and pending takeovers. At ca
 existing pending work and any exposed displacement it cannot yet record. A blocked or overflow
 assignment omits `token_not_before`, even when its pending list is empty, and cannot authorize credentials.
 
+### Capacity sizing and alerts
+
+Size `MaxRecoveryWallets` above peak concurrent wallets plus distinct departed wallets within the
+retention window, with additional headroom for unfinished cleanup and token floors extending beyond
+that window. Defaults retain 300 seconds and 8192 wallets. At 4095 concurrent wallets, the remaining
+4097 slots support about 13.7 distinct departures per second over 300 seconds before that headroom is
+exhausted. Repeated departures of the same retained wallet do not consume distinct slots.
+
+The `/metrics` gauges expose `dcl_pulse_cluster_recovery_retained_wallets`,
+`dcl_pulse_cluster_recovery_pending_operations` and `dcl_pulse_cluster_recovery_capacity_blocked`.
+Warn when retained wallets exceed 80% of the configured limit; alert immediately when capacity blocked
+is nonzero. Sustained growth in pending operations calls for checking Gatekeeper cleanup and broker
+completion delivery. Ordinary departed entries release capacity only after retention and the retained
+floor plus clock grace have elapsed. Unfinished or unrecorded cleanup remains protected.
+
+These signals expose overload; they do not remove the finite capacity limit. Evicting a ready departed
+wallet early can erase its potentially credentialed old session: a different session returning inside
+retention would then appear new and bypass takeover cleanup. Arbitrary distinct-wallet churn therefore
+requires admission controls or a separately reviewed cleanup design, rather than early eviction of
+recovery history. Increasing the limit requires accounting for memory and per-pass processing costs.
+
 ## Limits and rollout
 
 This contract covers in-process session takeover recovery and credential recovery. Ordinary move/departure

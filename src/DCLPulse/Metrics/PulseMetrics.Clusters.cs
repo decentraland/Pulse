@@ -72,6 +72,18 @@ public static partial class PulseMetrics
         /// </summary>
         public static readonly UpDownCounter<int> SIZE_MAX =
             METER.CreateUpDownCounter<int>("pulse.clusters.size_max");
+
+        /// <summary>Wallets retained for active assignments, token floors or unfinished cleanup.</summary>
+        public static readonly UpDownCounter<int> RECOVERY_RETAINED_WALLETS =
+            METER.CreateUpDownCounter<int>("pulse.clusters.recovery_retained_wallets");
+
+        /// <summary>Unfinished retained takeover operations, including departed wallets.</summary>
+        public static readonly UpDownCounter<int> RECOVERY_PENDING_OPERATIONS =
+            METER.CreateUpDownCounter<int>("pulse.clusters.recovery_pending_operations");
+
+        /// <summary>One while recovery capacity withholds credential eligibility, otherwise zero.</summary>
+        public static readonly UpDownCounter<int> RECOVERY_CAPACITY_BLOCKED =
+            METER.CreateUpDownCounter<int>("pulse.clusters.recovery_capacity_blocked");
     }
 
     /// <summary>

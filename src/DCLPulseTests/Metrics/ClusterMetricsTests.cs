@@ -100,4 +100,38 @@ public class ClusterMetricsTests
                 $"dcl_pulse_nats_assignment_requests_throttled_total {snapshot.Clusters.TotalNatsAssignmentRequestsThrottled}"));
         });
     }
+
+    [Test]
+    public void RecoveryCapacityGauges_ReachTheirOwnSnapshotFieldsAndEndpoint()
+    {
+        MetricsSnapshot before = collector.TakeSnapshot();
+        PulseMetrics.Clusters.RECOVERY_RETAINED_WALLETS.Add(7);
+        PulseMetrics.Clusters.RECOVERY_PENDING_OPERATIONS.Add(3);
+        PulseMetrics.Clusters.RECOVERY_CAPACITY_BLOCKED.Add(1);
+        try
+        {
+            MetricsSnapshot after = collector.TakeSnapshot();
+            using var buffer = new MemoryStream();
+            using (var writer = new StreamWriter(buffer, leaveOpen: true))
+                PrometheusFormatter.Write(writer, after);
+            string output = Encoding.UTF8.GetString(buffer.ToArray());
+            Assert.Multiple(() =>
+            {
+                Assert.That(after.Clusters.RecoveryRetainedWallets - before.Clusters.RecoveryRetainedWallets, Is.EqualTo(7));
+                Assert.That(after.Clusters.RecoveryPendingOperations - before.Clusters.RecoveryPendingOperations, Is.EqualTo(3));
+                Assert.That(after.Clusters.RecoveryCapacityBlocked - before.Clusters.RecoveryCapacityBlocked, Is.EqualTo(1));
+                Assert.That(output, Does.Contain($"dcl_pulse_cluster_recovery_retained_wallets {after.Clusters.RecoveryRetainedWallets}"));
+                Assert.That(output, Does.Contain($"dcl_pulse_cluster_recovery_pending_operations {after.Clusters.RecoveryPendingOperations}"));
+                Assert.That(output, Does.Contain($"dcl_pulse_cluster_recovery_capacity_blocked {after.Clusters.RecoveryCapacityBlocked}"));
+            });
+        }
+        finally
+        {
+            PulseMetrics.Clusters.RECOVERY_RETAINED_WALLETS.Add(-7);
+            PulseMetrics.Clusters.RECOVERY_PENDING_OPERATIONS.Add(-3);
+            PulseMetrics.Clusters.RECOVERY_CAPACITY_BLOCKED.Add(-1);
+        }
+        MetricsSnapshot restored = collector.TakeSnapshot();
+        Assert.That(restored.Clusters.RecoveryCapacityBlocked, Is.EqualTo(before.Clusters.RecoveryCapacityBlocked));
+    }
 }

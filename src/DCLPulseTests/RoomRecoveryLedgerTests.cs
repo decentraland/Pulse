@@ -170,6 +170,43 @@ public class RoomRecoveryLedgerTests
         Assert.That(actual, Is.EqualTo(first));
     }
 
+    [Test]
+    public void ReadyDeparture_AtCapacityRetainsExposureForRejoinUntilRetentionExpires()
+    {
+        ledger = new RoomRecoveryLedger(new ClusterOptions
+        {
+            MaxRecoveryWallets = 1, SessionRetentionPasses = 300, PassIntervalMs = 1000,
+        });
+        Desired("A"); Plan();
+        var other = new Dictionary<string, DesiredRoomAssignment> { ["other"] = Target("X", "other-room") };
+        ledger.Reconcile(other, NOW + 300);
+        Assert.That(ledger.Snapshot(out _)["other"].CapacityBlocked, Is.True);
+        Desired("B", now: NOW + 300);
+        Assert.That(Plan().PendingTakeovers[0].DisplacedSession, Is.EqualTo("A"),
+            "evicting an apparently idle departed entry would lose the potentially credentialed old session");
+    }
+
+    [Test]
+    public void ReadyDeparture_OverflowRecoversOnlyAfterRetentionAndFloorGrace()
+    {
+        ledger = new RoomRecoveryLedger(new ClusterOptions
+        {
+            MaxRecoveryWallets = 1, SessionRetentionPasses = 300, PassIntervalMs = 1000,
+        });
+        Desired("A"); Plan(); Desired("B"); Complete(Plan(), NOW + 400);
+        var other = new Dictionary<string, DesiredRoomAssignment> { ["other"] = Target("X", "other-room") };
+        ledger.Reconcile(other, NOW + 401);
+        Assert.That(ledger.Snapshot(out _)["other"].CapacityBlocked, Is.True);
+        ledger.Reconcile(other, NOW + 400 + RoomRecoveryLedger.RETIREMENT_CLOCK_GRACE_SECONDS);
+        Assert.That(ledger.Snapshot(out _)["other"].CapacityBlocked, Is.True);
+        ledger.Reconcile(other, NOW + 401 + RoomRecoveryLedger.RETIREMENT_CLOCK_GRACE_SECONDS);
+        IReadOnlyDictionary<string, RoomRecoveryAssignment> snapshot = ledger.Snapshot(out RoomRecoveryStatus status);
+        Assert.That(snapshot.ContainsKey("wallet"), Is.False);
+        Assert.That(snapshot["other"].CapacityBlocked, Is.False);
+        Assert.That(status.CapacityBlocked, Is.False);
+        Assert.That(status.RetainedWallets, Is.EqualTo(1));
+    }
+
     private void Desired(string session, string room = "room", ulong now = NOW) =>
         ledger.Reconcile(new Dictionary<string, DesiredRoomAssignment> { ["wallet"] = Target(session, room) }, now);
     private DesiredRoomAssignment Target(string session, string room) => new(new ClusterAssignment(room, "realm", session),

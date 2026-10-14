@@ -27,6 +27,8 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
 
     private Room? room;
     private string? latestConnStr;
+    private string? failure;
+    private int interruptions;
 
     // The islandId that came with latestConnStr, kept only so a cancellation log line can name the
     // assignment that superseded the probe (latestConnStr itself is the value actually compared).
@@ -54,6 +56,9 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
     // about to leave anyway.
     private CancellationTokenSource? rejoinProbeCts;
 
+    /// <summary>The first join failure, retained for automated acceptance assertions.</summary>
+    public string? Failure => Volatile.Read(ref failure);
+
     /// <summary>
     ///     Leaves the current room, if any, and joins the one <paramref name="connStr" /> was minted
     ///     for. <paramref name="expectedRoom" /> is the island the assignment named, reported as a
@@ -78,6 +83,7 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
 
         if (!LiveKitToken.TryParse(connStr, out string url, out string token))
         {
+            Interlocked.CompareExchange(ref failure, "Connection string has no URL or access token", null);
             Report("cannot join: the conn string carries no url or no access_token");
             return;
         }
@@ -90,6 +96,11 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
             // Assignments can arrive in a burst, and each join costs a full session setup. Only the
             // newest is worth connecting to, so an older one that waited here is abandoned.
             if (!ReferenceEquals(Volatile.Read(ref latestConnStr), connStr)) return;
+
+            // Re-announcements refresh the cached assignment without replacing a held participant.
+            if (room is not null && room.Name == expectedRoom &&
+                room.ConnectionState is LiveKit.Proto.ConnectionState.ConnConnected or LiveKit.Proto.ConnectionState.ConnReconnecting)
+                return;
 
             // Captured before the disconnect below clears/replaces `room` — this is what makes a
             // takeover's parking assignment (a different island than the one this bot was just
@@ -105,16 +116,26 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
             // comes back on its own, not just that it left.
             joined.Disconnected += (_, reason) =>
             {
+                Interlocked.Increment(ref interruptions);
                 Report($"LEFT room '{joined.Name}': disconnected, reason={reason}");
                 ScheduleRejoinIfEnabled(ct);
             };
-            joined.Reconnecting += (_, _) => Report($"reconnecting to room '{joined.Name}'..");
+            joined.Reconnecting += (_, _) =>
+            {
+                Interlocked.Increment(ref interruptions);
+                Report($"reconnecting to room '{joined.Name}'..");
+            };
             joined.Reconnected += (_, _) => Report($"RE-JOINED room '{joined.Name}' sid={joined.Sid}");
 
             // One join attempt: a refusal is the finding this exists to surface, and retrying would
             // bury it under a delay. Not 0 — the SDK does not say whether that means no retries or no
             // attempts.
-            await joined.ConnectAsync(url, token, new RoomOptions { AutoSubscribe = true, JoinRetries = 1 }, ct);
+            try { await joined.ConnectAsync(url, token, new RoomOptions { AutoSubscribe = true, JoinRetries = 1 }, ct); }
+            catch
+            {
+                joined.Dispose();
+                throw;
+            }
 
             room = joined;
             lastUrl = url;
@@ -126,6 +147,9 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
             string mismatch = string.IsNullOrEmpty(expectedRoom) || string.Equals(joined.Name, expectedRoom, StringComparison.Ordinal)
                 ? string.Empty
                 : $" MISMATCH: the server put us in '{joined.Name}', not '{expectedRoom}'";
+
+            if (mismatch.Length > 0)
+                Interlocked.CompareExchange(ref failure, mismatch.Trim(), null);
 
             Report($"joined state={joined.ConnectionState} room={joined.Name} sid={joined.Sid} participants={joined.NumParticipants}{mismatch}");
 
@@ -142,9 +166,35 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
         }
         catch (Exception e)
         {
+            Interlocked.CompareExchange(ref failure, ConnStringRedaction.Redact(e.Message), null);
             // The whole point of the flag: a token whose claims read clean can still be refused here.
             Report($"JOIN FAILED for room '{expectedRoom}': {e.Message}");
         }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Copies room membership without exposing credentials or mutable SDK state.</summary>
+    public async Task<Observation> ObserveAsync(CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (room is null)
+                return new Observation(false, "", "", "", new Dictionary<string, string>(), Volatile.Read(ref interruptions));
+
+            // The SDK returns a copy of its participant dictionary under its own lock.
+            return new Observation(room.ConnectionState == LiveKit.Proto.ConnectionState.ConnConnected,
+                room.Name ?? "", room.Sid ?? "", room.LocalParticipant?.Sid ?? "",
+                room.RemoteParticipants.ToDictionary(p => p.Key, p => p.Value.Sid), Volatile.Read(ref interruptions));
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Closes only the LiveKit room; Pulse and Connector lifecycles belong to the caller.</summary>
+    public async Task DisconnectAsync(CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try { await DisconnectCurrentAsync(); }
         finally { gate.Release(); }
     }
 
@@ -282,5 +332,9 @@ public sealed class LiveKitJoiner(string account, int rejoinAfterMs = 0) : IAsyn
     }
 
     private void Report(string message) =>
-        Console.WriteLine($"[livekit] [{account}] {message}");
+        Console.WriteLine($"[livekit] [{account}] {ConnStringRedaction.Redact(message)}");
+
+    /// <summary>Room membership and connection interruptions observed by this client.</summary>
+    public sealed record Observation(bool Connected, string RoomName, string RoomSid, string SelfSid,
+        IReadOnlyDictionary<string, string> Participants, int Interruptions);
 }

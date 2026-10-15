@@ -20,12 +20,12 @@ public class ClusterAssignmentRecoveryTests
     public void SetUp()
     {
         board = new ClusterBoard();
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [WALLET] = new ("C1", "realm-a", SESSION),
         });
         publisher = new NatsPublisher(NullLogger<NatsPublisher>.Instance, NullLoggerFactory.Instance,
-            Options.Create(new NatsOptions()), new SnapshotBoard(10, 4), board);
+            Options.Create(new NatsOptions()), new SnapshotBoard(10, 4), board, TestRoomRecovery.Identities(board));
     }
 
     [TearDown]
@@ -81,14 +81,39 @@ public class ClusterAssignmentRecoveryTests
     [Test]
     public void Lookup_AfterDeparture_DoesNotReturnRetainedAssignment()
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>());
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>());
         Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", SESSION), Is.Null);
+    }
+
+    [Test]
+    public void Lookup_DepartedPendingTakeover_ReturnsCleanupOnlyUntilCompletion()
+    {
+        RoomRecoveryAssignment active = board.RoomRecoveryAssignments[WALLET];
+        var departed = active with
+        {
+            Active = false, Peer = null, Identity = null,
+            PendingTakeovers = Array.AsReadOnly(new[] { new PendingSessionTakeover("pending", OTHER_SESSION, "old-room") }),
+        };
+        board.PublishRoomRecovery(new Dictionary<string, RoomRecoveryAssignment> { [WALLET] = departed }, default);
+        PeerClusterChange? cleanup = Resolve($"peer.{WALLET}.cluster_assignment", SESSION);
+        Assert.Multiple(() =>
+        {
+            Assert.That(cleanup?.PendingTakeovers, Has.Count.EqualTo(1));
+            Assert.That(cleanup?.HasTokenNotBefore, Is.True);
+            Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", OTHER_SESSION), Is.Null);
+        });
+        departed = departed with { PendingTakeovers = Array.Empty<PendingSessionTakeover>() };
+        board.PublishRoomRecovery(new Dictionary<string, RoomRecoveryAssignment> { [WALLET] = departed }, default);
+        Assert.That(Resolve($"peer.{WALLET}.cluster_assignment", SESSION), Is.Null);
+        var message = new PeerClusterChange();
+        RoomRecoveryLedger.Stamp(message, departed);
+        Assert.That(message.HasTokenNotBefore, Is.False, "departed records cannot advertise credential readiness");
     }
 
     [Test]
     public void Lookup_AfterTakeover_RejectsOldSessionAndReturnsNewRoom()
     {
-        board.PublishAssignments(new Dictionary<string, ClusterAssignment>
+        board.PublishRecoveryAssignmentsForTest(new Dictionary<string, ClusterAssignment>
         {
             [WALLET] = new ("C2", "realm-b", OTHER_SESSION),
         });

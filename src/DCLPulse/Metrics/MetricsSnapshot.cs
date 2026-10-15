@@ -63,6 +63,9 @@ public readonly record struct MetricsSnapshot
 
         /// <summary>Largest cluster; the histogram cannot recover it from its top bucket.</summary>
         public int ClusterSizeMax { get; init; }
+        public int RecoveryRetainedWallets { get; init; }
+        public int RecoveryPendingOperations { get; init; }
+        public int RecoveryCapacityBlocked { get; init; }
 
         /// <summary>Cluster-size histogram: one observation per cluster per pass.</summary>
         public HistogramSnapshot ClusterSize { get; init; }

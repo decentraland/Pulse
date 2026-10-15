@@ -1,119 +1,95 @@
 # Cluster assignment recovery
 
-The change feed is not a durable assignment store. A stationary peer may emit no further
-`cluster_change` events after a missed delivery, and gatekeeper's local mirror can expire or
-be lost on restart. Pulse now exposes its current assignment independently of that feed.
+A missed Core NATS event or lost Gatekeeper mirror can strand a stationary peer without credentials.
+Pulse exposes its current assignment and retained pending takeovers independently of the change feed.
+Read the [takeover recovery plan](demand-driven-recovery-protocol-plan.md) for the design and limits.
 
 ## Broker contract
 
-* Request `peer.{wallet}.cluster_assignment` with the raw UTF-8 ephemeral session address as
-  the body; the wallet in the subject may carry any casing. The reply is the existing protobuf
-  `PeerClusterChange`, with cluster, realm and session populated. Unknown/departed wallets,
-  malformed requests, requests without a session and mismatched sessions receive no reply;
-  callers must enforce a bounded timeout. There is no session-less mode: an instance replies
-  only when it owns the requested session, so an empty or warming instance cannot mask the
-  owner during an overlapping deployment, and no broker client can read an assignment it
-  cannot name the session of.
-* Replies go only to the requester's inbox — a reply subject under the `_INBOX.` prefix both
-  NATS clients default to. A request naming any other reply subject is ignored, so Pulse never
-  publishes a `PeerClusterChange` under a subject the requester chose. Ignored requests are
-  counted but spend none of the request budget, so they cannot crowd out a valid lookup.
-* Each instance handles at most `Nats__MaxAssignmentRequestsPerSecond` requests per second
-  (default 5000, counted over fixed one-second windows) and drops the rest unanswered, counting
-  each drop as it happens and logging the window's total when the next window opens. A dropped
-  request looks to the caller like any other timeout, and the next hint retries it. The
-  subscription has no queue group, so every instance on the broker receives every request and
-  spends its budget on it before learning whether it owns the session: the budget effectively
-  bounds the request rate for all instances' peers combined, not for this instance's own.
-* Every 30 seconds, `peer.{lowercase-wallet}.cluster_snapshot` carries the same protobuf as
-  a recovery hint, session included: the consumer's hint handler keys its re-query on that
-  session, and it is the same ephemeral address every `cluster_change` already carries — a
-  selector, not a credential. Consumers must query the current assignment before acting on a
-  hint; a hint delayed by broker backpressure may describe an older assignment. Consumers must
-  also query before applying `cluster_change`, validating its session and using the current
-  room while retaining the matching event's displaced-session cleanup.
-* What a broker client may learn is bounded by broker permissions, not by these payloads:
-  `engine.islands` already lists every wallet per cluster each pass. Scope publish and
-  subscribe on `peer.*` to Pulse and gatekeeper.
-* The request/reply path needs two grants beyond `peer.*`, or every lookup times out. Pulse
-  publishes each reply to the requester's `_INBOX.` subject: grant it response permissions
-  (`allow_responses`, one response per request), which is narrower than publish on
-  `_INBOX.>`. Gatekeeper receives the reply on its own inbox, so it needs subscribe on
-  `_INBOX.>`.
-* Neither reply nor hint repeats displaced-session cleanup. The original `cluster_change`
-  event retains takeover semantics. Coalescing subsequent moves for the same replacement
-  session preserves any displaced identity still pending in the outbox.
+| Operation | Contract |
+| --- | --- |
+| Request `peer.{wallet}.cluster_assignment` | Raw UTF-8 session address, exactly 42 bytes. Wallet/session comparisons accept any casing. A matching active assignment requires its captured live registration. Explicitly departed records reply only while pending takeovers remain, using the retained winner session. Unknown, completed departed, malformed or mismatched requests receive no reply; callers use bounded timeouts and treat silence as unknown. |
+| Reply | `PeerClusterChange` with assignment, repeated `pending_takeovers` and optional `token_not_before`. A supported assignment includes the token floor even when zero. Its absence means unsupported or capacity blocked. Only `_INBOX.` reply subjects are accepted. |
+| Hint `peer.{lowercase-wallet}.cluster_snapshot` | Same assignment payload for active registrations or explicitly departed records with pending work. A delayed hint can be stale: query before acting. |
+| Completion `peer.{wallet}.takeover_completed` | `TakeoverCompleted` with a unique takeover ID and positive JavaScript-safe `revoke_before`. Only a matching pending ID for that wallet is accepted. |
 
-Assignments reflect the last completed clustering pass (normally one second), using the
-post-debounce room actually published, rather than the candidate topology. Departed peers
-are excluded even while the tracker retains their takeover ledger. Reads are safe against
-the next pass replacing the entire map. This is not an instantaneous session registry: a
-departure or takeover becomes visible on the next completed pass.
-The complete assignment map is published before change events for that pass, and after the
-pass's topology snapshot, so an assignment read in between can name a cluster the latest
-`engine.islands` no longer lists; the next pass reconciles both. Reused peer slots are reset
-using an atomically read identity registration, including reconnects with the same wallet and
-ephemeral session that happen between tracker passes; a slot reused between the grid read and
-that check can still be attributed to the previous occupant's cell for that one pass.
+Gatekeeper can issue island credentials only when the capability marker is present and pending takeovers
+are empty. Every token uses the retained `token_not_before` floor. Legacy displaced-session fields remain
+compatible feed annotations and are not the retained recovery state. Field 6 and `room_recovery` are reserved.
 
-`Nats__AssignmentRefreshIntervalMs` changes the hint interval. A non-positive value disables
-hints but leaves request/reply available. Both require the existing NATS and cluster tracker
-configuration. No token is minted by Pulse.
+| Setting | Default | Non-positive value |
+| --- | --- | --- |
+| `Nats__AssignmentRefreshIntervalMs` | 30000 | Disables hints; lookup remains available. |
+| `Nats__MaxAssignmentRequestsPerSecond` | 5000 | Disables the request cap. |
 
-## Rollout
+The request cap uses fixed one-second windows. Over-budget requests receive no reply. The subscription
+has no queue group, so each connected responder spends budget before checking ownership. Lookup and
+hints require configured NATS and the tracker. Core NATS delivery loss is repaired by another lookup or
+hint; publication success does not prove consumer receipt.
 
-Deploy this Pulse change before the companion gatekeeper recovery change. The new subjects
-are additive and older gatekeepers ignore them. Gatekeeper then queries on every connect
-and before every change event or recovery hint. Recovery checks the active session and
-LiveKit membership, and mints only when the wallet is absent from its assigned room.
-An unavailable authority fails closed;
-the next hint retries. Deploy the connector dropped-frame recovery afterward.
+### Broker permissions
 
-This does not add an assignment producer for clients that never connect to Pulse, nor does
-it persist every historical takeover during an outage. The single displaced-session field
-cannot represent an arbitrary chain of takeovers. It repairs the confirmed same-session
-move overwriting a pending takeover, and restores current assignments for active peers.
-Gatekeeper's membership guard identifies the wallet, not the ephemeral session. If a lost
-takeover leaves the displaced session occupying the same desired room, hints alone cannot
-distinguish it from a healthy participant and will not evict it.
+Only Gatekeeper publishes takeover completions. Connector/client identities receive no completion
+permissions. Pulse needs response permissions (`allow_responses`, one response per request), and
+Gatekeeper subscribes to `_INBOX.>` for replies. The session selector is not authentication.
 
-## Overlapping deployments
+## Assignment consistency
 
-Every instance answers for the sessions in its own last completed pass, and nothing arbitrates
-between instances. Two consequences follow.
+The tracker adopts desired assignments before applying queued completions, then publishes an immutable
+snapshot. Lookup and hints check the captured live registration, including same-session reconnects and
+recycled slots. A stale completion cannot clear a fresh same-room takeover because IDs are globally unique.
 
-* **A lingering instance keeps answering for a departed session.** When a client leaves old
-  instance A and reconnects to new instance B with the same ephemeral session, A drops the peer
-  from its assignment map only on the first pass after its transport reports the disconnect. An
-  ENet client that disconnects cleanly is reported at once, so A's window is at most one pass
-  (`Clusters:PassIntervalMs`, 1 s). A client that goes silent is reported when ENet's flat
-  inactivity deadline expires, `Transport:PeerTimeoutMs` (5 s) after its last packet, so the
-  window is up to that plus one pass; for a WebTransport client the native host's QUIC idle
-  timeout, which Pulse does not configure, takes the deadline's place. Throughout the window
-  both A and B answer `cluster_assignment` for the session, and a requester that takes the first
-  reply can receive A's stale cluster. Nothing corrects it until that requester queries again
-  after A's window has closed — at the latest on B's next hint,
-  `Nats__AssignmentRefreshIntervalMs` (30 s) away. Pulse has no per-peer liveness signal that
-  would let the tracker exclude such a peer sooner: the only cross-thread peer state it reads is
-  the grid, the snapshot ring and the identity board, which all keep a connected peer until the
-  transport reports it gone, and a stationary peer publishes no snapshots, so snapshot age
-  cannot tell it from a departed one. ENet's own last-receive time lives in the transport
-  thread's peer table and is not exported to any board.
-* **Cluster IDs collide across instances.** IDs are `{Clusters:IdPrefix}{n}` with a counter that
-  restarts at 1 in every process, so two instances with the same prefix mint the same IDs for
-  unrelated clusters, and `engine.islands` from each names them identically. A consumer that
-  treats the cluster ID as a room name without qualifying it by instance can place peers of
-  different instances in one room. Distinct `Clusters__IdPrefix` values per instance avoid it.
+A ready assignment is conservatively treated as potentially credentialed. Displacing it creates retained
+pending work. An unadmitted A -> B -> C chain keeps A's pending takeover; B cannot receive credentials
+while A remains pending and therefore creates no additional removal obligation. Same-session ordinary
+moves create no takeover work. A later admitted same-room ABA transition receives a fresh ID.
 
-## Tests
+Unfinished takeovers survive departures and never expire. Explicitly departed records remain discoverable
+through hints and exact retained-session lookup only while pending work exists. After completion they
+never return a ready assignment. Completed records use the existing session retention window and retain
+the token floor until its cutoff and clock grace have passed. Completion cutoffs must exceed the floor
+captured when that takeover was created; accepted cutoffs raise the wallet floor using their maximum.
 
-Tracker regressions cover stationary peers beyond the former one-hour mirror lifetime,
-departure, immediate slot reuse, replacement sessions, immutable snapshots, event ordering,
-debounce, lower-cased assignment keys, map reuse across unchanged passes and stats-only mode.
-Resolver tests cover session isolation, malformed and session-less requests, any-cased subjects,
-session replacement, the reply-inbox guard and the request budget. Broker integration tests run
-with `NATS_TEST_URL` set; CI supplies a local NATS service. They cover multiple responders,
-publisher connection loss and resubscription, repeated unchanged hints, a failed reply followed
-by recovery, a session-less request, a checksum-cased subject and a request naming a foreign
-reply subject. Reply and hint publish successes/failures contribute to the existing NATS
-counters; intentional silence on a non-owned session is not a failure.
+Capacity limits are hard bounds on retained wallets and pending takeovers. At capacity, Pulse retains
+existing pending work and any exposed displacement it cannot yet record. A blocked or overflow
+assignment omits `token_not_before`, even when its pending list is empty, and cannot authorize credentials.
+
+### Capacity sizing and alerts
+
+Size `MaxRecoveryWallets` above peak concurrent wallets plus distinct departed wallets within the
+retention window, with additional headroom for unfinished cleanup and token floors extending beyond
+that window. Defaults retain 300 seconds and 8192 wallets. At 4095 concurrent wallets, the remaining
+4097 slots support about 13.7 distinct departures per second over 300 seconds before that headroom is
+exhausted. Repeated departures of the same retained wallet do not consume distinct slots.
+
+The `/metrics` gauges expose `dcl_pulse_cluster_recovery_retained_wallets`,
+`dcl_pulse_cluster_recovery_pending_operations` and `dcl_pulse_cluster_recovery_capacity_blocked`.
+Warn when retained wallets exceed 80% of the configured limit; alert immediately when capacity blocked
+is nonzero. Sustained growth in pending operations calls for checking Gatekeeper cleanup and broker
+completion delivery. Ordinary departed entries release capacity only after retention and the retained
+floor plus clock grace have elapsed. Unfinished or unrecorded cleanup remains protected.
+
+These signals expose overload; they do not remove the finite capacity limit. Evicting a ready departed
+wallet early can erase its potentially credentialed old session: a different session returning inside
+retention would then appear new and bypass takeover cleanup. Arbitrary distinct-wallet churn therefore
+requires admission controls or a separately reviewed cleanup design, rather than early eviction of
+recovery history. Increasing the limit requires accounting for memory and per-pass processing costs.
+
+## Limits and rollout
+
+This contract covers in-process session takeover recovery and credential recovery. Ordinary move/departure
+cleanup, crash-safe durable state and automated Pulse restart recovery are outside this scope. Room IDs
+retain a local boot identifier; it is not a restart recovery handshake. There is no bootstrap, revision,
+retirement observation or general all-room cleanup orchestrator.
+
+One Pulse and one active Gatekeeper are supported. Paired backend rollout requires closed admission
+through the incompatible interval. Old Gatekeepers ignore the pending-work barrier. Existing Cloud
+revocation, current-holder guards, token clock bounds and actual Cloud acceptance remain separate
+requirements. Timeout or no responders is unknown authority and cannot authorize destructive cleanup.
+
+## Verification
+
+Ledger and tracker tests cover lost hints/completions, repeated pending state, unadmitted chains,
+ABA, live-registration fencing, cutoffs and capacity. `ClusterAssignmentRecoveryIntegrationTests`
+uses a real broker through `NATS_TEST_URL`, including the takeover completion subject. These tests
+do not establish LiveKit Cloud enforcement. Reply/hint publication uses the existing NATS counters.

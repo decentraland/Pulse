@@ -35,4 +35,10 @@ public sealed class ClusterOptions
     ///     holds. Zero disables the annotation.
     /// </summary>
     public int SessionRetentionPasses { get; set; } = 300;
+
+    /// <summary>Maximum retained wallets. Overflow assignments omit the capability marker and cannot receive credentials.</summary>
+    public int MaxRecoveryWallets { get; set; } = 8192;
+
+    /// <summary>Maximum unfinished takeovers per wallet. Unrecorded displacement remains retained and blocks credentials.</summary>
+    public int MaxRecoveryRoomsPerWallet { get; set; } = 32;
 }

@@ -8,6 +8,22 @@ namespace DCLPulseTests.Comms;
 public class LiveKitJoinerTests
 {
     [Test]
+    public async Task InvalidAssignment_IsAnObservableFailureWithoutConnecting()
+    {
+        await using var joiner = new LiveKitJoiner("invalid-assignment");
+        await joiner.JoinAsync("livekit:wss://example.com", "island-test", CancellationToken.None);
+
+        LiveKitJoiner.Observation observation = await joiner.ObserveAsync(CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(joiner.Failure, Is.Not.Null, "acceptance tests must not mistake a swallowed join error for success");
+            Assert.That(observation.Connected, Is.False);
+            Assert.That(observation.SelfSid, Is.Empty);
+            Assert.That(observation.Participants, Is.Empty);
+        });
+    }
+
+    [Test]
     public async Task RejoinProbe_RechecksAssignmentAfterWaitingForGate()
     {
         await using var joiner = new LiveKitJoiner("race", rejoinAfterMs: 0);

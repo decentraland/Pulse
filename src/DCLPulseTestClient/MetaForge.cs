@@ -12,13 +12,14 @@ public static class MetaForge
     /// </param>
     public static async Task<string> RunCommandAsync(string arguments, CancellationToken ct, bool throwOnNonZeroExit = true)
     {
-        var process = new Process
+        using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = "metaforge",
                 Arguments = arguments,
                 UseShellExecute = false,
+                CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 Environment = {["NO_COLOR"] = "1"}
@@ -39,8 +40,21 @@ public static class MetaForge
         // drains it blocks forever, and WaitForExitAsync would never return.
         Task<string> stdout = process.StandardOutput.ReadToEndAsync(ct);
         Task<string> stderr = process.StandardError.ReadToEndAsync(ct);
-        await Task.WhenAll(stdout, stderr);
-        await process.WaitForExitAsync(ct);
+        try
+        {
+            await Task.WhenAll(stdout, stderr);
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelling pipe reads does not stop the child. Stop only this invocation's process tree.
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { } // The process exited between the check and Kill.
+            throw;
+        }
 
         // Without this the caller sees an empty string and fails inside a JSON parse, which points
         // at the wrong thing entirely — an outdated metaforge missing a subcommand reads as

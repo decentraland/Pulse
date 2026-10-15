@@ -16,6 +16,21 @@ public sealed class MessagePipe
     private readonly Channel<OutgoingMessage> outgoingChannel = Channel.CreateUnbounded<OutgoingMessage>(
         new UnboundedChannelOptions {SingleWriter = true, SingleReader = true});
 
+    private int lastDisconnectReason = -1;
+
+    /// <summary>The last disconnection reported by the transport, or null before one is reported.</summary>
+    public DisconnectReason? LastDisconnectReason
+    {
+        get
+        {
+            int reason = Volatile.Read(ref lastDisconnectReason);
+            return reason >= 0 ? (DisconnectReason)reason : null;
+        }
+    }
+
+    /// <summary>Records a disconnect without blocking the transport thread.</summary>
+    public void OnDisconnected(DisconnectReason reason) => Volatile.Write(ref lastDisconnectReason, (int)reason);
+
     public IAsyncEnumerable<IncomingMessage> ReadIncomingMessagesAsync(CancellationToken ct) =>
         incomingChannel.Reader.ReadAllAsync(ct);
 

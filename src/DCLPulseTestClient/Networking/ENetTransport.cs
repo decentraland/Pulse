@@ -133,8 +133,11 @@ public sealed class ENetTransport : IDisposable
                 // A refusal during the connect handshake may never produce a Connect event, which
                 // would leave the pending connect awaiting forever. Fault it instead.
                 if (connections.TryGetValue(peerId, out PeerConnection closed))
+                {
+                    closed.Pipe.OnDisconnected(netEvent.Type == EventType.Timeout ? DisconnectReason.NONE : (DisconnectReason)netEvent.Data);
                     closed.Completion?.TrySetException(new PulseException(
                         $"peer {peerId} disconnected: {(DisconnectReason)netEvent.Data}"));
+                }
 
                 connections.Remove(peerId);
                 break;

@@ -2,7 +2,7 @@
 
 > **Historical harness.** The evidence and parking/metadata scenarios below describe the earlier
 > implementation. They do not validate Pulse-owned recovery. Use the
-> [current plan](demand-driven-recovery-protocol-plan.md) and
+> [automated room-recovery suite](room-recovery-automation.md), [current plan](demand-driven-recovery-protocol-plan.md) and
 > [takeover recovery operations](https://github.com/decentraland/comms-gatekeeper/blob/fix/pulse-owned-room-recovery/docs/room-recovery-operations.md)
 > before testing the new backend pair; old scripts do not satisfy its admission barrier.
 

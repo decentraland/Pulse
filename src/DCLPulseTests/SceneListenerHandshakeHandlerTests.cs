@@ -62,7 +62,7 @@ public class SceneListenerHandshakeHandlerTests
             parcelEncoder,
             new SceneListenerCellMapper(realmGrids, parcelOptions),
             ipLimiter,
-            transport);
+            transport, Substitute.For<ILogger<FieldValidator>>());
 
         handler = new SceneListenerHandshakeHandler(
             messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),

@@ -47,7 +47,7 @@ public partial class PeerSimulationTests
                     Options.Create(new DiscreteEventRateLimiterOptions { RatePerSecond = 0 }), timeProvider, transport),
                 new FieldValidator(
                     Options.Create(new FieldValidatorOptions()), Options.Create(new SceneListenerOptions()),
-                    parcelEncoder, SceneListenerTestFactory.CellMapper(), SceneListenerTestFactory.Limiter(), transport));
+                    parcelEncoder, SceneListenerTestFactory.CellMapper(), SceneListenerTestFactory.Limiter(), transport, Substitute.For<ILogger<FieldValidator>>()));
             var handlerPeers = new Dictionary<PeerIndex, PeerState>
             {
                 [peer] = peers.TryGetValue(peer, out PeerState? state)

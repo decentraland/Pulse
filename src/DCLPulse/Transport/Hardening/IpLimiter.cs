@@ -365,6 +365,16 @@ public sealed class IpLimiter : IDisposable
     }
 
     /// <summary>
+    ///     The canonical source address bound to <paramref name="peerIndex" />, or <c>null</c> when
+    ///     the peer holds no reservation. Meant for diagnostics on cold paths; takes <see cref="syncRoot" />.
+    /// </summary>
+    public string? AddressOf(PeerIndex peerIndex)
+    {
+        lock (syncRoot)
+            return reservationByPeer.TryGetValue(peerIndex, out Reservation held) ? held.Ip : null;
+    }
+
+    /// <summary>
     ///     Canonical dictionary key for a source address. ENet's <c>Peer.IP</c> is dotted IPv4,
     ///     v4-mapped IPv6 (<c>::ffff:a.b.c.d</c>) or native IPv6; WebTransport reports whichever
     ///     family the native host parsed. Without one canonical form a host holds every class's cap

@@ -51,7 +51,7 @@ public class SceneListenerUpdateHandlerTests
                 parcelEncoder,
                 cellMapper,
                 SceneListenerTestFactory.Limiter(),
-                transport));
+                transport, Substitute.For<ILogger<FieldValidator>>()));
 
         peer = new PeerIndex(1);
         peers = new Dictionary<PeerIndex, PeerState> { [peer] = ListenerAt(0, 0) };
@@ -162,7 +162,7 @@ public class SceneListenerUpdateHandlerTests
                 parcelEncoder,
                 cellMapper,
                 SceneListenerTestFactory.Limiter(),
-                transport));
+                transport, Substitute.For<ILogger<FieldValidator>>()));
 
         throttled.Handle(peers, peer, Update(Rect(5, 5, 5, 5)));
         throttled.Handle(peers, peer, Update(Rect(7, 7, 7, 7)));

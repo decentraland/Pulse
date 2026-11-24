@@ -64,7 +64,7 @@ public class HandshakeHandlerTests
             parcelEncoder,
             SceneListenerTestFactory.CellMapper(),
             SceneListenerTestFactory.Limiter(),
-            transport);
+            transport, Substitute.For<ILogger<FieldValidator>>());
 
         handler = new HandshakeHandler(
             messagePipe: new MessagePipe(Substitute.For<ILogger<MessagePipe>>(), new ServerMessageCounters()),

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- `rusty_enet` comes only from `https://github.com/decentraland/dcl-one` at `rev = "43dfb8e3e14c599972d3cca0ad4c718d9052b4ad"`. No copy, patch or fork of it enters this repository.
+- `rusty_enet` comes only from `https://github.com/decentraland/dcl-one` at commit `43dfb8e3e14c599972d3cca0ad4c718d9052b4ad`, folder `library/vendor/rusty_enet`, Git tree SHA `bf7f72cb819bc99ab3457f75b5db07fdb6b2b376`. It is fetched into the git-ignored `native/enet/vendor/`. No copy, patch or fork of it is committed to this repository.
 - The glue uses only `rusty_enet`'s public API.
 - `ENet.cs`, `ENetChannel.cs`, `ENetHostedService*.cs` and `ENetTransport.cs` are not edited.
 - Every exported function has ENet-CSharp's C signature, `extern "C"`, and runs its body through `guard` (Task 1). A panic or a null handle returns the error value; nothing unwinds into .NET.
@@ -39,6 +39,8 @@ Inputs the spec implies but does not test, most likely first. Each has a test in
 ```
 native/enet/
   Cargo.toml, Cargo.lock, rust-toolchain.toml, .gitignore
+  PIN.json          dcl-one repository, rev, path, tree_sha
+  vendor/           git-ignored, filled by scripts/enet-fetch-source.py
   PROVENANCE.json
   src/lib.rs        module list and re-exports
   src/guard.rs      panic and null guard
@@ -50,6 +52,7 @@ native/enet/
   src/packet.rs     PacketHandle, flag mapping, enet_packet_*
   tests/common/mod.rs  loopback helpers
   tests/address.rs, tests/host.rs, tests/packets.rs, tests/mtu.rs, tests/csharp_interop.rs
+scripts/enet-fetch-source.py
 scripts/enet-provenance.py
 .github/workflows/enet-native.yml, .github/workflows/enet-pin.yml
 src/DCLPulse/runtimes/**            replaced binaries
@@ -62,22 +65,29 @@ src/DCLPulseTests/ENetNativeLibraryTests.cs, src/DCLPulseTests/ENetLibrarySelect
 ### Task 1: Glue crate, source pin, library exports
 
 **Files:**
-- Create: `native/enet/Cargo.toml`, `native/enet/rust-toolchain.toml`, `native/enet/.gitignore`, `native/enet/src/lib.rs`, `native/enet/src/guard.rs`, `native/enet/src/library.rs`
-- Test: unit tests in `src/guard.rs` and `src/library.rs`
+- Create: `native/enet/PIN.json`, `scripts/enet-fetch-source.py`, `native/enet/Cargo.toml`, `native/enet/Cargo.lock`, `native/enet/rust-toolchain.toml`, `native/enet/.gitignore`, `native/enet/src/lib.rs`, `native/enet/src/guard.rs`, `native/enet/src/library.rs`
+- Test: unit tests in `src/guard.rs` and `src/library.rs`; `python scripts/enet-fetch-source.py selftest`
 
 **Interfaces:**
+- Produces: `native/enet/PIN.json` = `{"repository": "https://github.com/decentraland/dcl-one", "rev": "43dfb8e3e14c599972d3cca0ad4c718d9052b4ad", "path": "library/vendor/rusty_enet", "tree_sha": "bf7f72cb819bc99ab3457f75b5db07fdb6b2b376"}`.
+- Produces: `python scripts/enet-fetch-source.py fetch` (idempotent; exit 0 when `native/enet/vendor/dcl-one` holds the pinned folder and its tree SHA matches), `… verify` (no network; exit 1 naming the mismatch), `… selftest`.
 - Produces: `pub(crate) fn guard<T>(on_error: T, body: impl FnOnce() -> Option<T>) -> T` — returns `on_error` when `body` returns `None` or panics. Every later export uses it.
 - Produces: `enet_initialize() -> c_int` (0), `enet_deinitialize()`, `enet_linked_version() -> u32`, `enet_time_get() -> u32` (milliseconds since the first call in the process).
 
-- [ ] **Step 1: Create the manifest**
+- [ ] **Step 1: Write the fetch script and the pin**
 
-`Cargo.toml`: package `enet`, edition 2021, `[lib] name = "enet"`, `crate-type = ["cdylib", "rlib"]` (the `rlib` lets integration tests call the exports), an empty `[workspace]` table, `rusty_enet = { git = "https://github.com/decentraland/dcl-one", rev = "43dfb8e3e14c599972d3cca0ad4c718d9052b4ad" }`, `[profile.release] panic = "unwind"`, `lto = true`. `rust-toolchain.toml`: `channel = "1.99.1"`, components `rustfmt`, `clippy`. `.gitignore`: `target/`.
+`scripts/enet-fetch-source.py fetch` creates `native/enet/vendor/dcl-one` as a Git repository and runs, with `core.autocrlf=false` and `core.longpaths=true` set in that repository: `git remote add origin <repository>`, `git sparse-checkout set --no-cone /<path>/`, `git fetch --depth 1 --filter=blob:none origin <rev>`, `git checkout --detach FETCH_HEAD`. It then requires `git rev-parse HEAD` to equal `rev`, `git rev-parse HEAD:<path>` to equal `tree_sha`, and `git status --porcelain` to be empty; on any mismatch it prints which and exits 1. When the directory already satisfies those three checks it does nothing. `verify` runs only the three checks. Only `<path>` may be checked out; nothing else of dcl-one lands on disk.
 
-- [ ] **Step 2: Confirm Cargo resolves the pin**
+`selftest` builds a small local Git repository with a nested folder, pins it, and asserts: `fetch` then `verify` pass; a wrong `tree_sha` fails naming `tree_sha`; an edited fetched file fails `verify`; a second `fetch` is a no-op.
 
-Run: `cargo fetch` then `cargo tree -p rusty_enet`
-Expected: `rusty_enet v0.4.0 (https://github.com/decentraland/dcl-one?rev=43dfb8e…#43dfb8e3)`.
-If Cargo reports more than one package named `rusty_enet` or cannot load the nested workspace, stop and report: the spec's fallback (a subtree fetch script checked against the Git tree SHA) replaces the git dependency, and that is a plan change.
+Run: `python scripts/enet-fetch-source.py selftest` → `selftest ok`. Then `python scripts/enet-fetch-source.py fetch` → exits 0 in well under five minutes; `native/enet/vendor/dcl-one/library/vendor/rusty_enet/Cargo.toml` exists and no sibling of `library` is checked out.
+
+- [ ] **Step 2: Create the manifest**
+
+`Cargo.toml`: package `enet`, edition 2021, `[lib] name = "enet"`, `crate-type = ["cdylib", "rlib"]` (the `rlib` lets integration tests call the exports), a `[workspace]` table with `exclude = ["vendor"]` (the vendored crate declares its own workspace), `rusty_enet = { path = "vendor/dcl-one/library/vendor/rusty_enet" }`, `[profile.release] panic = "unwind"`, `lto = true`. `rust-toolchain.toml`: `channel = "1.99.1"`, components `rustfmt`, `clippy`. `.gitignore`: `target/` and `vendor/`.
+
+Run: `cargo tree -p rusty_enet`
+Expected: `rusty_enet v0.4.0 (…/native/enet/vendor/dcl-one/library/vendor/rusty_enet)`.
 
 - [ ] **Step 3: Write the failing tests**
 
@@ -106,7 +116,7 @@ Expected: 6 passed, no warnings.
 
 - [ ] **Step 7: Commit**
 
-`git add native/enet && git commit -m "feat: add ENet glue crate pinned to dcl-one"`
+`git add native/enet scripts/enet-fetch-source.py && git commit -m "feat: add ENet glue crate pinned to dcl-one"`
 
 ---
 
@@ -338,7 +348,7 @@ Expected: all pass. A failure here is an interop bug in the glue; fix the glue, 
 **Files:**
 - Create: `scripts/enet-provenance.py`, `.github/workflows/enet-native.yml`, `.github/workflows/enet-pin.yml`
 
-`PROVENANCE.json` and the `test.yml` check land in Task 7 with the libraries, so `main` never carries a failing check. Until then `enet-pin.yml` exits 0 with a notice when `PROVENANCE.json` is absent.
+`PROVENANCE.json` and the `test.yml` check land in Task 7 with the libraries, so `main` never carries a failing check.
 
 **Interfaces:**
 - Produces: `python scripts/enet-provenance.py write` and `python scripts/enet-provenance.py check` (exit 0 or 1 with a message naming what differs).
@@ -346,8 +356,7 @@ Expected: all pass. A failure here is an interop bug in the glue; fix the glue, 
 
 Definitions:
 - `source_digest` is the SHA-256 of the output of `git ls-files -s -- native/enet ":!native/enet/PROVENANCE.json"`. It uses index blob hashes, so line endings do not affect it.
-- `dcl_one_rev` is read from `native/enet/Cargo.toml`; `toolchain` from `rust-toolchain.toml`.
-- `rusty_enet_tree_sha` is the Git tree SHA of `library/vendor/rusty_enet` at `dcl_one_rev`, from `GET /repos/decentraland/dcl-one/contents/library/vendor?ref=<rev>`.
+- `dcl_one_rev` and `rusty_enet_tree_sha` are copied from `native/enet/PIN.json` (`rev`, `tree_sha`); `toolchain` from `rust-toolchain.toml`.
 - `check` recomputes `source_digest`, the three library hashes, `dcl_one_rev` and `toolchain`, and compares.
 
 - [ ] **Step 1: Write the script and its self-test**
@@ -361,11 +370,11 @@ Expected: `selftest ok`.
 
 - [ ] **Step 3: Write `enet-native.yml`**
 
-Triggers: `workflow_dispatch`, and `pull_request` on paths `native/enet/**`. Matrix: `ubuntu-22.04` / `x86_64-unknown-linux-gnu` / `libenet.so`; `windows-latest` / `x86_64-pc-windows-msvc` / `enet.dll` with `RUSTFLAGS=-C target-feature=+crt-static`; `macos-latest` / `aarch64-apple-darwin` / `libenet.dylib`. Each job: checkout, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, print the SHA-256, upload the library as artifact `enet-<rid>`. `permissions: contents: read`.
+Triggers: `workflow_dispatch`, and `pull_request` on paths `native/enet/**`. Matrix: `ubuntu-22.04` / `x86_64-unknown-linux-gnu` / `libenet.so`; `windows-latest` / `x86_64-pc-windows-msvc` / `enet.dll` with `RUSTFLAGS=-C target-feature=+crt-static`; `macos-latest` / `aarch64-apple-darwin` / `libenet.dylib`. Each job: checkout, `python scripts/enet-fetch-source.py fetch`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, print the SHA-256, upload the library as artifact `enet-<rid>`. `permissions: contents: read`.
 
 - [ ] **Step 4: Write `enet-pin.yml`**
 
-Triggers: `schedule` (daily), `workflow_dispatch`, `pull_request`. It reads the pin from `PROVENANCE.json`, fetches the tree SHA of `library/vendor/rusty_enet` on dcl-one's `main`, and compares it with `rusty_enet_tree_sha`. On a difference: `::error::dcl-one's rusty_enet tree moved; follow "Moving the ENet pin" in the README` and exit 1 for `schedule` and `workflow_dispatch`; `::warning::` with the same text and exit 0 for `pull_request`.
+Triggers: `schedule` (daily), `workflow_dispatch`, `pull_request`. It reads `tree_sha` from `native/enet/PIN.json`, fetches the tree SHA of `library/vendor/rusty_enet` on dcl-one's `main` (`GET /repos/decentraland/dcl-one/contents/library/vendor?ref=main`), and compares the two. On a difference: `::error::dcl-one's rusty_enet tree moved; follow "Moving the ENet pin" in the README` and exit 1 for `schedule` and `workflow_dispatch`; `::warning::` with the same text and exit 0 for `pull_request`.
 
 - [ ] **Step 5: Commit**
 
@@ -518,7 +527,7 @@ Expected: each prints its `ENet library:` line and connects; the server's debug 
 
 - [ ] **Step 1: README**
 
-Add a section "ENet native library" after the RustEthereum one: what `native/enet` is, that the source is dcl-one at the pinned commit, that `ENet.cs` is unchanged, and "Moving the ENet pin": change `rev` in `native/enet/Cargo.toml`, run `enet-native.yml`, copy the three artifacts, run `python scripts/enet-provenance.py write`, run the tests and the e2e check in both modes, commit. Add the table row: `--enet=<csharp|rust>` | `csharp` | `ENet library the client loads: ENet-CSharp (as Unity) or dcl-one's rusty_enet (as Bevy)`.
+Add a section "ENet native library" after the RustEthereum one: what `native/enet` is, that the source is dcl-one at the pinned commit, that `ENet.cs` is unchanged, how to build it locally (`python scripts/enet-fetch-source.py fetch`, then `cargo build --release` in `native/enet`), and "Moving the ENet pin": change `rev` and `tree_sha` in `native/enet/PIN.json`, run `enet-native.yml`, copy the three artifacts, run `python scripts/enet-provenance.py write`, run the tests and the e2e check in both modes, commit. Add the table row: `--enet=<csharp|rust>` | `csharp` | `ENet library the client loads: ENet-CSharp (as Unity) or dcl-one's rusty_enet (as Bevy)`.
 
 - [ ] **Step 2: Skills**
 

@@ -83,7 +83,9 @@ Pulse.
 
 ```
 native/enet/                    Rust glue crate (cdylib), own Cargo workspace
-  Cargo.toml                    rusty_enet = { git = dcl-one, rev = <pinned commit> }
+  PIN.json                      dcl-one repository, commit, path and Git tree SHA of rusty_enet
+  vendor/                       git-ignored; filled by scripts/enet-fetch-source.py
+  Cargo.toml                    rusty_enet = { path = "vendor/dcl-one/library/vendor/rusty_enet" }
   Cargo.lock                    committed
   rust-toolchain.toml           pinned toolchain
   src/                          exported enet_* functions, socket, handle tables
@@ -96,19 +98,23 @@ src/DCLPulseTestClient/runtimes/  unchanged: the ENet-CSharp libraries, for the 
 
 ### Source pin
 
-`native/enet/Cargo.toml` depends on `rusty_enet` through a Cargo git dependency on
-`https://github.com/decentraland/dcl-one` with an exact `rev`. Cargo locates the package by name
-inside the repository. A git revision is content-addressed, so the bytes are dcl-one's by
-construction. The pin is dcl-one's main at the time of the build, starting at
+`native/enet/PIN.json` names the repository (`https://github.com/decentraland/dcl-one`), an exact
+commit `rev`, the path `library/vendor/rusty_enet`, and that folder's Git tree SHA.
+`scripts/enet-fetch-source.py` fetches only that folder at that commit into the git-ignored
+`native/enet/vendor/` (a sparse, blob-filtered Git fetch) and fails unless the fetched folder's
+tree SHA equals the pinned one. A Git tree SHA is content-addressed, so the bytes are dcl-one's by
+construction. `native/enet/Cargo.toml` depends on the crate by path into `vendor/`.
+
+A plain Cargo git dependency was tried first and dropped on 2026-11-25: Cargo clones and checks
+out the whole monorepo, which took 45 minutes and then failed on Windows' path-length limit in
+files unrelated to ENet.
+
+The pin is dcl-one's main at the time of the build, starting at
 `43dfb8e3e14c599972d3cca0ad4c718d9052b4ad` (2026-11-25). dcl-one's Pulse server and its Bevy
 Explorer both build this one path. A deployed client built from an older dcl-one commit may carry
 an older tree; that is outside this change, and the pin follows main.
 
-First implementation step: confirm that Cargo resolves the package from the monorepo (one package
-named `rusty_enet`, nested `[workspace]` accepted, no submodules). If the clone cost or resolution
-is a problem, the fallback is a fetch script that downloads only that subtree at the pinned commit
-into a git-ignored directory and compares its Git tree SHA with the pin. Either way the source is
-never committed to Pulse.
+The source is never committed to Pulse.
 
 ### Exported functions
 
@@ -261,8 +267,9 @@ a probe on 2026-11-25.
 - `enet-pin.yml` compares the Git tree SHA of `library/vendor/rusty_enet` at the pin with the one
   on dcl-one's main. On a schedule it fails with a clear message when they differ. On pull
   requests it only warns, so a dcl-one change does not turn unrelated Pulse work red.
-- Moving the pin is a documented procedure in the README: change `rev`, run the build workflow,
-  commit the three libraries and `PROVENANCE.json`, run the e2e check.
+- Moving the pin is a documented procedure in the README: change `rev` and the tree SHA in
+  `PIN.json`, run the build workflow, commit the three libraries and `PROVENANCE.json`, run the
+  e2e check.
 
 ### Test client: two libraries, one chosen at start
 
@@ -344,7 +351,6 @@ deployment against Unity and Bevy clients before merge.
 ## Left to the builder
 
 - The crate's internal structure and which crate provides the readable-wait and `IPV6_V6ONLY`.
-- Git dependency or subtree fetch script, per the first implementation step.
 - How `PROVENANCE.json` digests the sources.
 - Whether the library commit is made by a person from workflow artifacts or by a pull request the
   workflow opens. Commits are GPG-signed, so the first is the default.

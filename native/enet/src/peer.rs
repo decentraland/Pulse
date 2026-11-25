@@ -2,7 +2,7 @@ use std::os::raw::{c_char, c_int};
 
 use rusty_enet::{Peer, PeerID, PeerState};
 
-use crate::address::ip_text;
+use crate::address::{ip_text, write_ip};
 use crate::guard::guard;
 use crate::host::GlueHost;
 use crate::socket::GlueSocket;
@@ -79,20 +79,8 @@ pub unsafe extern "C" fn enet_peer_get_ip(
     guard(-1, || {
         // SAFETY: the caller guarantees `peer` is null or a live handle.
         let address = unsafe { PeerRecord::peer(peer) }?.address()?;
-        if ip.is_null() {
-            return None;
-        }
-        let text = ip_text(address);
-        let bytes = text.as_bytes();
-        if bytes.len() >= ip_length {
-            return None;
-        }
-        // SAFETY: `ip` is valid for `ip_length` bytes and `bytes.len() + 1 <= ip_length`.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ip.cast::<u8>(), bytes.len());
-            *ip.add(bytes.len()) = 0;
-        }
-        Some(0)
+        // SAFETY: the caller guarantees `ip` is null or valid for `ip_length` bytes of writes.
+        unsafe { write_ip(&ip_text(address), ip, ip_length) }
     })
 }
 

@@ -133,19 +133,29 @@ pub unsafe extern "C" fn enet_address_get_ip(
     guard(-1, || {
         // SAFETY: the caller guarantees validity; null is rejected by `as_ref`.
         let address = unsafe { address.as_ref() }?;
-        if ip.is_null() {
-            return None;
-        }
-        let text = ip_text(to_socket_addr(address));
-        let bytes = text.as_bytes();
-        if bytes.len() >= ip_length {
-            return None;
-        }
-        // SAFETY: `ip` is valid for `ip_length` bytes and `bytes.len() + 1 <= ip_length`.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ip.cast::<u8>(), bytes.len());
-            *ip.add(bytes.len()) = 0;
-        }
-        Some(0)
+        // SAFETY: the caller guarantees `ip` is null or valid for `ip_length` bytes of writes.
+        unsafe { write_ip(&ip_text(to_socket_addr(address)), ip, ip_length) }
     })
+}
+
+/// Writes `text` into `ip` as a NUL-terminated string. Returns `Some(0)`, or `None` when `ip` is
+/// null or `ip_length` cannot hold the text and its terminator.
+///
+/// # Safety
+///
+/// `ip` must be null or valid for `ip_length` bytes of writes.
+pub(crate) unsafe fn write_ip(text: &str, ip: *mut c_char, ip_length: usize) -> Option<c_int> {
+    if ip.is_null() {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() >= ip_length {
+        return None;
+    }
+    // SAFETY: `ip` is valid for `ip_length` bytes and `bytes.len() + 1 <= ip_length`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ip.cast::<u8>(), bytes.len());
+        *ip.add(bytes.len()) = 0;
+    }
+    Some(0)
 }

@@ -2,13 +2,7 @@
 
 use std::env;
 use std::path::PathBuf;
-
-#[cfg(target_os = "windows")]
-const LIBRARY_FILE: &str = "enet.dll";
-#[cfg(target_os = "macos")]
-const LIBRARY_FILE: &str = "libenet.dylib";
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const LIBRARY_FILE: &str = "libenet.so";
+use std::process::Command;
 
 const EXPORTS: [&str; 31] = [
     "enet_initialize",
@@ -44,20 +38,44 @@ const EXPORTS: [&str; 31] = [
     "enet_packet_dispose",
 ];
 
-/// Returns the cdylib path: the test binary sits in `<profile>/deps/`, the library in `<profile>/`.
+/// Builds the glue library with the Cargo running the tests and returns the cdylib path from
+/// Cargo's own `compiler-artifact` message, so the library always matches the current sources.
 fn built_library() -> PathBuf {
-    let test_binary = env::current_exe().expect("test binary path");
-    let profile_dir = test_binary
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("profile directory above deps");
-    profile_dir.join(LIBRARY_FILE)
+    const FILENAMES: &str = r#""filenames":["#;
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
+    let output = Command::new(cargo)
+        .args(["build", "--lib", "--message-format=json"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo could not be started");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "cargo build failed:\n{stderr}");
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains(r#""reason":"compiler-artifact""#))
+        .filter(|line| line.contains(r#""cdylib""#))
+        .filter_map(|line| {
+            let start = line.find(FILENAMES)? + FILENAMES.len();
+            let list = &line[start..start + line[start..].find(']')?];
+            list.split(',')
+                .map(|name| name.trim().trim_matches('"').replace("\\\\", "\\"))
+                .find(|name| {
+                    [".dll", ".so", ".dylib"]
+                        .iter()
+                        .any(|extension| name.ends_with(extension))
+                })
+        })
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("cargo reported no cdylib path:\n{stderr}"))
 }
 
+/// Checks that each of the 31 names resolves in the built library; it checks presence, not that
+/// nothing else is exported.
 #[test]
-fn built_library_exports_exactly_the_31_functions() {
+fn built_library_exports_the_31_functions() {
     let path = built_library();
-    assert!(path.is_file(), "Cargo did not build {}", path.display());
     // SAFETY: loading the glue library runs no initializer beyond the Rust runtime's.
     let library = unsafe { libloading::Library::new(&path) }
         .unwrap_or_else(|error| panic!("{} did not load: {error}", path.display()));

@@ -133,7 +133,7 @@ Expected: 6 passed, no warnings.
 - Produces: `pub(crate) struct GlueSocket` with `fn bind(address: Option<SocketAddr>) -> io::Result<GlueSocket>`, `fn wait_readable(&self, timeout: Duration) -> bool`, `fn local_addr(&self) -> io::Result<SocketAddr>`, and `impl rusty_enet::Socket for GlueSocket` with `Address = SocketAddr`, `Error = io::Error`.
 
 Socket rules from the spec:
-- `bind(None)` binds `0.0.0.0:0`. An IPv4 address binds an IPv4 socket. An IPv6 address binds an IPv6 socket with `IPV6_V6ONLY` off.
+- `bind(None)` binds a dual-stack `[::]:0` (as ENet-CSharp's client socket is), falling back to `0.0.0.0:0` when IPv6 is unavailable, so a client host reaches both IPv4 and IPv6 servers. (Changed in Task 3; Task 2 shipped `0.0.0.0:0`.) An IPv4 address binds an IPv4 socket. An IPv6 address binds an IPv6 socket with `IPV6_V6ONLY` off.
 - `init` sets non-blocking, broadcast, and the buffer sizes from `SocketOptions`.
 - `send`: `WouldBlock` and every other error return `Ok(0)`.
 - `receive`: `WouldBlock` returns `Ok(None)`. `ConnectionReset`, `ConnectionRefused`, `HostUnreachable`, `NetworkUnreachable`, and on Windows `WSAEMSGSIZE` (10040) and `WSAENETRESET` (10052), skip that datagram and read again, at most 16 times per call. Any other error is returned.
@@ -216,6 +216,8 @@ Service rules: return 1 with one event, 0 on timeout, -1 on a socket error or nu
 #[test] fn junk_datagrams_are_ignored()               // send [0xFF; 7] and a 2-byte datagram to the server port; service returns 0; a real connect then succeeds
 #[test] fn peer_record_survives_until_destroy()       // keep the connect event's peer pointer, let the client vanish and time out, enet_peer_get_id still returns the slot
 #[test] fn two_hosts_in_one_process_are_independent()
+#[test] fn null_address_client_reaches_v4_server()     // server bound "127.0.0.1"; client created with null address connects
+#[test] fn null_address_client_reaches_v6_server()     // server bound "::1"; same client kind connects; skipped with a printed note when "::1" cannot be bound
 #[test] fn null_handles_return_errors()               // service -> -1, check_events -> -1, connect -> null, get_id -> 0, get_ip -> -1
 ```
 

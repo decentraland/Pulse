@@ -182,7 +182,9 @@ both libraries.
 
 The glue implements `rusty_enet::Socket` over one non-blocking UDP socket.
 
-- `enet_host_create` with an address binds it; with a null address it binds an ephemeral port.
+- `enet_host_create` with an address binds it. With a null address (a client) it binds an
+  ephemeral port on a dual-stack IPv6 socket, as ENet-CSharp does, so the client reaches IPv4 and
+  IPv6 servers; where IPv6 is unavailable it falls back to IPv4.
 - ENet-CSharp stores every address as IPv6 and maps IPv4 into it. The glue binds an IPv4-mapped
   address (`0.0.0.0`, the Pulse default) as IPv4, and a real IPv6 address (`::`) as a dual-stack
   IPv6 socket with `IPV6_V6ONLY` off, so `::` still accepts IPv4 on Windows and Linux.

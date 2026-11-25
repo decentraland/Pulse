@@ -36,6 +36,10 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # The committed ENet libraries must match the recorded sources and hashes.
+      - name: Check ENet library provenance
+        run: python3 scripts/enet-provenance.py check
+
       - name: Restore
         run: dotnet restore src/DCLPulse/DCLPulse.sln
 

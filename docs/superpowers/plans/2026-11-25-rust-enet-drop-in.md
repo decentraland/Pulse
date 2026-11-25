@@ -47,11 +47,13 @@ native/enet/
   src/library.rs    enet_initialize, enet_deinitialize, enet_linked_version, enet_time_get
   src/address.rs    ENetAddress, enet_address_*, address conversion and IP text
   src/socket.rs     GlueSocket: bind, rusty_enet::Socket impl, readable wait
-  src/host.rs       GlueHost, PeerRecord, ENetEvent, enet_host_*
-  src/peer.rs       enet_peer_*
+  src/host.rs       GlueHost, ENetEvent, enet_host_*
+  src/peer.rs       PeerRecord, enet_peer_*
   src/packet.rs     PacketHandle, flag mapping, enet_packet_*
   tests/common/mod.rs  loopback helpers
   tests/address.rs, tests/host.rs, tests/packets.rs, tests/mtu.rs, tests/csharp_interop.rs
+  tests/exports.rs
+  tests/receive_limit.rs, tests/timer.rs, tests/alloc.rs   added by the final fix wave
 scripts/enet-fetch-source.py
 scripts/enet-provenance.py
 .github/workflows/enet-native.yml, .github/workflows/enet-pin.yml

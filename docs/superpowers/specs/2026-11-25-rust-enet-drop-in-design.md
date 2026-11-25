@@ -30,8 +30,9 @@ drop-in: same file names, same exported function names, no change to dcl-one.
 ## Non-goals
 
 - Changing Unity. It keeps ENet-CSharp and the native libraries it ships itself.
-- Adopting dcl-one's server-side receive limits (`ReceivePolicy`) or its socket-error counters.
-  ENet-CSharp's interface has no place for them. They are a possible follow-up.
+- A configurable receive limit, or dcl-one's socket-error counters. ENet-CSharp's interface has
+  no place for them. They are a possible follow-up. A fixed receive limit for listening hosts is
+  in scope; see "Receive limit".
 - Implementing all 68 functions `ENet.cs` imports. Only the ones listed below are in scope.
 - Building the native libraries inside the Docker images or during `dotnet build`.
 
@@ -138,12 +139,14 @@ exported. Calling
 one raises `EntryPointNotFoundException` in .NET, which is the intended loud failure.
 
 `enet_linked_version` returns 2.4.9 so `Library.Initialize` accepts the library.
-`enet_initialize` and `enet_deinitialize` return success and do nothing.
+`enet_initialize` and `enet_deinitialize` return success. On Windows they raise and restore the
+system timer resolution (`timeBeginPeriod(1)` / `timeEndPeriod(1)`), as ENet-CSharp does; without
+it a 1 ms service wait takes about 15 ms. On other platforms they do nothing.
 
 ### Handles
 
-- **Host:** a pointer to a heap-allocated glue host. It owns the `rusty_enet::Host`, the socket,
-  the peer records, and the one pending event.
+- **Host:** a pointer to a heap-allocated glue host. It owns the `rusty_enet::Host`, the socket
+  and the peer records.
 - **Peer:** a pointer to a peer record `{ host, index }`. Records are allocated once per host, one
   per slot, and live until `enet_host_destroy`. A peer handle therefore stays valid memory after
   `DisconnectNow`, which matters because `ENetHostedService` keeps `Peer` structs in
@@ -207,7 +210,14 @@ The glue implements `rusty_enet::Socket` over one non-blocking UDP socket.
 `enet_host_service(host, event, timeout)` keeps ENet's contract: return 1 with one event, 0 on
 timeout, negative on error. `rusty_enet`'s `Host::service` never blocks, so the glue calls it and,
 when it yields no event, waits for the socket to become readable until the deadline, then calls it
-again. `enet_host_check_events` maps to `Host::check_events`.
+again. When the wait times out at the deadline it returns 0 without another pass.
+`enet_host_check_events` maps to `Host::check_events`.
+
+Each host runs on a monotonic clock, as ENet-CSharp does. `rusty_enet`'s default is the wall
+clock, where a clock step could time out every peer at once.
+
+A socket error makes the call return a negative value, and the glue writes one rate-limited line
+to stderr, because the server does not look at that return value.
 
 Events map to ENet-CSharp's `ENetEvent` layout (`type`, `peer`, `channelID`, `data`, `packet`):
 
@@ -216,7 +226,31 @@ Events map to ENet-CSharp's `ENetEvent` layout (`type`, `peer`, `channelID`, `da
 | `Connect` | 1, with `data` |
 | `Disconnect` | 2, with `data` |
 | `Receive` | 3, with channel and a packet handle |
-| `ReceiveLimitExceeded` | never produced; no receive policy is set |
+| `ReceiveLimitExceeded`, packet size | 2 (disconnect) with `data` 16, after the glue disconnects the peer; see "Receive limit" |
+| `ReceiveLimitExceeded`, other kinds | none; the command is refused and servicing continues |
+
+### Receive limit
+
+A host created with a bind address (the server) gets dcl-one Pulse's receive policy: packets up
+to 8192 bytes, at most 65536 queued bytes and 256 queued commands per peer. A host created
+without an address (a client) gets none, as dcl-one's own client does.
+
+Without a policy, one small fragment datagram makes `rusty_enet` allocate and zero-fill the whole
+declared packet, up to 32 MiB, before any Pulse check runs. A peer needs no handshake to do that.
+ENet-CSharp allocated the same size but did not touch the memory.
+
+A packet declared above 8192 bytes is refused before reassembly. The glue then disconnects that
+peer at once with reason 16 (`DisconnectReason.PACKET_CORRUPTED`) and hands the server a normal
+disconnect event for it, so the server releases the slot through its usual path. 8192 is twice
+the default `Transport:BufferSize`, the size at which the server already hard-disconnects.
+
+Consequences:
+
+- Raising `Transport:BufferSize` above 4096 no longer raises the hard limit for ENet.
+- For such a packet the server's "grossly oversized" warning and `dcl_pulse_corrupted_packet_total`
+  are not produced: the server only sees the disconnect. The glue writes a rate-limited stderr
+  line.
+- Packets of 4097 to 8192 bytes still reach `CheckOversized` as before.
 
 ### Safety
 
@@ -237,12 +271,14 @@ Events map to ENet-CSharp's `ENetEvent` layout (`type`, `peer`, `channelID`, `da
 | Keepalive ping | 250 ms | 500 ms | A dead peer is noticed up to 250 ms later. |
 | Initial RTT | 1 ms | 500 ms | A peer's first RTT sample may read 500 ms. First retransmits on a fresh connection start slower. |
 | Oversized datagram on Windows | `service` returns -1 | datagram skipped | None. |
+| Send error | `service` returns -1 and skips the receive | costs that one datagram | One unreachable peer no longer stalls a service pass. |
+| Packet declared above 8192 bytes, to the server | reassembled, then `CheckOversized` hard-disconnects | refused before reassembly; peer disconnected with `PACKET_CORRUPTED` | Same outcome for the peer. No "grossly oversized" warning or corrupted-packet metric. `BufferSize` above 4096 does not raise the limit. |
 | Dispose after successful send | no-op | double free | No caller does it. |
 | Callbacks (alloc, intercept, checksum) | available | not exported | Unused by Pulse. |
 
-`PeerTimeoutMs`, the 4095 peer limit, window sizes, throttle constants, 32 MB packet and
-waiting-data limits, and the wire format (ENet-CSharp header flags, via the robtfm retarget) are
-the same in both.
+`PeerTimeoutMs`, the 4095 peer limit, window sizes, throttle constants, the monotonic clock, the
+Windows timer resolution and the wire format (ENet-CSharp header flags, via the robtfm retarget)
+are the same in both. A client host keeps ENet's 32 MB packet and waiting-data limits.
 
 Where the ENet-CSharp column comes from: `Source/Native/enet.h` at SoftwareGuy/ENet-CSharp
 `14c4dc5`, the build Pulse ships. `ENET_PEER_PING_INTERVAL = 250` is line 534 and
@@ -290,7 +326,7 @@ How it works:
   `NativeLibrary.SetDllImportResolver` for the assembly that holds `ENet.cs`. The resolver maps the
   library name `enet` to the file in the chosen folder. `ENet.cs` and `ENetTransport` do not
   change.
-- The startup line that prints the ENet version also prints which library was loaded.
+- On start it prints `ENet library: <choice>` on its own line.
 
 `DCLPulseTests` references both projects. With the test client's files in subfolders, the only
 `libenet.so` or `enet.dll` in the test output root is the server's glue library, so the server
@@ -311,7 +347,11 @@ Rust, in `native/enet/tests`, calling the exported functions:
   that fails against ENet-CSharp (reproduced on 2026-11-25).
 - A client announcing MTU 1280 is granted 1280.
 - `enet_peer_get_ip` returns `127.0.0.1` for a loopback IPv4 peer under both `0.0.0.0` and `::`.
-- Packet ownership: send consumes, failed send does not, dispose frees.
+- Packet ownership: send consumes, failed send does not, dispose frees. A counting allocator
+  shows that send/receive/dispose cycles and failed sends do not grow the heap.
+- Receive limit: 8192 bytes reaches a listening host; 8193 disconnects the sender with reason 16;
+  a client host has no limit.
+- On Windows, after `enet_initialize` a 1 ms service wait takes about 1 ms.
 - Null handles and a panic inside an export return errors.
 - **ENet-CSharp interop:** the test loads the ENet-CSharp library from
   `src/DCLPulseTestClient/runtimes` as a client and connects it to a glue host. It is granted
@@ -324,12 +364,15 @@ Rust, in `native/enet/tests`, calling the exported functions:
 
 - The existing suite, including `ENetHostedServiceShutdownTests`, passes on the glue library.
 - A new `ENetNativeLibraryTests` fixture: the server grants a client MTU 1392, receives a
-  3000-byte reliable packet intact through `ENet.cs`, and reports a loopback peer as `127.0.0.1`.
+  3000-byte reliable packet intact through `ENet.cs`, reports a loopback peer as `127.0.0.1`, and
+  disconnects a client that sends a 9000-byte packet with `DisconnectReason.PACKET_CORRUPTED`.
 
 End to end:
 
 - `validate-e2e` twice against the server on the glue, once with `--enet=csharp` and once with
-  `--enet=rust`: handshake, movement on all three channels, graceful shutdown reason. The
+  `--enet=rust`: handshake, mutual visibility, state on the unreliable and reliable channels, and
+  the loaded library read from each process. The graceful shutdown reason is checked in-process
+  by `ENetHostedServiceShutdownTests` and by the Rust interop test, not by this run. The
   `validate-e2e` and `run-test-client` skills and the README option table gain the option.
 - A .NET test for the resolver: each value of the option resolves to an existing file in its
   folder, and an unknown value is rejected with a clear message.
@@ -359,6 +402,30 @@ deployment against Unity and Bevy clients before merge.
 
 ## Possible follow-ups, not part of this
 
-- Log and count a negative `host.Service` result in `ENetHostedService`; today it is ignored.
+- Log and count a negative `host.Service` result in `ENetHostedService`; today it is ignored. With
+  the glue a negative result can also mean a caught panic, after which the host should not be
+  trusted; a flag in the glue that refuses further calls on such a host belongs with this.
 - `SendToPeer` does not dispose a packet when `peer.Send` fails, which leaks it in both libraries.
-- Expose dcl-one's receive limits and socket-error counters through a wider interface.
+- A configurable receive limit and socket-error counters through a wider interface.
+- Suggest to dcl-one that `rusty_enet` allocate incoming packets with `alloc_zeroed` instead of
+  allocating and then filling.
+- Load the macOS arm64 library under .NET once on Apple Silicon; no CI job does.
+
+## Amendments to the design as first approved
+
+Made during implementation on 2026-11-25. Items 1 to 3 were announced as they happened. Item 4
+overrides a non-goal the user approved and is waiting for their confirmation. Item 5 corrects two
+omissions.
+
+1. **Source fetch.** A Cargo git dependency on dcl-one was replaced by `PIN.json` plus a fetch
+   script verified by Git tree SHA. Cargo cloned the whole monorepo and failed on Windows' path
+   limit.
+2. **Client hosts bind dual-stack.** A host created without an address binds `[::]` with IPv4
+   fallback, as ENet-CSharp's client socket does.
+3. **The exports check is a test.** It builds the library and resolves the 31 names, in place of
+   an `nm` step.
+4. **Fixed receive limit on listening hosts.** Originally a non-goal. Added after the
+   whole-branch review showed that without it one datagram costs the server a zero-filled
+   allocation of up to 32 MiB before any Pulse check. See "Receive limit".
+5. **Monotonic clock and Windows timer resolution.** Both restore ENet-CSharp behaviour the first
+   implementation had dropped.

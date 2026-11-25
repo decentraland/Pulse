@@ -40,10 +40,17 @@ public sealed class FieldValidator(
 
     private const int AOI_REJECTION_LOG_INTERVAL_MS = 10_000;
 
+    /// <summary>
+    ///     Looser than the shared interval so trusted infrastructure stays visible, yet a whitelisted
+    ///     host that reconnects in a loop cannot write one record per attempt.
+    /// </summary>
+    private const int WHITELISTED_AOI_REJECTION_LOG_INTERVAL_MS = 1_000;
+
     private readonly int maxRealmLength = options.Value.MaxRealmLength;
     private readonly uint maxEmoteDurationMs = options.Value.MaxEmoteDurationMs;
     private readonly int maxSceneListenerBudget = sceneListenerOptions.Value.MaxParcels;
     private readonly RefusalLogThrottle aoiRejectionLog = new (AOI_REJECTION_LOG_INTERVAL_MS);
+    private readonly RefusalLogThrottle whitelistedAoiRejectionLog = new (WHITELISTED_AOI_REJECTION_LOG_INTERVAL_MS);
 
     public bool ValidatePlayerStateInput(PeerIndex from, PeerState state, PlayerStateInput input)
     {
@@ -167,10 +174,11 @@ public sealed class FieldValidator(
         // infrastructure, and a cohosting fleet announces whatever its scenes cover — so the budget
         // is not applied to it at all. Resolved once, before the loop: the exemption must not be
         // able to change between two rects of the same announcement.
-        bool enforceBudget = !ipLimiter.IsWhitelisted(from);
+        bool whitelisted = ipLimiter.IsWhitelisted(from);
+        bool enforceBudget = !whitelisted;
 
         if (aoi.Count == 0)
-            return RejectAoi(from, state, aoi, reason, AoiRejection.NO_REALMS, 0, enforceBudget);
+            return RejectAoi(from, state, aoi, reason, AoiRejection.NO_REALMS, 0, whitelisted);
 
         long budget = 0;
         var expanded = new Dictionary<string, HashSet<int>>(aoi.Count);
@@ -179,23 +187,23 @@ public sealed class FieldValidator(
         foreach (SceneListenerAoi realmAoi in aoi)
         {
             if (string.IsNullOrEmpty(realmAoi.Realm))
-                return RejectAoi(from, state, aoi, reason, AoiRejection.EMPTY_REALM_NAME, budget, enforceBudget);
+                return RejectAoi(from, state, aoi, reason, AoiRejection.EMPTY_REALM_NAME, budget, whitelisted);
 
             if (maxRealmLength > 0 && realmAoi.Realm.Length > maxRealmLength)
-                return RejectAoi(from, state, aoi, reason, AoiRejection.REALM_TOO_LONG, budget, enforceBudget);
+                return RejectAoi(from, state, aoi, reason, AoiRejection.REALM_TOO_LONG, budget, whitelisted);
 
             // One entry per realm: a repeat is a malformed announcement, not a merge — silently
             // unioning them would hide the client bug and make the budget ambiguous.
             if (expanded.ContainsKey(realmAoi.Realm))
-                return RejectAoi(from, state, aoi, reason, AoiRejection.DUPLICATE_REALM, budget, enforceBudget);
+                return RejectAoi(from, state, aoi, reason, AoiRejection.DUPLICATE_REALM, budget, whitelisted);
 
             if (realmAoi.ParcelRects.Count == 0)
-                return RejectAoi(from, state, aoi, reason, AoiRejection.EMPTY_RECTS, budget, enforceBudget);
+                return RejectAoi(from, state, aoi, reason, AoiRejection.EMPTY_RECTS, budget, whitelisted);
 
             budget += REALM_BUDGET_COST;
 
             if (enforceBudget && budget > maxSceneListenerBudget)
-                return RejectAoi(from, state, aoi, reason, AoiRejection.BUDGET_EXCEEDED, budget, enforceBudget);
+                return RejectAoi(from, state, aoi, reason, AoiRejection.BUDGET_EXCEEDED, budget, whitelisted);
 
             // First pass: bounds-check and price the realm's rects before expanding any of them, so
             // a hostile payload cannot buy expansion work on its way to being rejected. The deduped
@@ -207,18 +215,18 @@ public sealed class FieldValidator(
             foreach (ParcelRect rect in realmAoi.ParcelRects)
             {
                 if (rect.MinX > rect.MaxX || rect.MinZ > rect.MaxZ)
-                    return RejectAoi(from, state, aoi, reason, AoiRejection.INVERTED_RECT, budget, enforceBudget);
+                    return RejectAoi(from, state, aoi, reason, AoiRejection.INVERTED_RECT, budget, whitelisted);
 
                 if (!parcelEncoder.IsValidCoordinate(rect.MinX, rect.MinZ)
                     || !parcelEncoder.IsValidCoordinate(rect.MaxX, rect.MaxZ))
-                    return RejectAoi(from, state, aoi, reason, AoiRejection.OUT_OF_RANGE_RECT, budget, enforceBudget);
+                    return RejectAoi(from, state, aoi, reason, AoiRejection.OUT_OF_RANGE_RECT, budget, whitelisted);
 
                 long area = (long)(rect.MaxX - rect.MinX + 1) * (rect.MaxZ - rect.MinZ + 1);
                 realmArea += area;
                 budget += area;
 
                 if (enforceBudget && budget > maxSceneListenerBudget)
-                    return RejectAoi(from, state, aoi, reason, AoiRejection.BUDGET_EXCEEDED, budget, enforceBudget);
+                    return RejectAoi(from, state, aoi, reason, AoiRejection.BUDGET_EXCEEDED, budget, whitelisted);
             }
 
             // Second pass, now that the realm is priced: size the set from the area the first pass
@@ -262,22 +270,21 @@ public sealed class FieldValidator(
     /// <summary>
     ///     Rejects a scene-listener announcement like <see cref="PeerDefense.Reject" /> and logs one
     ///     warning naming the failed check. The rate is client-controlled through reject-and-reconnect,
-    ///     so non-whitelisted peers share a <see cref="RefusalLogThrottle" />; whitelisted peers are
-    ///     trusted infrastructure and always log. <paramref name="budget" /> is the sum accrued when
-    ///     the check failed, not the announcement's total. Realm names are never logged.
+    ///     so the warning is throttled: non-whitelisted peers share one <see cref="RefusalLogThrottle" />
+    ///     and whitelisted peers share a second, looser one, which keeps trusted infrastructure visible
+    ///     behind a non-whitelisted flood. <paramref name="budget" /> is the sum accrued when the check
+    ///     failed, not the announcement's total. Realm names are never logged.
     /// </summary>
     private bool RejectAoi(PeerIndex from, PeerState state, IReadOnlyList<SceneListenerAoi> aoi,
-        DisconnectReason reason, AoiRejection check, long budget, bool enforceBudget)
+        DisconnectReason reason, AoiRejection check, long budget, bool whitelisted)
     {
-        long suppressed = 0;
+        RefusalLogThrottle throttle = whitelisted ? whitelistedAoiRejectionLog : aoiRejectionLog;
+        long suppressed;
         bool emit;
 
-        // The throttle is single-threaded by design; workers share this singleton.
-        if (enforceBudget)
-            lock (aoiRejectionLog)
-                emit = aoiRejectionLog.ShouldEmit(out suppressed);
-        else
-            emit = true;
+        // The throttle is not thread-safe and the workers share this singleton.
+        lock (throttle)
+            emit = throttle.ShouldEmit(out suppressed);
 
         if (emit)
         {
@@ -288,7 +295,7 @@ public sealed class FieldValidator(
 
             logger.LogWarning(
                 "Scene-listener AoI rejected ({Check}) for peer {Peer} ({IP}, whitelisted={Whitelisted}) — disconnecting with {Reason}: {RealmCount} realm(s), {RectCount} rect(s), budget {Budget} at rejection of MaxParcels {MaxParcels} ({Suppressed} further rejection(s) suppressed since the previous message; see the field_validation_failed counter for the full rate).",
-                check, from, ipLimiter.AddressOf(from) ?? "unknown", !enforceBudget, reason, aoi.Count, rectCount,
+                check, from, ipLimiter.AddressOf(from) ?? "unknown", whitelisted, reason, aoi.Count, rectCount,
                 budget, maxSceneListenerBudget, suppressed);
         }
 

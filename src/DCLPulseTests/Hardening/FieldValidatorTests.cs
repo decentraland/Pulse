@@ -841,7 +841,7 @@ public class FieldValidatorTests
     }
 
     [Test]
-    public void SceneListener_RepeatedRejectionsFromWhitelistedPeer_AreAllLogged()
+    public void SceneListener_RepeatedRejectionsFromWhitelistedPeer_AreThrottled()
     {
         FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
 
@@ -852,8 +852,36 @@ public class FieldValidatorTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(warnings, Has.Length.EqualTo(2));
+            Assert.That(warnings, Has.Length.EqualTo(1));
             Assert.That(warnings[0], Does.Contain($"({TRUSTED_IP}, whitelisted=True)"));
+            transport.Received(2).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        });
+    }
+
+    [Test]
+    public void SceneListener_NonWhitelistedRejections_DoNotSuppressWhitelistedPeer()
+    {
+        const string UNTRUSTED_IP = "198.51.100.5";
+        var trustedPeer = new PeerIndex(2);
+
+        IpLimiter limiter = SceneListenerTestFactory.Limiter(TRUSTED_IP);
+        limiter.TryAcquire(UNTRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.Bind(PEER, UNTRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.TryAcquire(TRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.Bind(trustedPeer, TRUSTED_IP, ConnectionClass.PLAYER);
+        FieldValidator v = Create(ipLimiter: limiter);
+
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _);
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _);
+        v.ValidateSceneListenerHandshake(trustedPeer, NewState(), ListenerRequest("main"), out _);
+
+        string[] warnings = Warnings();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Has.Length.EqualTo(2));
+            Assert.That(warnings[0], Does.Contain($"({UNTRUSTED_IP}, whitelisted=False)"));
+            Assert.That(warnings[1], Does.Contain($"({TRUSTED_IP}, whitelisted=True)"));
         });
     }
 

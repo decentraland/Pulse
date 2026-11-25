@@ -302,8 +302,7 @@ Expected: all pass.
 
 - [ ] **Step 5: Check the export list**
 
-Run (Linux): `cargo build --release && nm -D --defined-only target/release/libenet.so | grep ' T enet_' | wc -l`
-Expected: `31` — the functions in the spec's "Exported functions" table and nothing else named `enet_*`. On Windows use `dumpbin /exports target\release\enet.dll` and count the `enet_` lines.
+The source has exactly 31 `#[no_mangle]` exported functions, named as in the spec's "Exported functions" table. Task 5 adds `tests/exports.rs`, which loads the built library and resolves each name.
 
 - [ ] **Step 6: Commit**
 
@@ -314,8 +313,10 @@ Expected: `31` — the functions in the spec's "Exported functions" table and no
 ### Task 5: ENet-CSharp interop test
 
 **Files:**
-- Create: `native/enet/tests/csharp_interop.rs`
-- Modify: `native/enet/Cargo.toml` (`libloading` as a dev-dependency)
+- Create: `native/enet/tests/csharp_interop.rs`, `native/enet/tests/exports.rs`
+- Modify: `native/enet/Cargo.toml` (`libloading` and a SHA-256 crate as dev-dependencies)
+
+`tests/exports.rs` (all platforms) has one test, `built_library_exports_exactly_the_31_functions`: it loads the cdylib Cargo built next to the test binary (`enet.dll`, `libenet.so` or `libenet.dylib` in the profile directory above `deps/`) with `libloading` and resolves each of the 31 names in the spec's "Exported functions" table; a name that does not resolve fails the test and is named in the message.
 
 **Interfaces:**
 - Consumes: the glue exports and test helpers; the ENet-CSharp libraries at `../../src/DCLPulseTestClient/runtimes/{win-x64/native/enet.dll,linux-x64/native/libenet.so}` relative to the crate.

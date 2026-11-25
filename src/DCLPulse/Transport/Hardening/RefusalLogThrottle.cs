@@ -12,7 +12,9 @@ namespace Pulse.Transport.Hardening;
 ///     <para />
 ///     Not thread-safe by design: each transport service owns an instance and calls it only from
 ///     its own transport thread, so the two transports emit at most one record each per interval —
-///     the intent, since the two refusals are independent events.
+///     the intent, since the two refusals are independent events. An owner that shares an instance
+///     across threads, as <c>FieldValidator</c> does across the workers, must serialize every
+///     <see cref="ShouldEmit" /> call under one lock.
 /// </summary>
 public sealed class RefusalLogThrottle(long intervalMs)
 {

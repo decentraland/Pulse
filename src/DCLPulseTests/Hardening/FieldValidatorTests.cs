@@ -1,7 +1,9 @@
 using Decentraland.Common;
 using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using NSubstitute.Core;
 using Pulse.InterestManagement;
 using Pulse.Messaging.Hardening;
 using Pulse.Peers;
@@ -17,11 +19,13 @@ public class FieldValidatorTests
 
     private ITransport transport;
     private ParcelEncoder parcelEncoder;
+    private ILogger<FieldValidator> logger;
 
     [SetUp]
     public void SetUp()
     {
         transport = Substitute.For<ITransport>();
+        logger = Substitute.For<ILogger<FieldValidator>>();
         parcelEncoder = new ParcelEncoder(Options.Create(new ParcelEncoderOptions()));
     }
 
@@ -37,7 +41,7 @@ public class FieldValidatorTests
             MaxRealmLength = maxRealmLength,
             MaxEmoteDurationMs = maxDurationMs,
         }), Options.Create(new SceneListenerOptions { MaxParcels = maxParcels }), parcelEncoder,
-            SceneListenerTestFactory.CellMapper(), ipLimiter ?? SceneListenerTestFactory.Limiter(), transport);
+            SceneListenerTestFactory.CellMapper(), ipLimiter ?? SceneListenerTestFactory.Limiter(), transport, logger);
 
     private static PeerState NewState() => new (PeerConnectionState.AUTHENTICATED);
 
@@ -647,7 +651,7 @@ public class FieldValidatorTests
             smallWorld,
             SceneListenerTestFactory.CellMapper(),
             limiter,
-            transport);
+            transport, logger);
 
         var rects = new (int, int, int, int)[500];
         Array.Fill(rects, (0, 0, 9, 9));
@@ -715,7 +719,7 @@ public class FieldValidatorTests
             world,
             SceneListenerTestFactory.CellMapper(),
             limiter,
-            transport);
+            transport, logger);
     }
 
     [Test]
@@ -766,5 +770,144 @@ public class FieldValidatorTests
 
         Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("", (10, 10, 10, 10)), out _), Is.False);
         transport.Received(1).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+    }
+
+    // ── SceneListener rejection logging ──────────────────────────────
+
+    private static IEnumerable<TestCaseData> RejectedAnnouncements()
+    {
+        yield return new TestCaseData(ListenerRequest(), "NO_REALMS").SetName("SceneListener_Rejected_LogsCheck_NoRealms");
+        yield return new TestCaseData(ListenerRequest("", (10, 10, 10, 10)), "EMPTY_REALM_NAME").SetName("SceneListener_Rejected_LogsCheck_EmptyRealmName");
+        yield return new TestCaseData(ListenerRequest(new string('a', 300), (10, 10, 10, 10)), "REALM_TOO_LONG").SetName("SceneListener_Rejected_LogsCheck_RealmTooLong");
+        yield return new TestCaseData(ListenerRequest(Aoi("main", (10, 10, 10, 10)), Aoi("main", (20, 20, 20, 20))), "DUPLICATE_REALM").SetName("SceneListener_Rejected_LogsCheck_DuplicateRealm");
+        yield return new TestCaseData(ListenerRequest("main"), "EMPTY_RECTS").SetName("SceneListener_Rejected_LogsCheck_EmptyRects");
+        yield return new TestCaseData(ListenerRequest("main", (11, 10, 10, 10)), "INVERTED_RECT").SetName("SceneListener_Rejected_LogsCheck_InvertedRect");
+        yield return new TestCaseData(ListenerRequest("main", (9999, 10, 9999, 10)), "OUT_OF_RANGE_RECT").SetName("SceneListener_Rejected_LogsCheck_OutOfRangeRect");
+        yield return new TestCaseData(OverBudgetRequest(), "BUDGET_EXCEEDED").SetName("SceneListener_Rejected_LogsCheck_BudgetExceeded");
+    }
+
+    [TestCaseSource(nameof(RejectedAnnouncements))]
+    public void SceneListener_RejectedHandshake_LogsOneWarningNamingTheCheck(SceneListenerHandshakeRequest request, string check)
+    {
+        FieldValidator v = Create();
+
+        bool ok = v.ValidateSceneListenerHandshake(PEER, NewState(), request, out _);
+
+        string[] warnings = Warnings();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.False);
+            Assert.That(warnings, Has.Length.EqualTo(1));
+            Assert.That(warnings[0], Does.Contain($"({check})"));
+            Assert.That(warnings[0], Does.Contain(nameof(DisconnectReason.INVALID_HANDSHAKE_FIELD)));
+        });
+    }
+
+    [Test]
+    public void SceneListener_RejectedUpdate_LogsCountsBudgetAndAddress()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, whitelist: "");
+
+        v.ValidateSceneListenerUpdate(PEER, NewState(), OverBudgetUpdate(), out _);
+
+        string[] warnings = Warnings();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Has.Length.EqualTo(1));
+            Assert.That(warnings[0], Does.Contain("(BUDGET_EXCEEDED)"));
+            Assert.That(warnings[0], Does.Contain(nameof(DisconnectReason.INVALID_SCENE_LISTENER_FIELD)));
+            Assert.That(warnings[0], Does.Contain($"({TRUSTED_IP}, whitelisted=False)"));
+            Assert.That(warnings[0], Does.Contain("1 realm(s), 1 rect(s)"));
+            // Realm charge 4 plus the 8×8 rect.
+            Assert.That(warnings[0], Does.Contain("budget 68 at rejection of MaxParcels 16"));
+        });
+    }
+
+    [Test]
+    public void SceneListener_RepeatedRejectionsFromNonWhitelistedPeer_AreThrottled()
+    {
+        FieldValidator v = Create();
+
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _);
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Warnings(), Has.Length.EqualTo(1));
+            transport.Received(2).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        });
+    }
+
+    [Test]
+    public void SceneListener_RepeatedRejectionsFromWhitelistedPeer_AreThrottled()
+    {
+        FieldValidator v = CreateWithPeerAt(TRUSTED_IP, TRUSTED_IP);
+
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (11, 10, 10, 10)), out _);
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (11, 10, 10, 10)), out _);
+
+        string[] warnings = Warnings();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Has.Length.EqualTo(1));
+            Assert.That(warnings[0], Does.Contain($"({TRUSTED_IP}, whitelisted=True)"));
+            transport.Received(2).Disconnect(PEER, DisconnectReason.INVALID_HANDSHAKE_FIELD);
+        });
+    }
+
+    [Test]
+    public void SceneListener_NonWhitelistedRejections_DoNotSuppressWhitelistedPeer()
+    {
+        const string UNTRUSTED_IP = "198.51.100.5";
+        var trustedPeer = new PeerIndex(2);
+
+        IpLimiter limiter = SceneListenerTestFactory.Limiter(TRUSTED_IP);
+        limiter.TryAcquire(UNTRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.Bind(PEER, UNTRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.TryAcquire(TRUSTED_IP, ConnectionClass.PLAYER);
+        limiter.Bind(trustedPeer, TRUSTED_IP, ConnectionClass.PLAYER);
+        FieldValidator v = Create(ipLimiter: limiter);
+
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _);
+        v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main"), out _);
+        v.ValidateSceneListenerHandshake(trustedPeer, NewState(), ListenerRequest("main"), out _);
+
+        string[] warnings = Warnings();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Has.Length.EqualTo(2));
+            Assert.That(warnings[0], Does.Contain($"({UNTRUSTED_IP}, whitelisted=False)"));
+            Assert.That(warnings[1], Does.Contain($"({TRUSTED_IP}, whitelisted=True)"));
+        });
+    }
+
+    [Test]
+    public void SceneListener_AcceptedAnnouncement_LogsNothing()
+    {
+        FieldValidator v = Create();
+
+        Assert.That(v.ValidateSceneListenerHandshake(PEER, NewState(), ListenerRequest("main", (10, 10, 10, 10)), out _), Is.True);
+        Assert.That(Warnings(), Is.Empty);
+    }
+
+    /// <summary>Formatted messages of every warning the validator logged.</summary>
+    private string[] Warnings()
+    {
+        var messages = new List<string>();
+
+        foreach (ICall call in logger.ReceivedCalls())
+        {
+            object?[] arguments = call.GetArguments();
+
+            // Log's arguments are (level, eventId, state, exception, formatter).
+            if (arguments.Length >= 3 && arguments[0] is LogLevel.Warning && arguments[2]?.ToString() is { } message)
+                messages.Add(message);
+        }
+
+        return messages.ToArray();
     }
 }

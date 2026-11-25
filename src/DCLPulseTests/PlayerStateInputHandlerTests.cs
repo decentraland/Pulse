@@ -57,7 +57,7 @@ public class PlayerStateInputHandlerTests
                 parcelEncoder,
                 SceneListenerTestFactory.CellMapper(),
                 SceneListenerTestFactory.Limiter(),
-                Substitute.For<ITransport>()));
+                Substitute.For<ITransport>(), Substitute.For<ILogger<FieldValidator>>()));
 
         peers = new Dictionary<PeerIndex, PeerState>();
     }

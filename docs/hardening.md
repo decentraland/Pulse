@@ -422,6 +422,8 @@ though the two run the same validation: the reason code tells an operator which 
 bad AoI, and therefore whether the client's bug is in its connect path or in its scene load/unload
 path.
 
+Both scene-listener reasons also log one warning per rejection, `Scene-listener AoI rejected (<check>) …`, naming the failed check (`NO_REALMS`, `EMPTY_REALM_NAME`, `REALM_TOO_LONG`, `DUPLICATE_REALM`, `EMPTY_RECTS`, `INVERTED_RECT`, `OUT_OF_RANGE_RECT` or `BUDGET_EXCEEDED`), the peer and its source IP, whether that IP is whitelisted, the realm and rect counts, and the budget accrued at rejection against `MaxParcels`. Realm names are never logged. The warning is throttled, and each emitted record reports how many it suppressed: non-whitelisted peers share one record per 10 s, and whitelisted peers share a separate, looser one per 1 s, so a non-whitelisted flood cannot hide trusted infrastructure and a whitelisted host reconnecting in a loop cannot flood the log.
+
 ### Client recovery
 
 All of them are **terminal, not retryable** — a well-formed client never produces invalid

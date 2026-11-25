@@ -1,4 +1,5 @@
 using Decentraland.Pulse;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pulse.InterestManagement;
@@ -34,7 +35,7 @@ public class SceneListenerRealSceneTests
             encoder,
             SceneListenerTestFactory.CellMapper(),
             SceneListenerTestFactory.Limiter(),
-            Substitute.For<ITransport>());
+            Substitute.For<ITransport>(), Substitute.For<ILogger<FieldValidator>>());
 
         state = new PeerState(PeerConnectionState.PENDING_AUTH);
     }

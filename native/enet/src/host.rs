@@ -8,6 +8,7 @@ use rusty_enet::{Event, Host, HostSettings};
 
 use crate::address::{to_socket_addr, ENetAddress};
 use crate::guard::guard;
+use crate::packet::PacketHandle;
 use crate::peer::PeerRecord;
 use crate::socket::GlueSocket;
 
@@ -17,6 +18,8 @@ const EVENT_NONE: c_int = 0;
 const EVENT_CONNECT: c_int = 1;
 /// `ENetEvent.kind`: a peer disconnected or timed out.
 const EVENT_DISCONNECT: c_int = 2;
+/// `ENetEvent.kind`: a packet arrived.
+const EVENT_RECEIVE: c_int = 3;
 
 /// A host handle: the `rusty_enet` host and one peer record per slot.
 ///
@@ -25,12 +28,6 @@ const EVENT_DISCONNECT: c_int = 2;
 pub struct GlueHost {
     pub(crate) host: Host<GlueSocket>,
     peers: Box<[PeerRecord]>,
-}
-
-/// A received packet handle; opaque to callers.
-#[repr(C)]
-pub struct PacketHandle {
-    _opaque: [u8; 0],
 }
 
 /// ENet-CSharp's event: kind 0 none, 1 connect, 2 disconnect, 3 receive.
@@ -67,20 +64,29 @@ fn record(peers: &[PeerRecord], index: usize) -> *mut PeerRecord {
     }
 }
 
-/// Writes `event` into `out`. Returns false for events the glue drops.
+/// Writes `event` into `out`, boxing a received packet into a handle the caller owns. Returns
+/// false for events the glue drops.
 fn store(peers: &[PeerRecord], event: Event<'_, GlueSocket>, out: &mut ENetEvent) -> bool {
-    let (kind, peer, data) = match event {
-        Event::Connect { peer, data } => (EVENT_CONNECT, peer.id(), data),
-        Event::Disconnect { peer, data } => (EVENT_DISCONNECT, peer.id(), data),
-        // Packet handles arrive with the packet exports; until then the packet is dropped.
-        Event::Receive { .. } | Event::ReceiveLimitExceeded { .. } => return false,
+    let (kind, peer, channel_id, data, packet) = match event {
+        Event::Connect { peer, data } => (EVENT_CONNECT, peer.id(), 0, data, ptr::null_mut()),
+        Event::Disconnect { peer, data } => (EVENT_DISCONNECT, peer.id(), 0, data, ptr::null_mut()),
+        Event::Receive {
+            peer,
+            channel_id,
+            packet,
+        } => {
+            let handle = Box::into_raw(Box::new(PacketHandle::received(packet)));
+            (EVENT_RECEIVE, peer.id(), channel_id, 0, handle)
+        }
+        // No receive policy is set, so this event is never produced.
+        Event::ReceiveLimitExceeded { .. } => return false,
     };
     *out = ENetEvent {
         kind,
         peer: record(peers, peer.0),
-        channel_id: 0,
+        channel_id,
         data,
-        packet: ptr::null_mut(),
+        packet,
     };
     true
 }

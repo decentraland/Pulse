@@ -1,6 +1,6 @@
 use std::io::{self, ErrorKind};
 use std::mem::MaybeUninit;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
 use std::time::Duration;
 
 use rusty_enet::{PacketReceived, Socket, SocketOptions, MTU_MAX};
@@ -25,10 +25,24 @@ pub struct GlueSocket {
 }
 
 impl GlueSocket {
-    /// Binds `address`; `None` binds `0.0.0.0:0`. An IPv6 address binds a dual-stack socket.
+    /// Binds `address`; an IPv6 address binds a dual-stack socket. `None` binds a dual-stack
+    /// `[::]:0`, or `0.0.0.0:0` when IPv6 is unavailable.
     pub fn bind(address: Option<SocketAddr>) -> io::Result<GlueSocket> {
-        let address =
-            address.unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
+        match address {
+            Some(address) => Self::bind_exact(address),
+            None => Self::bind_exact(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::UNSPECIFIED,
+                0,
+                0,
+                0,
+            )))
+            .or_else(|_| {
+                Self::bind_exact(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)))
+            }),
+        }
+    }
+
+    fn bind_exact(address: SocketAddr) -> io::Result<GlueSocket> {
         let socket = socket2::Socket::new(
             Domain::for_address(address),
             Type::DGRAM,

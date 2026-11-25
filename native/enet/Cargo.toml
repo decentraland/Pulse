@@ -1,0 +1,18 @@
+[package]
+name = "enet"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "enet"
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+exclude = ["vendor"]
+
+[dependencies]
+rusty_enet = { path = "vendor/dcl-one/library/vendor/rusty_enet" }
+
+[profile.release]
+panic = "unwind"
+lto = true

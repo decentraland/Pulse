@@ -1,0 +1,68 @@
+name: ENet pin watch
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pin:
+    name: Compare rusty_enet tree with dcl-one main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare tree SHAs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          pin_file=native/enet/PIN.json
+          if [ ! -f "$pin_file" ]; then
+            echo "::error::$pin_file is missing"
+            exit 1
+          fi
+
+          pinned=$(jq -r '.tree_sha' "$pin_file")
+          path=$(jq -r '.path' "$pin_file")
+          name=$(basename "$path")
+          if [ -z "$pinned" ] || [ "$pinned" = "null" ]; then
+            echo "::error::$pin_file has no tree_sha"
+            exit 1
+          fi
+
+          if ! listing=$(gh api "repos/decentraland/dcl-one/contents/library/vendor?ref=main"); then
+            echo "::error::could not read library/vendor on dcl-one main"
+            exit 1
+          fi
+          current=$(jq -r --arg name "$name" '.[] | select(.name == $name and .type == "dir") | .sha' <<<"$listing")
+          if [ -z "$current" ]; then
+            echo "::error::dcl-one main has no $name folder under library/vendor"
+            exit 1
+          fi
+
+          echo "pinned:  $pinned"
+          echo "current: $current"
+          if [ "$pinned" = "$current" ]; then
+            echo "rusty_enet tree is in sync"
+            exit 0
+          fi
+
+          message="dcl-one's rusty_enet tree moved; follow \"Moving the ENet pin\" in the README"
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "::warning::$message"
+            exit 0
+          fi
+          echo "::error::$message"
+          exit 1

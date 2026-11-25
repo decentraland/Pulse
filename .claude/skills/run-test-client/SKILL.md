@@ -3,7 +3,7 @@ name: run-test-client
 description: Launch DCLPulseTestClient bot(s) against a Pulse server. Use when the user wants to run, start, or launch the test client / bot / load test.
 user-invocable: true
 allowed-tools: Bash
-argument-hint: [--account=name] [--bot-count=N] [--ip=address] [--port=port] [--pos-x=X] [--pos-y=Y] [--pos-z=Z] [--rotate-speed=deg] [--comms-enabled]
+argument-hint: [--account=name] [--bot-count=N] [--ip=address] [--port=port] [--pos-x=X] [--pos-y=Y] [--pos-z=Z] [--rotate-speed=deg] [--enet=csharp|rust] [--comms-enabled]
 ---
 
 # Launch DCLPulseTestClient
@@ -38,6 +38,7 @@ If no arguments are provided, use the defaults (account `enetclient-test`, 1 bot
 | `--spawn-radius=<float>` | `10` | Radius of the circle bots spawn on |
 | `--dispersion-radius=<float>` | `20` | Max wander distance from spawn origin |
 | `--rotate-speed=<deg/s>` | `90` | Idle rotation speed |
+| `--enet=<csharp\|rust>` | `csharp` | ENet library to load. `csharp`: ENet-CSharp as the Unity client uses it (MTU 1280). `rust`: the server's rusty_enet library as the Bevy client uses it (MTU 1392). ENet transport only. Prints `ENet library: <choice>` on start; an unknown value exits with code 2 |
 
 ### Conn-string harness arguments
 
@@ -84,12 +85,13 @@ When the user mentions a location by name, translate to position flags:
 
 ## Troubleshooting
 
-- **"ENet library failed to initialize"** — the native library did not load. It is **committed**
-  under `src/DCLPulseTestClient/runtimes/` (`win-x64/enet.dll`, `linux-x64/libenet.so`,
-  `macos-arm64/libenet.dylib`) and the csproj copies all three to the output root, so nothing needs
-  installing on Windows, Linux x64 or Apple Silicon — suspect a stale `bin/` and rebuild. The one
-  genuine gap is **Intel macOS**: only an arm64 dylib ships, so there `brew install enet` is the
-  workaround.
+- **"ENet library failed to initialize"** — the selected native library did not load. The client
+  loads it at start from `enet-csharp/` (`--enet=csharp`) or `enet-rust/` (`--enet=rust`) in its
+  output folder; the output root holds none. A missing file makes the client exit with code 2 and a
+  message naming the path. Both sets are committed (`src/DCLPulseTestClient/runtimes/` for
+  ENet-CSharp, `src/DCLPulse/runtimes/` for the server's library), so nothing needs installing on
+  Windows, Linux x64 or Apple Silicon: suspect a stale `bin/` and rebuild. **Intel macOS** has no
+  library for either choice: only arm64 dylibs ship.
 - **Handshake failed** — the server rejected the auth chain. Check that the server is running and the account's ephemeral key hasn't expired (25h lifetime). Try `metaforge account remove <name>` then re-run to create a fresh account.
 - **Connection timeout** — verify the server IP/port and that UDP traffic is not blocked by a firewall.
 - **`--comms-enabled` set but no `[ws-connector]` lines** — ws-connector isn't up at `--comms-url`, or the flag was passed space-separated. A comms failure is deliberately non-fatal to the Pulse session and reports on the `[comms]` prefix, so the run otherwise looks healthy.

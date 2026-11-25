@@ -3,7 +3,7 @@ name: validate-e2e
 description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
 user-invocable: true
 allowed-tools: Bash, PowerShell, Grep, Read
-argument-hint: [--transport=enet|webtransport] [--account=prefix] [--comms-enabled]
+argument-hint: [--transport=enet|webtransport] [--enet=csharp|rust] [--account=prefix] [--comms-enabled]
 ---
 
 # Validate the e2e networking flow
@@ -70,6 +70,17 @@ DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" \
 ```
 For **ENet**: drop `--transport` and the cert concerns, use `--port=7777` (the default). Everything else — bots, logs, metrics — is identical.
 
+### ENet: run it twice
+
+The server's ENet library is built from dcl-one's `rusty_enet`. Run the ENet validation twice against that server, once per client library:
+
+| Run | Flag | Stands for |
+|---|---|---|
+| 1 | `--enet=csharp` (default) | Unity-style client: ENet-CSharp, announces MTU 1280 |
+| 2 | `--enet=rust` | Bevy-style client: the same rusty_enet as the server, announces MTU 1392 |
+
+Each client prints `ENet library: <choice>` on start; confirm it matches the run. Both runs must meet every success criterion. `--enet` does not affect the WebTransport run; run that once.
+
 Let it run ~15–30s, check the three vantage points below, then Ctrl+C both.
 
 ## Run it — automated / headless (single script)
@@ -100,7 +111,7 @@ echo "== server =="; grep -aiE "peer connected|handshake accepted|Sending Player
 echo "== client =="; grep -aiE "Player joined|Full state|Seq gap|Resync" "$LOG/client.log"
 echo "== metrics =="; grep -aE 'transport="webtransport"' "$LOG/metrics.txt" | grep -aiE "active_peers|packets_|bytes_"
 ```
-Swap the two `--transport`/`--port` values (`enet` / `7777`) to validate ENet. `curl /metrics` needs no auth when no `MetricsBearerToken` is configured (the dev default).
+Swap the two `--transport`/`--port` values (`enet` / `7777`) to validate ENet, and run it once with `--enet=csharp` and once with `--enet=rust` added to the client command. `curl /metrics` needs no auth when no `MetricsBearerToken` is configured (the dev default).
 
 ## Success criteria
 

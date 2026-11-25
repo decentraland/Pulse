@@ -1,13 +1,16 @@
+use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 use std::os::raw::c_int;
+use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::time::{Duration, Instant};
 
-use rusty_enet::{Event, Host, HostSettings};
+use rusty_enet::{Event, Host, HostSettings, ReceiveLimitKind, ReceivePolicy};
 
 use crate::address::{to_socket_addr, ENetAddress};
 use crate::guard::guard;
+use crate::log::LogLimiter;
 use crate::packet::PacketHandle;
 use crate::peer::PeerRecord;
 use crate::socket::GlueSocket;
@@ -21,13 +24,27 @@ const EVENT_DISCONNECT: c_int = 2;
 /// `ENetEvent.kind`: a packet arrived.
 const EVENT_RECEIVE: c_int = 3;
 
-/// A host handle: the `rusty_enet` host and one peer record per slot.
+// A listening host's receive limits. They mirror the receive policy of dcl-one's Pulse server.
+/// Largest incoming packet, reassembled, a listening host accepts; a larger declaration
+/// disconnects the peer before anything is allocated for it.
+const RECEIVE_MAXIMUM_PACKET_SIZE: usize = 8192;
+/// Most incoming bytes a listening host queues per peer.
+const RECEIVE_MAXIMUM_QUEUED_BYTES: usize = 65536;
+/// Most incoming commands a listening host queues per peer.
+const RECEIVE_MAXIMUM_QUEUED_COMMANDS: usize = 256;
+
+/// Disconnect data sent to a peer refused by the receive limit: `DisconnectReason.PACKET_CORRUPTED`
+/// in `src/DCLPulse.Transport/Package/Runtime/DisconnectReason.cs`.
+const DISCONNECT_PACKET_CORRUPTED: u32 = 16;
+
+/// A host handle: the `rusty_enet` host, one peer record per slot and the host's stderr limiter.
 ///
 /// Records live until `enet_host_destroy`, so peer handles stay valid memory after a peer
 /// disconnects. One thread drives a host.
 pub struct GlueHost {
     pub(crate) host: Host<GlueSocket>,
     peers: Box<[PeerRecord]>,
+    log: LogLimiter,
 }
 
 /// ENet-CSharp's event: kind 0 none, 1 connect, 2 disconnect, 3 receive.
@@ -66,7 +83,16 @@ fn record(peers: &[PeerRecord], index: usize) -> *mut PeerRecord {
 
 /// Writes `event` into `out`, boxing a received packet into a handle the caller owns. Returns
 /// false for events the glue drops.
-fn store(peers: &[PeerRecord], event: Event<'_, GlueSocket>, out: &mut ENetEvent) -> bool {
+///
+/// A packet-size refusal is terminal: the peer is disconnected at once with
+/// `PACKET_CORRUPTED` and the caller gets a disconnect event for it. The other receive limits
+/// only refuse one command and are dropped.
+fn store(
+    peers: &[PeerRecord],
+    log: &mut LogLimiter,
+    event: Event<'_, GlueSocket>,
+    out: &mut ENetEvent,
+) -> bool {
     let (kind, peer, channel_id, data, packet) = match event {
         Event::Connect { peer, data } => (EVENT_CONNECT, peer.id(), 0, data, ptr::null_mut()),
         Event::Disconnect { peer, data } => (EVENT_DISCONNECT, peer.id(), 0, data, ptr::null_mut()),
@@ -78,7 +104,29 @@ fn store(peers: &[PeerRecord], event: Event<'_, GlueSocket>, out: &mut ENetEvent
             let handle = Box::into_raw(Box::new(PacketHandle::received(packet)));
             (EVENT_RECEIVE, peer.id(), channel_id, 0, handle)
         }
-        // No receive policy is set, so this event is never produced.
+        Event::ReceiveLimitExceeded {
+            peer,
+            kind: ReceiveLimitKind::PacketSize,
+            ..
+        } => {
+            peer.disconnect_now(DISCONNECT_PACKET_CORRUPTED);
+            let id = peer.id();
+            report(
+                log,
+                format_args!(
+                    "peer {} declared a packet above {RECEIVE_MAXIMUM_PACKET_SIZE} bytes and was \
+                     disconnected",
+                    id.0
+                ),
+            );
+            (
+                EVENT_DISCONNECT,
+                id,
+                0,
+                DISCONNECT_PACKET_CORRUPTED,
+                ptr::null_mut(),
+            )
+        }
         Event::ReceiveLimitExceeded { .. } => return false,
     };
     *out = ENetEvent {
@@ -89,6 +137,24 @@ fn store(peers: &[PeerRecord], event: Event<'_, GlueSocket>, out: &mut ENetEvent
         packet,
     };
     true
+}
+
+/// Writes `message` to stderr with the `enet:` prefix when `log` lets a line through.
+fn report(log: &mut LogLimiter, message: fmt::Arguments<'_>) {
+    if let Some(suppressed) = log.admit(Instant::now()) {
+        // `eprintln!` panics when stderr cannot be written. Diagnostics must never fail a host
+        // call or lose the event being stored, so that panic stops here.
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            eprintln!("enet: {message} ({suppressed} lines suppressed since the previous one)");
+        }));
+    }
+}
+
+/// Returns ENet's clock for one host: monotonic, so a wall-clock step cannot time peers out,
+/// and never 0, which ENet treats as "unset".
+fn monotonic_clock() -> impl Fn() -> Duration {
+    let epoch = Instant::now();
+    move || epoch.elapsed() + Duration::from_millis(1)
 }
 
 fn clear(event: &mut ENetEvent) {
@@ -104,6 +170,9 @@ fn clear(event: &mut ENetEvent) {
 /// Creates a host bound to `address`, or to an ephemeral dual-stack port when it is null.
 /// Returns null on failure. `channel_limit` 0 means the maximum, bandwidth 0 means unlimited,
 /// and `buffer_size` is ignored.
+///
+/// A host created with an address listens, and refuses packets above 8192 bytes before
+/// reassembly; a client host (null address) has no receive limit.
 ///
 /// # Safety
 ///
@@ -123,6 +192,12 @@ pub unsafe extern "C" fn enet_host_create(
         let socket = GlueSocket::bind(bind).ok()?;
         let defaults = HostSettings::default();
         let settings = HostSettings {
+            receive_policy: bind.map(|_| ReceivePolicy {
+                maximum_packet_size: RECEIVE_MAXIMUM_PACKET_SIZE,
+                maximum_queued_bytes: RECEIVE_MAXIMUM_QUEUED_BYTES,
+                maximum_queued_commands: RECEIVE_MAXIMUM_QUEUED_COMMANDS,
+            }),
+            time: Box::new(monotonic_clock()),
             peer_limit: peer_count,
             channel_limit: if channel_limit == 0 {
                 defaults.channel_limit
@@ -137,6 +212,7 @@ pub unsafe extern "C" fn enet_host_create(
         let glue = Box::into_raw(Box::new(GlueHost {
             host,
             peers: Box::new([]),
+            log: LogLimiter::new(),
         }));
         // SAFETY: `glue` was just allocated and nothing else refers to it yet.
         let slots = unsafe { (*glue).host.peer_limit() };
@@ -167,7 +243,8 @@ pub unsafe extern "C" fn enet_host_destroy(host: *mut GlueHost) {
 }
 
 /// Services the host for up to `timeout` milliseconds. Returns 1 with an event, 0 on timeout,
-/// and -1 on a socket error or null handle.
+/// and -1 on a socket error or null handle. A socket error is also written to stderr, at most
+/// one line per host every 5 seconds.
 ///
 /// # Safety
 ///
@@ -187,9 +264,12 @@ pub unsafe extern "C" fn enet_host_service(
         let deadline = Instant::now() + Duration::from_millis(u64::from(timeout));
         loop {
             let dropped = match glue.host.service() {
-                Err(_) => return Some(-1),
+                Err(err) => {
+                    report(&mut glue.log, format_args!("host service failed: {err}"));
+                    return Some(-1);
+                }
                 Ok(Some(next)) => {
-                    if store(&glue.peers, next, out) {
+                    if store(&glue.peers, &mut glue.log, next, out) {
                         return Some(1);
                     }
                     true
@@ -200,8 +280,13 @@ pub unsafe extern "C" fn enet_host_service(
             if remaining.is_zero() {
                 return Some(0);
             }
-            if !dropped {
-                glue.host.socket().wait_readable(remaining);
+            // A wait that ends without a datagram at the deadline is the timeout: return without
+            // another pass, as ENet does.
+            if !dropped
+                && !glue.host.socket().wait_readable(remaining)
+                && Instant::now() >= deadline
+            {
+                return Some(0);
             }
         }
     })
@@ -225,7 +310,7 @@ pub unsafe extern "C" fn enet_host_check_events(
         let out = unsafe { event.as_mut() }?;
         clear(out);
         while let Some(next) = glue.host.check_events() {
-            if store(&glue.peers, next, out) {
+            if store(&glue.peers, &mut glue.log, next, out) {
                 return Some(1);
             }
         }
@@ -273,4 +358,21 @@ pub unsafe extern "C" fn enet_host_connect(
         let index = glue.host.connect(address, channels, data).ok()?.id().0;
         Some(glue.record(index))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monotonic_clock_starts_at_one_millisecond_and_never_decreases() {
+        let clock = monotonic_clock();
+        let mut previous = clock();
+        assert!(previous >= Duration::from_millis(1));
+        for _ in 0..10_000 {
+            let now = clock();
+            assert!(now >= previous);
+            previous = now;
+        }
+    }
 }

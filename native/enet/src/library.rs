@@ -9,16 +9,37 @@ const LINKED_VERSION: u32 = 0x0002_0409;
 
 static EPOCH: OnceLock<Instant> = OnceLock::new();
 
-/// Initializes the library; always succeeds and returns 0.
+/// Windows timer period, in milliseconds, held between `enet_initialize` and
+/// `enet_deinitialize`, as ENet-CSharp does.
+#[cfg(windows)]
+const TIMER_PERIOD_MS: u32 = 1;
+
+/// Initializes the library and returns 0. On Windows it requests a 1 ms timer period, so a
+/// 1 ms service wait lasts about 1 ms instead of the default 15.6 ms tick.
 #[no_mangle]
 pub extern "C" fn enet_initialize() -> c_int {
-    guard(-1, || Some(0))
+    guard(-1, || {
+        #[cfg(windows)]
+        // SAFETY: `timeBeginPeriod` takes a plain integer and has no memory preconditions.
+        unsafe {
+            windows_sys::Win32::Media::timeBeginPeriod(TIMER_PERIOD_MS);
+        }
+        Some(0)
+    })
 }
 
-/// Deinitializes the library; nothing is held globally, so there is nothing to release.
+/// Deinitializes the library. On Windows it releases the timer period `enet_initialize`
+/// requested.
 #[no_mangle]
 pub extern "C" fn enet_deinitialize() {
-    guard((), || Some(()));
+    guard((), || {
+        #[cfg(windows)]
+        // SAFETY: `timeEndPeriod` takes a plain integer and has no memory preconditions.
+        unsafe {
+            windows_sys::Win32::Media::timeEndPeriod(TIMER_PERIOD_MS);
+        }
+        Some(())
+    });
 }
 
 /// Returns the ENet version this library is compatible with.

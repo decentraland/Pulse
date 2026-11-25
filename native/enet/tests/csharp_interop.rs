@@ -10,7 +10,7 @@ use std::ffi::{c_char, c_int, c_void, CString};
 use std::path::PathBuf;
 use std::ptr;
 use std::slice;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use common::{empty_event, server};
@@ -50,6 +50,25 @@ struct CEvent {
     channel: u8,
     data: u32,
     packet: *mut c_void,
+}
+
+/// Held by every test that calls into ENet-CSharp, so only one thread uses that library at a time.
+///
+/// ENet-CSharp's clock is not safe to start from several threads at once. On Windows its
+/// `clock_gettime` stand-in initialises plain statics lazily and sets `initialized` before the
+/// counter offset and frequency, and on every platform `enet_time_get` picks its start time with
+/// a compare-and-swap against a clock value read before it. When the first calls race, a thread
+/// can get a time that is far off. `enet_host_service` then computes its wait as
+/// `ENET_TIME_DIFFERENCE(timeout, serviceTime)`, which can reach a day, and blocks in the socket
+/// wait instead of returning after 1 ms. Under parallel test threads that hung about one run in
+/// ten; reading the clock once before any test ran removed the hang.
+static CSHARP_LOCK: Mutex<()> = Mutex::new(());
+
+/// Takes [`CSHARP_LOCK`]; a test that panicked while holding it does not fail the others.
+fn csharp_lock() -> MutexGuard<'static, ()> {
+    CSHARP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The ENet-CSharp entry points the tests call, resolved once and valid for the whole process.
@@ -192,8 +211,9 @@ unsafe fn take_csharp_packet(packet: *mut c_void) -> Vec<u8> {
     bytes
 }
 
-/// Services both hosts in turn until `pred` accepts an event or the deadline passes.
-fn pump(link: &Link, mut pred: impl FnMut(&Seen) -> bool) -> bool {
+/// Services both hosts in turn until `pred` accepts an event; fails the test, naming
+/// `waiting_for`, when it has not after `DEADLINE_MS`.
+fn pump(link: &Link, waiting_for: &str, mut pred: impl FnMut(&Seen) -> bool) {
     let deadline = Instant::now() + Duration::from_millis(DEADLINE_MS);
     while Instant::now() < deadline {
         let mut event = empty_event();
@@ -214,7 +234,7 @@ fn pump(link: &Link, mut pred: impl FnMut(&Seen) -> bool) -> bool {
                 bytes,
             };
             if pred(&seen) {
-                return true;
+                return;
             }
         }
 
@@ -242,11 +262,11 @@ fn pump(link: &Link, mut pred: impl FnMut(&Seen) -> bool) -> bool {
                 bytes,
             };
             if pred(&seen) {
-                return true;
+                return;
             }
         }
     }
-    false
+    panic!("timed out after {DEADLINE_MS} ms waiting for {waiting_for}");
 }
 
 /// Connects an ENet-CSharp client to a glue server and waits for both connect events.
@@ -269,7 +289,7 @@ fn link() -> Link {
     };
     let mut server_peer = None;
     let mut client_up = false;
-    let done = pump(&link, |seen| {
+    pump(&link, "both connect events", |seen| {
         match (seen.side, seen.kind) {
             (Side::Glue, CONNECT) => server_peer = Some(seen.peer),
             (Side::Csharp, CONNECT) => client_up = true,
@@ -277,7 +297,6 @@ fn link() -> Link {
         }
         server_peer.is_some() && client_up
     });
-    assert!(done, "connection did not complete");
     link.server_peer = server_peer.unwrap().cast();
     link
 }
@@ -315,13 +334,16 @@ fn glue_sends(link: &Link, length: usize, channel: u8, flags: u32) {
 /// Waits for `count` receive events on `side`, returning them in arrival order.
 fn receive(link: &Link, side: Side, count: usize) -> Vec<Seen> {
     let mut received = Vec::new();
-    pump(link, |seen| {
-        if seen.side == side && seen.kind == RECEIVE {
-            received.push(seen.clone());
-        }
-        received.len() == count
-    });
-    assert_eq!(received.len(), count, "expected {count} packets");
+    pump(
+        link,
+        &format!("{count} packets on the {side:?} side"),
+        |seen| {
+            if seen.side == side && seen.kind == RECEIVE {
+                received.push(seen.clone());
+            }
+            received.len() == count
+        },
+    );
     received
 }
 
@@ -339,6 +361,7 @@ fn fixture_hashes_match() {
 
 #[test]
 fn csharp_client_connects_and_is_granted_1280() {
+    let _csharp = csharp_lock();
     let link = link();
 
     // SAFETY: each peer is live and belongs to the library it is passed to.
@@ -351,6 +374,7 @@ fn csharp_client_connects_and_is_granted_1280() {
 
 #[test]
 fn csharp_client_packets_arrive_on_all_three_channels() {
+    let _csharp = csharp_lock();
     let link = link();
 
     csharp_sends(&link, 32, 0, RELIABLE);
@@ -362,6 +386,7 @@ fn csharp_client_packets_arrive_on_all_three_channels() {
 
 #[test]
 fn csharp_client_3000_byte_reliable_arrives() {
+    let _csharp = csharp_lock();
     let link = link();
 
     csharp_sends(&link, 3000, 0, RELIABLE);
@@ -373,6 +398,7 @@ fn csharp_client_3000_byte_reliable_arrives() {
 
 #[test]
 fn glue_host_3000_byte_reliable_reaches_csharp_client() {
+    let _csharp = csharp_lock();
     let link = link();
 
     glue_sends(&link, 3000, 0, RELIABLE);
@@ -384,6 +410,7 @@ fn glue_host_3000_byte_reliable_reaches_csharp_client() {
 
 #[test]
 fn glue_host_packets_reach_csharp_client_on_all_three_channels() {
+    let _csharp = csharp_lock();
     let link = link();
 
     glue_sends(&link, 32, 0, RELIABLE);
@@ -395,16 +422,21 @@ fn glue_host_packets_reach_csharp_client_on_all_three_channels() {
 
 #[test]
 fn disconnect_reasons_cross_both_ways() {
+    let _csharp = csharp_lock();
     let first = link();
     // SAFETY: the server peer is live and belongs to the glue.
     unsafe { enet_peer_disconnect(first.server_peer, 16) };
     let mut client_reason = None;
-    pump(&first, |seen| {
-        if seen.side == Side::Csharp && seen.kind == DISCONNECT {
-            client_reason = Some(seen.data);
-        }
-        client_reason.is_some()
-    });
+    pump(
+        &first,
+        "the ENet-CSharp client's disconnect event",
+        |seen| {
+            if seen.side == Side::Csharp && seen.kind == DISCONNECT {
+                client_reason = Some(seen.data);
+            }
+            client_reason.is_some()
+        },
+    );
     assert_eq!(client_reason, Some(16));
     drop(first);
 
@@ -412,7 +444,7 @@ fn disconnect_reasons_cross_both_ways() {
     // SAFETY: the client peer is live and belongs to ENet-CSharp.
     unsafe { (csharp().peer_disconnect)(second.client_peer, 5) };
     let mut server_reason = None;
-    pump(&second, |seen| {
+    pump(&second, "the glue server's disconnect event", |seen| {
         if seen.side == Side::Glue && seen.kind == DISCONNECT {
             server_reason = Some(seen.data);
         }

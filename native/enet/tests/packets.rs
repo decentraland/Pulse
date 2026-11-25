@@ -2,12 +2,14 @@ mod common;
 
 use std::ptr;
 use std::slice;
+use std::thread;
+use std::time::Duration;
 
 use common::{address, client, empty_event, pump_until, server};
 use enet::{
-    enet_host_check_events, enet_host_connect, enet_host_destroy, enet_host_service,
-    enet_packet_create, enet_packet_create_offset, enet_packet_dispose, enet_packet_get_data,
-    enet_packet_get_length, enet_peer_disconnect, enet_peer_disconnect_later,
+    enet_host_check_events, enet_host_connect, enet_host_destroy, enet_host_flush,
+    enet_host_service, enet_packet_create, enet_packet_create_offset, enet_packet_dispose,
+    enet_packet_get_data, enet_packet_get_length, enet_peer_disconnect, enet_peer_disconnect_later,
     enet_peer_disconnect_now, enet_peer_get_state, enet_peer_reset, enet_peer_send,
     enet_peer_timeout, ENetEvent, GlueHost, PacketHandle, PeerRecord,
 };
@@ -489,6 +491,42 @@ fn packet_outlives_its_host() {
     // SAFETY: as above; the data is valid for 500 bytes.
     assert_eq!(unsafe { *enet_packet_get_data(packet) }, 0x7E);
     dispose(packet);
+}
+
+#[test]
+fn check_events_drains_what_one_service_pass_queued() {
+    let pair = connected();
+    let first = payload(30, 0x11);
+    let second = payload(30, 0x22);
+    assert_eq!(send(pair.client_peer, 0, create(&first, RELIABLE)), 0);
+    assert_eq!(send(pair.client_peer, 0, create(&second, RELIABLE)), 0);
+    // SAFETY: `client` is live.
+    unsafe { enet_host_flush(pair.client) };
+    // Both packets are in the server's socket before its one service pass reads them.
+    thread::sleep(Duration::from_millis(100));
+
+    let mut event = empty_event();
+    // SAFETY: `server` is live and `event` is valid for writes.
+    assert_eq!(
+        unsafe { enet_host_service(pair.server, &mut event, 100) },
+        1
+    );
+    let from_service = seen(&event);
+    // SAFETY: as above.
+    let queued = unsafe { enet_host_check_events(pair.server, &mut event) };
+    let from_check = seen(&event);
+    // SAFETY: as above.
+    let drained = unsafe { enet_host_check_events(pair.server, &mut event) };
+
+    assert_eq!(from_service.kind, RECEIVE);
+    assert_eq!(from_service.bytes.as_deref(), Some(&first[..]));
+    assert_eq!(queued, 1);
+    assert_eq!(from_check.kind, RECEIVE);
+    assert_eq!(from_check.peer, pair.server_peer);
+    assert_eq!(from_check.bytes.as_deref(), Some(&second[..]));
+    assert_eq!(drained, 0);
+    assert_eq!(event.kind, 0);
+    pair.destroy();
 }
 
 #[test]

@@ -4,6 +4,7 @@ mod address;
 mod guard;
 mod host;
 mod library;
+mod log;
 mod packet;
 mod peer;
 #[doc(hidden)]

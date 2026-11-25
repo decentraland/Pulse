@@ -1,4 +1,5 @@
 using ENet;
+using Pulse.Transport;
 using Host = ENet.Host;
 
 namespace DCLPulseTests;
@@ -13,6 +14,11 @@ namespace DCLPulseTests;
 public class ENetNativeLibraryTests
 {
     private const int LARGE_PACKET_LENGTH = 3000;
+
+    /// <summary>
+    ///     Above the 8192-byte limit the native library applies to a listening host.
+    /// </summary>
+    private const int OVERSIZED_PACKET_LENGTH = 9000;
 
     [OneTimeSetUp]
     public void OneTimeSetUp()
@@ -86,6 +92,44 @@ public class ENetNativeLibraryTests
         Peer serverSidePeer = DriveUntilServerSeesConnect(server, client);
 
         Assert.That(serverSidePeer.IP, Is.EqualTo("127.0.0.1"));
+    }
+
+    [Test]
+    [CancelAfter(5000)]
+    public void OversizedPacket_DisconnectsTheClientWithPacketCorrupted()
+    {
+        using var server = new Host();
+        using var client = new Host();
+        ushort port = CreateHosts(server, client);
+
+        Peer clientSidePeer = Connect(client, port);
+        DriveUntilServerSeesConnect(server, client);
+        DriveUntilConnected(server, client, clientSidePeer);
+
+        var packet = default(Packet);
+        packet.Create(new byte[OVERSIZED_PACKET_LENGTH], PacketFlags.Reliable);
+        Assert.That(clientSidePeer.Send(0, ref packet), Is.Zero, "Client failed to queue the packet.");
+
+        EventType? serverEvent = null;
+        uint? clientDisconnectData = null;
+        long deadline = Environment.TickCount64 + 3000;
+
+        while (Environment.TickCount64 < deadline && (serverEvent == null || clientDisconnectData == null))
+        {
+            if (client.Service(1, out Event clientEvent) > 0 && clientEvent.Type == EventType.Disconnect)
+                clientDisconnectData = clientEvent.Data;
+
+            if (server.Service(1, out Event serverSideEvent) > 0 && serverEvent == null)
+            {
+                serverEvent = serverSideEvent.Type;
+
+                if (serverSideEvent.Type == EventType.Receive)
+                    serverSideEvent.Packet.Dispose();
+            }
+        }
+
+        Assert.That(serverEvent, Is.EqualTo(EventType.Disconnect), "The server's next peer event was not a disconnect.");
+        Assert.That(clientDisconnectData, Is.EqualTo((uint)DisconnectReason.PACKET_CORRUPTED));
     }
 
     private static ushort CreateHosts(Host server, Host client)

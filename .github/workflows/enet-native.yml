@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - "native/enet/**"
+      - "scripts/enet-fetch-source.py"
+      - ".github/workflows/enet-native.yml"
 
 permissions:
   contents: read
@@ -17,6 +19,7 @@ jobs:
   build:
     name: Build ${{ matrix.rid }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -25,7 +28,6 @@ jobs:
             rid: linux-x64
             target: x86_64-unknown-linux-gnu
             library: libenet.so
-            rustflags: ""
           - os: windows-latest
             rid: win-x64
             target: x86_64-pc-windows-msvc
@@ -35,11 +37,16 @@ jobs:
             rid: macos-arm64
             target: aarch64-apple-darwin
             library: libenet.dylib
-            rustflags: ""
-    env:
-      RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
       - uses: actions/checkout@v4
+
+      # Only the Windows entry has rustflags; on the others RUSTFLAGS is never set.
+      - name: Set RUSTFLAGS
+        if: matrix.rustflags
+        shell: bash
+        env:
+          FLAGS: ${{ matrix.rustflags }}
+        run: echo "RUSTFLAGS=$FLAGS" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
@@ -51,16 +58,12 @@ jobs:
         env:
           EXPECTED_HOST: ${{ matrix.target }}
         run: |
-          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain install
           host=$(rustc -vV | sed -n 's/^host: //p')
           if [ "$host" != "$EXPECTED_HOST" ]; then
             echo "::error::runner builds for $host, expected $EXPECTED_HOST"
             exit 1
           fi
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native/enet
 
       - name: Fetch pinned rusty_enet source
         shell: bash
@@ -74,17 +77,17 @@ jobs:
       - name: Clippy
         shell: bash
         working-directory: native/enet
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Test
         shell: bash
         working-directory: native/enet
-        run: cargo test
+        run: cargo test --locked
 
       - name: Build release
         shell: bash
         working-directory: native/enet
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Collect library and SHA-256
         shell: bash

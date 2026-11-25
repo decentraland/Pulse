@@ -20,6 +20,7 @@
 **/BenchmarkDotNet.Artifacts
 .claude/
 .github/
+native/
 src/DCLPulseTests/
 src/DCLPulseBenchmarks/
 LICENSE

@@ -1,6 +1,6 @@
 ---
 name: validate-e2e
-description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
+description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet (both client libraries and an MTU check) and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
 user-invocable: true
 allowed-tools: Bash, PowerShell, Grep, Read
 argument-hint: [--transport=enet|webtransport] [--enet=csharp|rust] [--account=prefix] [--comms-enabled]
@@ -83,6 +83,24 @@ Each client prints `ENet library: <choice>` on start; confirm it matches the run
 
 Let it run ~15–30s, check the three vantage points below, then Ctrl+C both.
 
+### ENet: MTU check
+
+Every message in the two runs above is under 1280 bytes, so they pass even on a server that discards larger datagrams. This check sends one message above 1280 bytes from a 1392-MTU client: a scene-listener handshake that carries 80 parcels.
+
+With the server running:
+
+```
+PARCELS=$(seq -s, -f '%g:0' 0 2 158)
+DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" \
+  dotnet run --project src/DCLPulseTestClient -p:GenerateProto=false -- \
+  --enet=rust --ip=127.0.0.1 --port=7777 --account=mtu-listener --scene-listener-parcels="$PARCELS"
+```
+
+- **Pass:** within 20 s the client prints `Scene listener ready` and the server logs `Scene listener accepted with wallet 0x… (80 parcels across 1 realms)`.
+- **Fail:** the client stays at `Connecting as scene listener` and the server logs only `Peer connected`. The server's ENet library is discarding datagrams above 1280 bytes.
+
+The message size comes from the number of entries: give each parcel as its own `x:z` entry. A range such as `0:0..158:0` is a single entry and keeps the message small.
+
 ## Run it — automated / headless (single script)
 
 For agent/CI runs with no interactive terminal. Build first, then run from the repo root. (Notes reflect Claude-Code Bash-tool quirks: no foreground `sleep`; launch each process with `exec` inside a subshell so `$!` is the real `dotnet` PID and stays killable — a `timeout`-wrapped `dotnet` orphans its child.)
@@ -121,6 +139,7 @@ All of:
 - [ ] client: each bot logs `Player joined:` (the other bot) and `Full state for subject …`
 - [ ] metrics: `active_peers{transport=…} 2`, and both `packets_received` and `packets_sent` non-zero for that transport
 - [ ] no unexpected exceptions (a `Seq gap → Requesting resync` line is normal — see above)
+- [ ] ENet: the MTU check passes (see "ENet: MTU check")
 
 ## Cleanup
 

@@ -158,6 +158,53 @@ fn dual_stack_socket_receives_v4() {
     );
 }
 
+/// Sends `oversized` bytes and then a 100-byte datagram to a fresh socket, and returns what the
+/// first `receive` call yields: its length and first byte.
+fn receive_after_oversized(oversized: usize) -> (usize, u8) {
+    let mut socket = GlueSocket::bind(Some("127.0.0.1:0".parse().unwrap())).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sender
+        .send_to(&vec![0xAA; oversized], ("127.0.0.1", port))
+        .unwrap();
+    sender.send_to(&[0xBB; 100], ("127.0.0.1", port)).unwrap();
+    assert!(socket.wait_readable(Duration::from_secs(2)));
+
+    let mut buffer = [0u8; MTU_MAX];
+    let (_, received) = socket.receive(&mut buffer).unwrap().unwrap();
+    match received {
+        PacketReceived::Complete(length) => (length, buffer[0]),
+        PacketReceived::Partial => panic!("the glue skips a truncated datagram itself"),
+    }
+}
+
+#[test]
+fn datagram_of_5000_bytes_is_skipped() {
+    assert_eq!(receive_after_oversized(5000), (100, 0xBB));
+}
+
+#[test]
+fn datagram_one_byte_over_mtu_max_is_skipped() {
+    assert_eq!(receive_after_oversized(MTU_MAX + 1), (100, 0xBB));
+}
+
+#[test]
+fn datagram_of_exactly_mtu_max_is_received_whole() {
+    let mut socket = GlueSocket::bind(Some("127.0.0.1:0".parse().unwrap())).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut payload = vec![0xCC; MTU_MAX];
+    payload[MTU_MAX - 1] = 0xDD;
+    sender.send_to(&payload, ("127.0.0.1", port)).unwrap();
+    assert!(socket.wait_readable(Duration::from_secs(2)));
+
+    let mut buffer = [0u8; MTU_MAX];
+    let (_, received) = socket.receive(&mut buffer).unwrap().unwrap();
+    assert!(matches!(received, PacketReceived::Complete(MTU_MAX)));
+    assert_eq!(buffer[0], 0xCC);
+    assert_eq!(buffer[MTU_MAX - 1], 0xDD);
+}
+
 #[test]
 fn wait_readable_times_out() {
     let socket = GlueSocket::bind(Some("127.0.0.1:0".parse().unwrap())).unwrap();

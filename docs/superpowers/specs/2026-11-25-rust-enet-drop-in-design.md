@@ -195,9 +195,11 @@ The glue implements `rusty_enet::Socket` over one non-blocking UDP socket.
   IPv6 text, like `inet_ntop`. `IpLimiter`, the whitelist and `ContinentResolver` key on this
   string, so it must match ENet-CSharp's output.
 - Receive reads into `rusty_enet`'s full `MTU_MAX` (4096-byte) buffer.
-- A receive error that concerns one datagram (an ICMP answer to an earlier send, or on Windows a
-  datagram larger than the buffer) is skipped. Any other receive error makes `enet_host_service`
-  return a negative value.
+- A datagram larger than that buffer is dropped whole on every platform. The receive asks the
+  operating system whether the datagram was cut off; without that, Linux and macOS would hand
+  ENet the first 4096 bytes as if they were a complete datagram.
+- A receive error that concerns one datagram (an ICMP answer to an earlier send) is skipped. Any
+  other receive error makes `enet_host_service` return a negative value.
 - A send error costs that one datagram and is never returned to `rusty_enet`: the socket reports
   0 bytes sent, and ENet resends what was reliable. This is what dcl-one's Pulse driver does
   (`services/catalyst/comms/src/pulse/transport/host.rs`). Otherwise one unreachable peer address
@@ -270,7 +272,7 @@ Consequences:
 | Timeout event | `Timeout` (4) | `Disconnect` (2), data 0 | Server: none; both run `TeardownPeerSlot`, only the debug log text differs. Test client with `--enet=rust`: a timeout prints "disconnected by server: NONE (0)" where it printed "timed out"; the reason it reports is `NONE` either way. |
 | Keepalive ping | 250 ms | 500 ms | A dead peer is noticed up to 250 ms later. |
 | Initial RTT | 1 ms | 500 ms | A peer's first RTT sample may read 500 ms. First retransmits on a fresh connection start slower. |
-| Oversized datagram on Windows | `service` returns -1 | datagram skipped | None. |
+| Datagram larger than the read buffer | dropped; on Windows `service` also returns -1 | dropped on every platform | None. |
 | Send error | `service` returns -1 and skips the receive | costs that one datagram | One unreachable peer no longer stalls a service pass. |
 | Packet declared above 8192 bytes, to the server | reassembled, then `CheckOversized` hard-disconnects | refused before reassembly; peer disconnected with `PACKET_CORRUPTED` | Same outcome for the peer. No "grossly oversized" warning or corrupted-packet metric. `BufferSize` above 4096 does not raise the limit. |
 | Dispose after successful send | no-op | double free | No caller does it. |

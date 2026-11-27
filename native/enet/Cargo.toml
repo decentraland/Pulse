@@ -1,0 +1,29 @@
+[package]
+name = "enet"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "enet"
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+exclude = ["vendor"]
+
+[dependencies]
+rusty_enet = { path = "vendor/dcl-one/library/vendor/rusty_enet" }
+socket2 = { version = "0.5", features = ["all"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Media", "Win32_Networking_WinSock"] }
+
+[dev-dependencies]
+libloading = "0.8"
+sha2 = "0.10"
+
+[profile.release]
+panic = "unwind"
+lto = true

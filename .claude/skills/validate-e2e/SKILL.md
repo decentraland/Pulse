@@ -1,9 +1,9 @@
 ---
 name: validate-e2e
-description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
+description: Validate the full client↔server networking flow end-to-end — QUIC/UDP connect, DCL ECDSA handshake, movement, interest-managed state fan-out, and resync — by running two DCLPulseTestClient bots against a live server and cross-checking server logs, client logs, and per-transport Prometheus metrics. Covers ENet (both client libraries and an MTU check) and WebTransport; WebTransport needs the extra cert/bind setup documented here. Use when asked to validate, verify, or smoke-test the end-to-end flow, especially over WebTransport.
 user-invocable: true
 allowed-tools: Bash, PowerShell, Grep, Read
-argument-hint: [--transport=enet|webtransport] [--account=prefix] [--comms-enabled]
+argument-hint: [--transport=enet|webtransport] [--enet=csharp|rust] [--account=prefix] [--comms-enabled]
 ---
 
 # Validate the e2e networking flow
@@ -70,7 +70,36 @@ DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" \
 ```
 For **ENet**: drop `--transport` and the cert concerns, use `--port=7777` (the default). Everything else — bots, logs, metrics — is identical.
 
+### ENet: run it twice
+
+The server's ENet library is built from dcl-one's `rusty_enet`. Run the ENet validation twice against that server, once per client library:
+
+| Run | Flag | Stands for |
+|---|---|---|
+| 1 | `--enet=csharp` (default) | Unity-style client: ENet-CSharp, announces MTU 1280 |
+| 2 | `--enet=rust` | Bevy-style client: the same rusty_enet as the server, announces MTU 1392 |
+
+Each client prints `ENet library: <choice>` on start; confirm it matches the run. Both runs must meet every success criterion. `--enet` does not affect the WebTransport run; run that once.
+
 Let it run ~15–30s, check the three vantage points below, then Ctrl+C both.
+
+### ENet: MTU check
+
+Every message in the two runs above is under 1280 bytes, so they pass even on a server that discards larger datagrams. This check sends one message above 1280 bytes from a 1392-MTU client: a scene-listener handshake that carries 80 parcels.
+
+With the server running:
+
+```
+PARCELS=$(seq -s, -f '%g:0' 0 2 158)
+DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" \
+  dotnet run --project src/DCLPulseTestClient -p:GenerateProto=false -- \
+  --enet=rust --ip=127.0.0.1 --port=7777 --account=mtu-listener --scene-listener-parcels="$PARCELS"
+```
+
+- **Pass:** within 20 s the client prints `Scene listener ready` and the server logs `Scene listener accepted with wallet 0x… (80 parcels across 1 realms)`.
+- **Fail:** the client stays at `Connecting as scene listener` and the server logs only `Peer connected`. The server's ENet library is discarding datagrams above 1280 bytes.
+
+The message size comes from the number of entries: give each parcel as its own `x:z` entry. A range such as `0:0..158:0` is a single entry and keeps the message small.
 
 ## Run it — automated / headless (single script)
 
@@ -100,7 +129,7 @@ echo "== server =="; grep -aiE "peer connected|handshake accepted|Sending Player
 echo "== client =="; grep -aiE "Player joined|Full state|Seq gap|Resync" "$LOG/client.log"
 echo "== metrics =="; grep -aE 'transport="webtransport"' "$LOG/metrics.txt" | grep -aiE "active_peers|packets_|bytes_"
 ```
-Swap the two `--transport`/`--port` values (`enet` / `7777`) to validate ENet. `curl /metrics` needs no auth when no `MetricsBearerToken` is configured (the dev default).
+Swap the two `--transport`/`--port` values (`enet` / `7777`) to validate ENet, and run it once with `--enet=csharp` and once with `--enet=rust` added to the client command. `curl /metrics` needs no auth when no `MetricsBearerToken` is configured (the dev default).
 
 ## Success criteria
 
@@ -110,6 +139,7 @@ All of:
 - [ ] client: each bot logs `Player joined:` (the other bot) and `Full state for subject …`
 - [ ] metrics: `active_peers{transport=…} 2`, and both `packets_received` and `packets_sent` non-zero for that transport
 - [ ] no unexpected exceptions (a `Seq gap → Requesting resync` line is normal — see above)
+- [ ] ENet: the MTU check passes (see "ENet: MTU check")
 
 ## Cleanup
 

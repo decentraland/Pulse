@@ -34,18 +34,32 @@
         </Content>
     </ItemGroup>
 
+    <!-- Each ENet library goes to its own folder; the test client picks one at start with the enet option.
+         enet-csharp is ENet-CSharp (the Unity client's); enet-rust is the Pulse server's own. -->
     <ItemGroup>
         <None Include="runtimes\win-x64\native\enet.dll">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <TargetPath>enet.dll</TargetPath>
+            <TargetPath>enet-csharp/enet.dll</TargetPath>
         </None>
         <None Include="runtimes\linux-x64\native\libenet.so">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <TargetPath>libenet.so</TargetPath>
+            <TargetPath>enet-csharp/libenet.so</TargetPath>
         </None>
         <None Include="runtimes\macos-arm64\native\libenet.dylib">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <TargetPath>libenet.dylib</TargetPath>
+            <TargetPath>enet-csharp/libenet.dylib</TargetPath>
+        </None>
+        <None Include="..\DCLPulse\runtimes\win-x64\native\enet.dll" Link="enet-rust\enet.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>enet-rust/enet.dll</TargetPath>
+        </None>
+        <None Include="..\DCLPulse\runtimes\linux-x64\native\libenet.so" Link="enet-rust\libenet.so">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>enet-rust/libenet.so</TargetPath>
+        </None>
+        <None Include="..\DCLPulse\runtimes\macos-arm64\native\libenet.dylib" Link="enet-rust\libenet.dylib">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>enet-rust/libenet.dylib</TargetPath>
         </None>
     </ItemGroup>
 

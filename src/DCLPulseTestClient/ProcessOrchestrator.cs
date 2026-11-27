@@ -122,6 +122,7 @@ public static class ProcessOrchestrator
             $"--spawn-radius={options.SpawnRadius}",
             $"--dispersion-radius={options.DispersionRadius}",
             $"--rotate-speed={options.RotateSpeed}",
+            $"--enet={options.ENetLibrary}",
         };
 
         return string.Join(' ', parts);

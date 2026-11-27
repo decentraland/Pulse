@@ -21,6 +21,13 @@ public class ClientOptions
     public string Transport { get; init; } = "enet";
 
     /// <summary>
+    ///     ENet native library to load: <c>csharp</c> (default, ENet-CSharp as the Unity client uses it)
+    ///     or <c>rust</c> (the library the Pulse server ships, as the Bevy client uses it). Only
+    ///     meaningful with the <c>enet</c> transport.
+    /// </summary>
+    public string ENetLibrary { get; init; } = ENetLibrarySelector.CSHARP;
+
+    /// <summary>
     ///     Whether each bot also opens a ws-connector session on its own wallet to observe the LiveKit
     ///     conn string. Off by default so existing runs are unchanged.
     /// </summary>
@@ -102,6 +109,7 @@ public class ClientOptions
             TotalBotCount = int.Parse(Arg("total-bot-count", "0")),
             SceneListenerParcels = Arg("scene-listener-parcels", ""),
             Transport = Arg("transport", "enet"),
+            ENetLibrary = Arg("enet", ENetLibrarySelector.CSHARP),
             CommsEnabled = Flag("comms-enabled"),
             CommsUrl = Arg("comms-url", "ws://127.0.0.1:5000/ws"),
             ExpectConnStringWithinSeconds = int.Parse(Arg("expect-conn-string-within", "15")),

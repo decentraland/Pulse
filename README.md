@@ -81,6 +81,75 @@ bash tools/fetch-rust-eth.sh        # Linux / macOS / git-bash
 pwsh tools/fetch-rust-eth.ps1       # Windows PowerShell
 ```
 
+## ENet native library
+
+The server's ENet library (`enet.dll`, `libenet.so`, `libenet.dylib`) is built from the Rust glue
+crate in `native/enet/`. The glue wraps `rusty_enet` from
+[`decentraland/dcl-one`](https://github.com/decentraland/dcl-one), the ENet the Rust clients use, so
+the server and those clients run one ENet implementation. The glue exports 31 of the 65 `enet_*`
+functions `src/DCLPulse.Transport/Package/Runtime/ENet.cs` imports; calling any other throws
+`EntryPointNotFoundException`. `ENet.cs` is unchanged. The Linux library needs glibc
+2.34 or newer. See the [design](docs/superpowers/specs/2026-11-25-rust-enet-drop-in-design.md) for
+details.
+
+### Differences from ENet-CSharp
+
+- The server takes the smaller of the two MTUs and reads datagrams up to 4096 bytes.
+- A timed-out peer arrives as `Disconnect`, not `Timeout`.
+- The keepalive ping goes out every 500 ms.
+- A listening host refuses a packet declared above 8192 bytes before reassembly and disconnects that
+  peer with `PACKET_CORRUPTED`, so raising `Transport:BufferSize` above 4096 no longer raises the hard
+  limit.
+- A send error costs one datagram and does not fail the service call.
+
+The design's "Behaviour that changes" table has the full list.
+
+### Pin
+
+`native/enet/PIN.json` names the dcl-one commit, the folder `library/vendor/rusty_enet` and its Git
+tree SHA. The source is never committed. The toolchain is pinned by `native/enet/rust-toolchain.toml`.
+
+### Building locally
+
+```bash
+python scripts/enet-fetch-source.py fetch    # downloads the pinned folder into native/enet/vendor/ and verifies it
+cd native/enet
+cargo build --release                        # enet.dll / libenet.so / libenet.dylib
+cargo test
+```
+
+`python scripts/enet-fetch-source.py verify` re-checks the fetched source without network access.
+
+### Committed libraries
+
+The libraries in `src/DCLPulse/runtimes/{win-x64,linux-x64,macos-arm64}/native/` are built by
+`.github/workflows/enet-native.yml` (pull requests that touch `native/enet/**`, the fetch script or
+the workflow, and manual dispatch).
+It uploads the artifacts `enet-win-x64`, `enet-linux-x64` and `enet-macos-arm64`, each with a `.sha256`.
+`native/enet/PROVENANCE.json` records the pin, the toolchain, a digest of the glue sources and the
+SHA-256 of each library. `python scripts/enet-provenance.py check` verifies it and runs in
+`.github/workflows/test.yml`.
+
+`.github/workflows/enet-pin.yml` runs daily, on manual dispatch and on pull requests. It checks that
+the pinned `rev` is a commit on dcl-one's `main` and compares the pinned tree SHA with the one on
+`main`. A finding, or a failed GitHub API lookup, fails the scheduled and manual runs and only warns
+on pull requests.
+
+### Moving the ENet pin
+
+1. Edit `rev` and `tree_sha` in `native/enet/PIN.json`.
+2. Open a pull request so `enet-native.yml` builds the libraries.
+3. Take the three artifacts from the `enet-native` run on the pull request's head commit in this
+   repository. Check each file against its `.sha256` and against the hash printed in that job's log.
+   Copy `enet.dll` to `src/DCLPulse/runtimes/win-x64/native/`, `libenet.so` to
+   `src/DCLPulse/runtimes/linux-x64/native/` and `libenet.dylib` to
+   `src/DCLPulse/runtimes/macos-arm64/native/`. Never commit a library built on a developer machine.
+4. Run `git add native/enet src/DCLPulse/runtimes`, then `python scripts/enet-provenance.py write`
+   and `python scripts/enet-provenance.py check`. `write` digests the git index, so an unstaged
+   `PIN.json` or `Cargo.lock` gives a stale digest.
+5. Run the .NET tests and the end-to-end validation with `--enet=csharp` and with `--enet=rust`.
+6. Commit.
+
 ## Transport
 
 Pulse uses ENet over UDP and WebTransport with a shared peer allocator. `PeerIndex` is a
@@ -131,6 +200,7 @@ dotnet run --project src/DCLPulseTestClient
 | `--spawn-radius=<float>` | `10` | Radius of the circle bots spawn on around the initial position |
 | `--dispersion-radius=<float>` | `20` | Max distance a bot can wander from the spawn origin |
 | `--rotate-speed=<deg/s>` | `90` | Idle rotation speed in degrees per second |
+| `--enet=<csharp\|rust>` | `csharp` | ENet library the client loads: ENet-CSharp (as Unity) or dcl-one's rusty_enet (as Bevy) |
 
 Example — single bot connecting to a remote server:
 
@@ -143,6 +213,8 @@ Example — 10 bots for load testing:
 ```bash
 dotnet run --project src/DCLPulseTestClient -- --account=loadtest --bot-count=10 --ip=10.0.0.5
 ```
+
+`--enet=csharp` loads ENet-CSharp from `enet-csharp/` in the output folder, the library the Unity client uses (announced MTU 1280). `--enet=rust` loads the server's library from `enet-rust/`, the same ENet the Bevy client uses (announced MTU 1392). The client prints `ENet library: <choice>` on start and exits with code 2 on an unknown value. The option only applies to the ENet transport.
 
 When `--bot-count=1`, the account name is used as-is. When `--bot-count` > 1, accounts are named `<account>-0`, `<account>-1`, ..., `<account>-N-1` and bots spawn in a circle around the initial position.
 

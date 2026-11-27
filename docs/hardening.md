@@ -684,6 +684,12 @@ The two call sites are:
 | `ENetHostedService.IsOversizedAndRecordCorruption` | Packet length > `Transport.BufferSize` (caught before `CopyTo`) |
 | `ENetHostedService.HandleEvent` `Receive` branch | `messagePipe.OnDataReceived` returned `false` (protobuf parse failed) |
 
+**Limit in the ENet library.** The ENet library refuses a packet declared above 8192 bytes before
+reassembly, so nothing is allocated for it, and disconnects the peer with `PACKET_CORRUPTED`. The
+server sees a normal Disconnect event for that peer, so neither `dcl_pulse_corrupted_packet_total`
+nor the "grossly oversized" warning of `CheckOversized` is produced for it. Packets of 4097–8192
+bytes still reach `CheckOversized` and count against the corruption budget as before.
+
 `MessagePipe.OnDataReceived` now returns `bool` — the parse result — and the transport (which
 already owns the limiter) decides whether to call `RecordCorruption`. The limiter has no
 dependency on `MessagePipe`; both call sites run on the ENet thread, so the limiter's per-peer

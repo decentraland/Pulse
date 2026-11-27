@@ -67,11 +67,24 @@ ENetTransport? sharedTransport = null;
 
 if (!useWebTransport)
 {
+    try
+    {
+        ENetLibrarySelector.Use(options.ENetLibrary);
+    }
+    catch (Exception e) when (e is ArgumentException or FileNotFoundException)
+    {
+        Console.Error.WriteLine(e.Message);
+        return 2;
+    }
+
     sharedTransport = new ENetTransport(new ENetTransportOptions { PeerLimit = options.BotCount });
     sharedTransport.Initialize();
 }
 
 Console.WriteLine($"Transport: {(useWebTransport ? "WebTransport" : "ENet")}");
+
+if (!useWebTransport)
+    Console.WriteLine($"ENet library: {options.ENetLibrary}");
 
 // Scene-listener mode: connect receive-only for a fixed parcel set, never simulate or send.
 if (!string.IsNullOrWhiteSpace(options.SceneListenerParcels))

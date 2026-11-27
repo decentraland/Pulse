@@ -1,0 +1,116 @@
+name: ENet native libraries
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "native/enet/**"
+      - "scripts/enet-fetch-source.py"
+      - ".github/workflows/enet-native.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            rid: linux-x64
+            target: x86_64-unknown-linux-gnu
+            library: libenet.so
+          - os: windows-latest
+            rid: win-x64
+            target: x86_64-pc-windows-msvc
+            library: enet.dll
+            rustflags: "-C target-feature=+crt-static"
+          - os: macos-latest
+            rid: macos-arm64
+            target: aarch64-apple-darwin
+            library: libenet.dylib
+    steps:
+      - uses: actions/checkout@v4
+
+      # Only the Windows entry has rustflags; on the others RUSTFLAGS is never set.
+      - name: Set RUSTFLAGS
+        if: matrix.rustflags
+        shell: bash
+        env:
+          FLAGS: ${{ matrix.rustflags }}
+        run: echo "RUSTFLAGS=$FLAGS" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        working-directory: native/enet
+        env:
+          EXPECTED_HOST: ${{ matrix.target }}
+        run: |
+          rustup toolchain install
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          if [ "$host" != "$EXPECTED_HOST" ]; then
+            echo "::error::runner builds for $host, expected $EXPECTED_HOST"
+            exit 1
+          fi
+
+      - name: Fetch pinned rusty_enet source
+        shell: bash
+        run: python scripts/enet-fetch-source.py fetch
+
+      - name: Format
+        shell: bash
+        working-directory: native/enet
+        run: cargo fmt --check
+
+      - name: Clippy
+        shell: bash
+        working-directory: native/enet
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        shell: bash
+        working-directory: native/enet
+        run: cargo test --locked
+
+      - name: Build release
+        shell: bash
+        working-directory: native/enet
+        run: cargo build --release --locked
+
+      - name: Collect library and SHA-256
+        shell: bash
+        env:
+          LIBRARY: ${{ matrix.library }}
+        run: |
+          mkdir -p dist
+          cp "native/enet/target/release/${LIBRARY}" "dist/${LIBRARY}"
+          python - "dist/${LIBRARY}" <<'PY'
+          import hashlib, sys
+          path = sys.argv[1]
+          with open(path, "rb") as handle:
+              digest = hashlib.sha256(handle.read()).hexdigest()
+          name = path.split("/")[-1]
+          with open(path + ".sha256", "w", newline="\n") as out:
+              out.write("%s  %s\n" % (digest, name))
+          print("%s  %s" % (digest, name))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enet-${{ matrix.rid }}
+          path: |
+            dist/${{ matrix.library }}
+            dist/${{ matrix.library }}.sha256
+          if-no-files-found: error

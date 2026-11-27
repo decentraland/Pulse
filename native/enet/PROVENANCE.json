@@ -1,0 +1,11 @@
+{
+  "dcl_one_rev": "43dfb8e3e14c599972d3cca0ad4c718d9052b4ad",
+  "rusty_enet_tree_sha": "bf7f72cb819bc99ab3457f75b5db07fdb6b2b376",
+  "toolchain": "1.99.1",
+  "source_digest": "73aed66ac850f01b13ae731e953a586c98ea997bd3d08a9312db398b49bed0bd",
+  "libraries": {
+    "src/DCLPulse/runtimes/win-x64/native/enet.dll": "cd799a7e84ebd4454aeaa1f9d3180da2bb09f502866dee1992baf04991c6a1db",
+    "src/DCLPulse/runtimes/linux-x64/native/libenet.so": "3cc3d2c3f63b6f0fc0fd930271f0b43cbfda0b36b1be3ad43a51e3ff76085570",
+    "src/DCLPulse/runtimes/macos-arm64/native/libenet.dylib": "27a3a21845b6f99ada086fcbcc322ce9bd5752cf9b6854ef3b0ca7f45302039e"
+  }
+}

@@ -4,14 +4,11 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSo
 use std::time::Duration;
 
 use rusty_enet::{PacketReceived, Socket, SocketOptions, MTU_MAX};
-use socket2::{Domain, Protocol, Type};
+use socket2::{Domain, MaybeUninitSlice, Protocol, Type};
 
 /// Datagrams skipped per `receive` call before it reports "nothing received".
 const MAX_SKIPPED_DATAGRAMS: usize = 16;
 
-/// Windows `WSAEMSGSIZE`: the datagram was larger than the receive buffer.
-#[cfg(windows)]
-const WSAEMSGSIZE: i32 = 10040;
 /// Windows `WSAENETRESET`: the network dropped the connection.
 #[cfg(windows)]
 const WSAENETRESET: i32 = 10052;
@@ -106,15 +103,19 @@ impl Socket for GlueSocket {
     ) -> Result<Option<(SocketAddr, PacketReceived)>, io::Error> {
         let socket = socket2::SockRef::from(&self.socket);
         for _ in 0..MAX_SKIPPED_DATAGRAMS {
-            // SAFETY: `MaybeUninit<u8>` has the layout of `u8`, and `recv_from` only writes.
+            // SAFETY: `MaybeUninit<u8>` has the layout of `u8`, and the receive only writes.
             let uninit = unsafe {
                 std::slice::from_raw_parts_mut(
                     buffer.as_mut_ptr().cast::<MaybeUninit<u8>>(),
                     MTU_MAX,
                 )
             };
-            match socket.recv_from(uninit) {
-                Ok((length, from)) => {
+            let mut buffers = [MaybeUninitSlice::new(uninit)];
+            match socket.recv_from_vectored(&mut buffers) {
+                // A datagram larger than the buffer arrives cut off. ENet never sends one, so it
+                // is dropped whole rather than parsed in part.
+                Ok((_, flags, _)) if flags.is_truncated() => continue,
+                Ok((length, _, from)) => {
                     let from = from.as_socket().ok_or_else(|| {
                         io::Error::new(ErrorKind::InvalidData, "datagram without an IP address")
                     })?;
@@ -140,7 +141,8 @@ fn normalize(address: SocketAddr) -> SocketAddr {
     }
 }
 
-/// Errors that describe one lost datagram rather than a broken socket.
+/// Errors that describe one lost datagram rather than a broken socket. A datagram larger than
+/// the buffer is not an error here: the receive reports it as truncated on every platform.
 fn is_skippable(err: &io::Error) -> bool {
     if matches!(
         err.kind(),
@@ -152,7 +154,7 @@ fn is_skippable(err: &io::Error) -> bool {
         return true;
     }
     #[cfg(windows)]
-    if matches!(err.raw_os_error(), Some(WSAEMSGSIZE | WSAENETRESET)) {
+    if err.raw_os_error() == Some(WSAENETRESET) {
         return true;
     }
     false

@@ -292,8 +292,9 @@ pub unsafe extern "C" fn enet_host_service(
     })
 }
 
-/// Dispatches one already queued event without touching the socket. Returns 1 with an event,
-/// 0 when none is queued, and -1 on a null handle.
+/// Dispatches one already queued event without reading the socket. Returns 1 with an event,
+/// 0 when none is queued, and -1 on a null handle. A peer refused by the receive limit is
+/// disconnected here, which sends its disconnect notice.
 ///
 /// # Safety
 ///

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use enet::socket::GlueSocket;
 use enet::{enet_address_get_ip, enet_address_set_hostname, enet_address_set_ip, ENetAddress};
-use rusty_enet::{PacketReceived, Socket, MTU_MAX};
+use rusty_enet::{PacketReceived, Socket, SocketOptions, MTU_MAX};
 
 fn blank() -> ENetAddress {
     ENetAddress {
@@ -162,19 +162,36 @@ fn dual_stack_socket_receives_v4() {
 /// first `receive` call yields: its length and first byte.
 fn receive_after_oversized(oversized: usize) -> (usize, u8) {
     let mut socket = GlueSocket::bind(Some("127.0.0.1:0".parse().unwrap())).unwrap();
+    // Non-blocking, as under ENet, so a datagram that never arrives fails the test at the
+    // deadline rather than hanging it.
+    socket
+        .init(SocketOptions {
+            receive_buffer: 256 * 1024,
+            send_buffer: 256 * 1024,
+        })
+        .unwrap();
     let port = socket.local_addr().unwrap().port();
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     sender
         .send_to(&vec![0xAA; oversized], ("127.0.0.1", port))
         .unwrap();
     sender.send_to(&[0xBB; 100], ("127.0.0.1", port)).unwrap();
-    assert!(socket.wait_readable(Duration::from_secs(2)));
 
+    let deadline = Instant::now() + Duration::from_secs(2);
     let mut buffer = [0u8; MTU_MAX];
-    let (_, received) = socket.receive(&mut buffer).unwrap().unwrap();
-    match received {
-        PacketReceived::Complete(length) => (length, buffer[0]),
-        PacketReceived::Partial => panic!("the glue skips a truncated datagram itself"),
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the datagram that follows the oversized one"
+        );
+        socket.wait_readable(Duration::from_millis(50));
+        match socket.receive(&mut buffer).unwrap() {
+            Some((_, PacketReceived::Complete(length))) => return (length, buffer[0]),
+            Some((_, PacketReceived::Partial)) => {
+                panic!("the glue skips a truncated datagram itself")
+            }
+            None => {}
+        }
     }
 }
 
